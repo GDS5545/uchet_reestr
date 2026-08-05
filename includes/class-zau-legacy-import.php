@@ -14,8 +14,8 @@ if (!defined('ABSPATH')) { exit; }
  * безошибочно приложить готовый PDF к нужному аккаунту/заявлению.
  */
 final class ZAU_Legacy_Import {
-    const VERSION = '3.2.1';
-    const DB_VERSION = '3.2.1';
+    const VERSION = '3.2.2';
+    const DB_VERSION = '3.2.2';
     const OPT_DB_VERSION = 'zau_legacy_import_db_version';
     const NONCE = 'zau_legacy_import_nonce';
 
@@ -742,6 +742,7 @@ final class ZAU_Legacy_Import {
         $data = $mapped;
         $data['full_name'] = $mapped['full_name'] ?? '';
         $data['legacy_source'] = 'legacy_csv_import';
+        $data['legacy_import'] = 1;
         $data['legacy_entry_id'] = $entryId;
         $data['legacy_user_id'] = $ownerLegacyId;
         $data['legacy_imported_at'] = current_time('mysql');
@@ -1023,7 +1024,7 @@ final class ZAU_Legacy_Import {
             $token = (string)$existingDoc->verify_token;
         } else {
             $token = bin2hex(random_bytes(24));
-            $row = ['template_id'=>$templateId,'user_id'=>$userId,'created_by'=>get_current_user_id(),'source_submission_id'=>$submissionId,'full_name'=>sanitize_text_field($fullName),'document_title'=>$tpl->name,'organization'=>sanitize_text_field($organization),'issue_date'=>wp_date('d.m.Y'),'document_no'=>'PENDING-'.$token,'member_status'=>(string)get_user_meta($userId,'zau_member_status',true),'signature_url'=>'','signature2_url'=>'','stamp_url'=>'','data_json'=>wp_json_encode(['legacy_source_file'=>$filename,'legacy_id'=>$info['legacy_id']], JSON_UNESCAPED_UNICODE),'orientation'=>$tpl->orientation,'verify_token'=>$token,'record_status'=>'draft','created_at'=>$now,'updated_at'=>$now];
+            $row = ['template_id'=>$templateId,'user_id'=>$userId,'created_by'=>get_current_user_id(),'source_submission_id'=>$submissionId,'full_name'=>sanitize_text_field($fullName),'document_title'=>$tpl->name,'organization'=>sanitize_text_field($organization),'issue_date'=>wp_date('d.m.Y'),'document_no'=>'PENDING-'.$token,'member_status'=>(string)get_user_meta($userId,'zau_member_status',true),'signature_url'=>'','signature2_url'=>'','stamp_url'=>'','data_json'=>wp_json_encode(['legacy_import'=>1,'legacy_source_file'=>$filename,'legacy_id'=>$info['legacy_id']], JSON_UNESCAPED_UNICODE),'orientation'=>$tpl->orientation,'verify_token'=>$token,'record_status'=>'draft','created_at'=>$now,'updated_at'=>$now];
             if (!$wpdb->insert($this->docs_table, $row)) { return 'не удалось создать запись документа.'; }
             $documentId = (int)$wpdb->insert_id;
             $documentNo = class_exists('ZAU_Certificate_PDF_Generator') ? ZAU_Certificate_PDF_Generator::instance()->format_document_number($tpl, $documentId) : ('DOC-' . $documentId);
@@ -1458,6 +1459,7 @@ final class ZAU_Legacy_Import {
         global $wpdb;
         $data = $mapped;
         $data['legacy_source'] = 'legacy_api_bridge';
+        $data['legacy_import'] = 1;
         $data['legacy_imported_at'] = current_time('mysql');
         $data['legacy_fields'] = $rawFields;
         if ($signatureUrl !== '') { $data['signature_url'] = $signatureUrl; }
