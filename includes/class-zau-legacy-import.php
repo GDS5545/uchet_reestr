@@ -54,6 +54,13 @@ final class ZAU_Legacy_Import {
         add_action('wp_ajax_zau_legacy_scan_pdfs', [$this, 'ajax_scan_pdfs']);
         add_action('wp_ajax_zau_legacy_attach_pdfs', [$this, 'ajax_attach_pdfs']);
         add_action('admin_post_zau_legacy_download_report', [$this, 'download_report']);
+
+        add_action('wp_ajax_zau_legacy_bridge_save_settings', [$this, 'ajax_bridge_save_settings']);
+        add_action('wp_ajax_zau_legacy_bridge_test', [$this, 'ajax_bridge_test']);
+        add_action('wp_ajax_zau_legacy_bridge_list_forms', [$this, 'ajax_bridge_list_forms']);
+        add_action('wp_ajax_zau_legacy_bridge_save_form_map', [$this, 'ajax_bridge_save_form_map']);
+        add_action('wp_ajax_zau_legacy_bridge_start', [$this, 'ajax_bridge_start']);
+        add_action('wp_ajax_zau_legacy_bridge_process', [$this, 'ajax_bridge_process']);
     }
 
     public function maybe_upgrade() {
@@ -560,7 +567,7 @@ final class ZAU_Legacy_Import {
         ]);
     }
 
-    private function update_account_user($userId, $mapped, $overwrite, $defaultStatus) {
+    private function update_account_user($userId, $mapped, $overwrite, $defaultStatus, $overwriteStatus = null) {
         $user = get_user_by('id', $userId);
         if (!$user) { return new WP_Error('user_missing', 'Пользователь не найден.'); }
         $update = ['ID'=>$userId];
@@ -585,7 +592,8 @@ final class ZAU_Legacy_Import {
         $this->assign_organization($userId, $mapped, $overwrite);
         $this->assign_branch($userId, $mapped, $overwrite);
         $existingStatus = get_user_meta($userId, 'zau_member_status', true);
-        if (!$existingStatus || $overwrite) { update_user_meta($userId, 'zau_member_status', $mapped['member_status'] ?: ($defaultStatus ?: 'Заявление подано')); }
+        $statusOverwrite = $overwriteStatus === null ? $overwrite : $overwriteStatus;
+        if (!$existingStatus || $statusOverwrite) { update_user_meta($userId, 'zau_member_status', $mapped['member_status'] ?: ($defaultStatus ?: 'Заявление подано')); }
         $this->update_member_card($userId, $mapped, $overwrite);
         update_user_meta($userId, 'zau_imported_from_legacy_site', 1);
         update_user_meta($userId, 'zau_legacy_imported_at', current_time('mysql'));
@@ -981,12 +989,384 @@ final class ZAU_Legacy_Import {
         return true;
     }
 
+    /* ---------------------------------------------------------------------
+     * Подключение к старому сайту по API (устанавливается плагин-компаньон
+     * zau-legacy-bridge-companion на uchet.zdravunion.kz). Данные считаются
+     * достоверными: аккаунты дополняются/заменяются, у заявлений сохраняется
+     * настоящая дата подачи и настоящая подпись со старого сайта. Сопоставление
+     * — по тем же точным старым ID, что и в CSV-режиме, и обе карты общие,
+     * поэтому CSV-перенос и перенос по API никогда не создают дублей друг друга.
+     * ------------------------------------------------------------------- */
+
+    const BRIDGE_NS = 'zau-legacy-bridge/v1';
+
+    private function bridge_settings() {
+        return wp_parse_args((array)get_option('zau_legacy_bridge_settings', []), ['url'=>'', 'secret'=>'']);
+    }
+
+    private function bridge_form_map() {
+        return (array)get_option('zau_legacy_bridge_form_map', []);
+    }
+
+    /** Подписанный GET-запрос к API старого сайта. Тот же принцип HMAC, что проверяет плагин-компаньон. */
+    private function bridge_request($path, $query = []) {
+        $s = $this->bridge_settings();
+        if (empty($s['url']) || empty($s['secret'])) { return new WP_Error('zau_bridge_settings', 'Укажите адрес старого сайта и секретный ключ.'); }
+        $restRoute = '/' . self::BRIDGE_NS . $path;
+        $query = (array)$query;
+        ksort($query);
+        $queryString = http_build_query($query);
+        $url = untrailingslashit($s['url']) . '/wp-json' . $restRoute . ($queryString !== '' ? '?' . $queryString : '');
+        if (!wp_http_validate_url($url)) { return new WP_Error('zau_bridge_url', 'Некорректный адрес старого сайта.'); }
+        $timestamp = (string)time();
+        $payload = $timestamp . "\nGET\n" . $restRoute . "\n" . $queryString;
+        $signature = hash_hmac('sha256', $payload, (string)$s['secret']);
+        $response = wp_remote_get($url, ['timeout'=>60, 'headers'=>[
+            'X-ZAU-Timestamp'=>$timestamp,
+            'X-ZAU-Signature'=>$signature,
+            'Accept'=>'application/json',
+        ]]);
+        if (is_wp_error($response)) { return new WP_Error('zau_bridge_connection', 'Не удалось подключиться к старому сайту: ' . $response->get_error_message()); }
+        $status = (int)wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        $json = json_decode($body, true);
+        if ($status < 200 || $status >= 300) {
+            $message = is_array($json) && !empty($json['message']) ? sanitize_text_field($json['message']) : ('HTTP ' . $status);
+            return new WP_Error('zau_bridge_http', 'Старый сайт ответил ошибкой: ' . $message);
+        }
+        if (!is_array($json)) { return new WP_Error('zau_bridge_json', 'Старый сайт вернул некорректный ответ.'); }
+        return $json;
+    }
+
+    public function ajax_bridge_save_settings() {
+        $this->require_access();
+        $url = esc_url_raw(trim((string)wp_unslash($_POST['url'] ?? '')));
+        $secret = sanitize_text_field((string)wp_unslash($_POST['secret'] ?? ''));
+        if ($url === '' || $secret === '') { wp_send_json_error(['message'=>'Укажите адрес старого сайта и секретный ключ.'], 400); }
+        update_option('zau_legacy_bridge_settings', ['url'=>$url, 'secret'=>$secret], false);
+        wp_send_json_success(['message'=>'Настройки подключения сохранены.']);
+    }
+
+    public function ajax_bridge_test() {
+        $this->require_access();
+        $status = $this->bridge_request('/status');
+        if (is_wp_error($status)) { wp_send_json_error(['message'=>$status->get_error_message()], 502); }
+        wp_send_json_success($status);
+    }
+
+    public function ajax_bridge_list_forms() {
+        $this->require_access();
+        $resp = $this->bridge_request('/forms');
+        if (is_wp_error($resp)) { wp_send_json_error(['message'=>$resp->get_error_message()], 502); }
+        $map = $this->bridge_form_map();
+        $forms = (array)($resp['forms'] ?? []);
+        foreach ($forms as &$form) {
+            $saved = $map[(string)$form['id']] ?? null;
+            $form['target_form_id'] = $saved['target_form_id'] ?? 0;
+            $form['template_id'] = $saved['template_id'] ?? 0;
+            $form['field_map'] = $saved['field_map'] ?? [];
+            if (!$form['field_map']) {
+                foreach ((array)$form['fields'] as $field) {
+                    $target = $this->auto_target((string)$field['label'], $this->application_fields());
+                    if ($target !== '') { $form['field_map'][(string)$field['label']] = $target; }
+                }
+            }
+        }
+        unset($form);
+        global $wpdb;
+        $newForms = $wpdb->get_results("SELECT id,name FROM {$this->forms_table} ORDER BY name ASC");
+        $templates = $wpdb->get_results("SELECT id,name FROM {$this->templates_table} ORDER BY name ASC");
+        wp_send_json_success(['forms'=>$forms, 'new_forms'=>$newForms, 'templates'=>$templates, 'application_fields'=>$this->application_fields()]);
+    }
+
+    public function ajax_bridge_save_form_map() {
+        $this->require_access();
+        $formId = sanitize_text_field((string)($_POST['form_id'] ?? ''));
+        if ($formId === '') { wp_send_json_error(['message'=>'Не указана форма старого сайта.'], 400); }
+        $targetFormId = $this->ensure_form_id($_POST['target_form_id'] ?? 0);
+        $templateId = absint($_POST['template_id'] ?? 0);
+        if (!$targetFormId) { wp_send_json_error(['message'=>'Выберите форму нового кабинета для этой старой формы.'], 400); }
+        if (!$templateId) { wp_send_json_error(['message'=>'Выберите PDF-шаблон для этой старой формы.'], 400); }
+        $fieldMapRaw = json_decode((string)wp_unslash($_POST['field_map'] ?? ''), true);
+        $allowed = array_keys($this->application_fields());
+        $fieldMap = [];
+        if (is_array($fieldMapRaw)) {
+            foreach ($fieldMapRaw as $label=>$target) {
+                $target = sanitize_key((string)$target);
+                if ($target !== '' && in_array($target, $allowed, true)) { $fieldMap[sanitize_text_field((string)$label)] = $target; }
+            }
+        }
+        $map = $this->bridge_form_map();
+        $map[$formId] = ['target_form_id'=>$targetFormId, 'template_id'=>$templateId, 'field_map'=>$fieldMap];
+        update_option('zau_legacy_bridge_form_map', $map, false);
+        wp_send_json_success(['message'=>'Соответствие для формы сохранено.']);
+    }
+
+    public function ajax_bridge_start() {
+        $this->require_access();
+        $scope = sanitize_key((string)($_POST['scope'] ?? ''));
+        if (!in_array($scope, ['accounts','applications'], true)) { wp_send_json_error(['message'=>'Неизвестный тип переноса.'], 400); }
+        $formId = '';
+        if ($scope === 'applications') {
+            $formId = sanitize_text_field((string)($_POST['form_id'] ?? ''));
+            $map = $this->bridge_form_map();
+            if ($formId === '' || empty($map[$formId])) { wp_send_json_error(['message'=>'Сначала настройте соответствие для этой формы старого сайта.'], 400); }
+        }
+        $jobKey = $scope === 'accounts' ? 'bridge_accounts' : ('bridge_applications_' . $formId);
+        $job = [
+            'kind'=>'bridge',
+            'scope'=>$scope,
+            'form_id'=>$formId,
+            'cursor'=>0,
+            'total'=>0,
+            'processed'=>0,
+            'options'=>[
+                'dry_run'=>!empty($_POST['dry_run']) ? 1 : 0,
+                'overwrite'=>!empty($_POST['overwrite']) ? 1 : 0,
+                'default_status'=>sanitize_text_field((string)($_POST['default_status'] ?? 'Состоит в профсоюзе')),
+            ],
+            'stats'=>['created'=>0,'updated'=>0,'existing'=>0,'linked'=>0,'skipped'=>0,'errors'=>0,'would_create'=>0,'would_update'=>0],
+            'report'=>[],
+            'log'=>[],
+            'status'=>'running',
+            'started_at'=>current_time('mysql'),
+            'finished_at'=>'',
+        ];
+        update_option($this->job_option_key($jobKey), $job, false);
+        wp_send_json_success($this->public_job($job));
+    }
+
+    public function ajax_bridge_process() {
+        $this->require_access();
+        $scope = sanitize_key((string)($_POST['scope'] ?? ''));
+        if (!in_array($scope, ['accounts','applications'], true)) { wp_send_json_error(['message'=>'Неизвестный тип переноса.'], 400); }
+        $formId = $scope === 'applications' ? sanitize_text_field((string)($_POST['form_id'] ?? '')) : '';
+        $jobKey = $scope === 'accounts' ? 'bridge_accounts' : ('bridge_applications_' . $formId);
+        $job = (array)get_option($this->job_option_key($jobKey), []);
+        if (!$job) { wp_send_json_error(['message'=>'Задание переноса не найдено.'], 404); }
+        if (($job['status'] ?? '') === 'finished') { wp_send_json_success($this->public_job($job)); }
+
+        if ($scope === 'accounts') {
+            $resp = $this->bridge_request('/users', ['cursor'=>$job['cursor'], 'per_page'=>50]);
+            if (is_wp_error($resp)) { wp_send_json_error(['message'=>$resp->get_error_message()], 502); }
+            foreach ((array)($resp['users'] ?? []) as $row) {
+                $job['processed']++;
+                $result = $this->process_bridge_account_row($row, $job);
+                $this->apply_result($job, $result);
+            }
+            $job['total'] = (int)($resp['total'] ?? $job['total']);
+            $job['cursor'] = (int)($resp['next_cursor'] ?? $job['cursor']);
+            $hasMore = !empty($resp['has_more']);
+        } else {
+            $map = $this->bridge_form_map();
+            $formMap = $map[$formId] ?? null;
+            if (!$formMap) { wp_send_json_error(['message'=>'Соответствие для этой формы не настроено.'], 400); }
+            $resp = $this->bridge_request('/entries', ['form_id'=>$formId, 'cursor'=>$job['cursor'], 'per_page'=>30]);
+            if (is_wp_error($resp)) { wp_send_json_error(['message'=>$resp->get_error_message()], 502); }
+            foreach ((array)($resp['entries'] ?? []) as $entry) {
+                $job['processed']++;
+                $result = $this->process_bridge_application_row($entry, $formMap, $job);
+                $this->apply_result($job, $result);
+            }
+            $job['total'] = (int)($resp['total'] ?? $job['total']);
+            $job['cursor'] = (int)($resp['next_cursor'] ?? $job['cursor']);
+            $hasMore = !empty($resp['has_more']);
+        }
+        if (!$hasMore) {
+            $job['status'] = 'finished';
+            $job['finished_at'] = current_time('mysql');
+            $job['log'][] = 'Перенос по API завершён: ' . $job['processed'] . ' записей.';
+        }
+        if (count($job['report']) > 2000) { $job['report'] = array_slice($job['report'], -2000); }
+        if (count($job['log']) > 100) { $job['log'] = array_slice($job['log'], -100); }
+        update_option($this->job_option_key($jobKey), $job, false);
+        wp_send_json_success($this->public_job($job));
+    }
+
+    private function process_bridge_account_row($row, $job) {
+        $legacyId = (string)($row['legacy_user_id'] ?? '');
+        if ($legacyId === '') { return ['kind'=>'error','row'=>$job['processed'],'message'=>'Старый сайт вернул запись без ID пользователя.']; }
+        $mapped = $this->normalize_mapped([
+            'legacy_user_id'=>$legacyId,
+            'email'=>$row['email'] ?? '',
+            'phone'=>$row['phone'] ?? '',
+            'full_name'=>$row['full_name'] ?? '',
+            'first_name'=>$row['first_name'] ?? '',
+            'last_name'=>$row['last_name'] ?? '',
+            'iin'=>$row['iin'] ?? '',
+            'birth_date'=>$row['birth_date'] ?? '',
+            'address'=>$row['address'] ?? '',
+            'position'=>$row['position'] ?? '',
+            'department'=>$row['department'] ?? '',
+            'organization'=>$row['organization'] ?? '',
+            'organization_bin'=>$row['organization_bin'] ?? '',
+            'organization_director'=>$row['organization_director'] ?? '',
+            'organization_address'=>$row['organization_address'] ?? '',
+            'branch_name'=>$row['branch_name'] ?? '',
+            'registration_date'=>$row['registered'] ?? '',
+        ]);
+        $dry = !empty($job['options']['dry_run']);
+        $overwrite = !empty($job['options']['overwrite']);
+        $existingMap = $this->find_map_row('account', $legacyId);
+        $userId = 0;
+        if ($existingMap && $existingMap->target_user_id && get_user_by('id', (int)$existingMap->target_user_id)) {
+            $userId = (int)$existingMap->target_user_id;
+        } else {
+            global $wpdb;
+            $found = (int)$wpdb->get_var($wpdb->prepare("SELECT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_legacy_user_id' AND meta_value=%s ORDER BY user_id ASC LIMIT 1", $legacyId));
+            if ($found) { $userId = $found; }
+        }
+        if ($dry) {
+            return ['kind'=>$userId ? 'would_update' : 'would_create','row'=>$job['processed'],'message'=>$userId ? 'Аккаунт будет дополнен данными со старого сайта.' : 'Будет создан новый аккаунт.','user_id'=>$userId,'mapped'=>$mapped];
+        }
+        $created = false;
+        if (!$userId) {
+            $newUser = $this->create_account_user($mapped);
+            if (is_wp_error($newUser)) { return ['kind'=>'error','row'=>$job['processed'],'message'=>$newUser->get_error_message(),'mapped'=>$mapped]; }
+            $userId = (int)$newUser;
+            $created = true;
+        }
+        /* Данные со старого сайта считаются достоверными — заполняют профиль и, если включена галочка,
+           заменяют текущие значения. Статус участника никогда не откатывается назад через этот путь. */
+        $updated = $this->update_account_user($userId, $mapped, $overwrite || $created, (string)$job['options']['default_status'], false);
+        if (is_wp_error($updated)) { return ['kind'=>'error','row'=>$job['processed'],'message'=>$updated->get_error_message(),'user_id'=>$userId,'mapped'=>$mapped]; }
+        $this->save_map_row('account', $legacyId, ['target_user_id'=>$userId,'status'=>'imported','message'=>'OK (API)']);
+        return ['kind'=>$created ? 'created' : 'updated','row'=>$job['processed'],'message'=>$created ? 'Аккаунт создан по API.' : 'Аккаунт дополнен по API.','user_id'=>$userId,'mapped'=>$mapped];
+    }
+
+    /** Скачивает файл со старого сайта через защищённый /file и сохраняет локально. Возвращает URL или ''. */
+    private function download_bridge_file($remoteUrl, $subdir, $prefix) {
+        $remoteUrl = (string)$remoteUrl;
+        if ($remoteUrl === '') { return ''; }
+        $response = $this->bridge_request('/file', ['url'=>$remoteUrl]);
+        if (is_wp_error($response) || empty($response['content_base64'])) { return ''; }
+        $bytes = base64_decode((string)$response['content_base64'], true);
+        if ($bytes === false || strlen($bytes) < 10) { return ''; }
+        $mime = (string)($response['mime'] ?? '');
+        $ext = 'png';
+        if (strpos($mime, 'jpeg') !== false) { $ext = 'jpg'; }
+        elseif (strpos($mime, 'pdf') !== false) { $ext = 'pdf'; }
+        $uploads = wp_upload_dir();
+        if (!empty($uploads['error'])) { return ''; }
+        $sub = trim($subdir, '/') . '/' . wp_date('Y/m');
+        $dir = trailingslashit($uploads['basedir']) . $sub;
+        if (!wp_mkdir_p($dir)) { return ''; }
+        $name = sanitize_file_name($prefix . '-' . wp_generate_password(8, false, false)) . '.' . $ext;
+        if (file_put_contents(trailingslashit($dir) . $name, $bytes, LOCK_EX) === false) { return ''; }
+        return trailingslashit($uploads['baseurl']) . $sub . '/' . $name;
+    }
+
+    /** Создаёт (или обновляет данные и подпись у уже существующего) черновик документа для заявления/карточки,
+     * перенесённых по API. PDF ещё не отрисован — это делает либо существующий инструмент «Массовое
+     * пересоздание», либо шаг 3 «Привязка PDF», если старый готовый PDF будет скопирован по FTP. */
+    private function upsert_bridge_document($userId, $submissionId, $templateId, $data, $signatureUrl, $existingDocumentId) {
+        global $wpdb;
+        $tpl = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->templates_table} WHERE id=%d", $templateId));
+        if (!$tpl) { return new WP_Error('zau_bridge_template', 'Выбранный PDF-шаблон больше не существует.'); }
+        $now = current_time('mysql');
+        if ($existingDocumentId) {
+            $existing = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->docs_table} WHERE id=%d", $existingDocumentId));
+            if ($existing && $existing->record_status === 'draft') {
+                $wpdb->update($this->docs_table, [
+                    'full_name'=>sanitize_text_field($data['full_name'] ?? ''),
+                    'organization'=>sanitize_text_field($data['organization'] ?? ''),
+                    'signature_url'=>esc_url_raw($signatureUrl),
+                    'data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),
+                    'updated_at'=>$now,
+                ], ['id'=>$existingDocumentId]);
+                return (int)$existingDocumentId;
+            }
+            if ($existing) { return (int)$existingDocumentId; }
+        }
+        $token = bin2hex(random_bytes(24));
+        $row = ['template_id'=>$templateId,'user_id'=>$userId,'created_by'=>get_current_user_id(),'source_submission_id'=>$submissionId,'full_name'=>sanitize_text_field($data['full_name'] ?? ''),'document_title'=>$tpl->name,'organization'=>sanitize_text_field($data['organization'] ?? ''),'issue_date'=>wp_date('d.m.Y'),'document_no'=>'PENDING-'.$token,'member_status'=>(string)get_user_meta($userId,'zau_member_status',true),'signature_url'=>esc_url_raw($signatureUrl),'signature2_url'=>'','stamp_url'=>'','data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),'orientation'=>$tpl->orientation,'verify_token'=>$token,'record_status'=>'draft','created_at'=>$now,'updated_at'=>$now];
+        if (!$wpdb->insert($this->docs_table, $row)) { return new WP_Error('zau_bridge_document', 'Не удалось создать запись документа.'); }
+        $documentId = (int)$wpdb->insert_id;
+        $documentNo = class_exists('ZAU_Certificate_PDF_Generator') ? ZAU_Certificate_PDF_Generator::instance()->format_document_number($tpl, $documentId) : ('DOC-' . $documentId);
+        $wpdb->update($this->docs_table, ['document_no'=>$documentNo], ['id'=>$documentId]);
+        return $documentId;
+    }
+
+    private function process_bridge_application_row($entry, $formMap, $job) {
+        $entryId = (string)($entry['legacy_entry_id'] ?? '');
+        $ownerLegacyId = (string)($entry['legacy_user_id'] ?? '');
+        if ($entryId === '' || $ownerLegacyId === '') {
+            return ['kind'=>'skipped','row'=>$job['processed'],'message'=>'Запись старого сайта не привязана к аккаунту пользователя (заявление отправлено не под логином) — перенесите её вручную.'];
+        }
+        $accountMap = $this->find_map_row('account', $ownerLegacyId);
+        $userId = ($accountMap && $accountMap->target_user_id) ? (int)$accountMap->target_user_id : 0;
+        if (!$userId || !get_user_by('id', $userId)) {
+            return ['kind'=>'skipped','row'=>$job['processed'],'message'=>'Аккаунт с ID Ultimate Member «'.$ownerLegacyId.'» ещё не перенесён — сначала перенесите аккаунты по API.','mapped'=>['legacy_user_id'=>$ownerLegacyId,'legacy_entry_id'=>$entryId]];
+        }
+        $rawFields = (array)($entry['fields'] ?? []);
+        $fieldMap = (array)($formMap['field_map'] ?? []);
+        $mappedRaw = [];
+        foreach ($rawFields as $label=>$value) {
+            $target = $fieldMap[$label] ?? '';
+            if ($target !== '' && $value !== '') { $mappedRaw[$target] = $value; }
+        }
+        $mapped = $this->normalize_mapped($mappedRaw);
+        $mapped['legacy_user_id'] = $ownerLegacyId;
+        $mapped['legacy_entry_id'] = $entryId;
+        $dry = !empty($job['options']['dry_run']);
+        $existingMap = $this->find_map_row('application', $entryId);
+        if ($dry) {
+            return ['kind'=>$existingMap ? 'would_update' : 'would_create','row'=>$job['processed'],'message'=>$existingMap ? 'Заявление будет обновлено настоящими данными и подписью со старого сайта.' : 'Будет создана новая заявка с настоящей датой подачи и подписью.','user_id'=>$userId,'mapped'=>$mapped];
+        }
+        $formId = $this->ensure_form_id($formMap['target_form_id'] ?? 0);
+        $templateId = absint($formMap['template_id'] ?? 0);
+        if (!$formId || !$templateId) { return ['kind'=>'error','row'=>$job['processed'],'message'=>'Соответствие для этой формы настроено не полностью.','mapped'=>$mapped]; }
+
+        $signatureUrl = '';
+        if (!empty($entry['signature_url'])) {
+            $signatureUrl = $this->download_bridge_file($entry['signature_url'], 'zau-signatures', 'legacy-' . $entryId);
+        }
+
+        global $wpdb;
+        $data = $mapped;
+        $data['legacy_source'] = 'legacy_api_bridge';
+        $data['legacy_imported_at'] = current_time('mysql');
+        $data['legacy_fields'] = $rawFields;
+        if ($signatureUrl !== '') { $data['signature_url'] = $signatureUrl; }
+        /* Настоящая дата, когда человек заполнил форму на старом сайте — не «сейчас». */
+        $createdAt = $this->mysql_date($entry['date_created'] ?? '') ?: current_time('mysql');
+        $status = sanitize_key($entry['status'] ?? 'submitted') ?: 'submitted';
+        $signatures = $signatureUrl !== '' ? ['signature'=>$signatureUrl] : [];
+
+        $existingDocumentId = $existingMap ? (int)$existingMap->target_document_id : 0;
+        if ($existingMap && $existingMap->target_submission_id) {
+            $submissionId = (int)$existingMap->target_submission_id;
+            $wpdb->update($this->submissions_table, [
+                'status'=>$status,
+                'data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),
+                'signature_urls_json'=>wp_json_encode($signatures, JSON_UNESCAPED_UNICODE),
+                'created_at'=>$createdAt,
+                'updated_at'=>current_time('mysql'),
+            ], ['id'=>$submissionId]);
+            $resultKind = 'updated';
+        } else {
+            $wpdb->insert($this->submissions_table, ['form_id'=>$formId,'user_id'=>$userId,'status'=>$status,'data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),'signature_urls_json'=>wp_json_encode($signatures, JSON_UNESCAPED_UNICODE),'ip'=>'legacy-api-bridge','created_at'=>$createdAt,'updated_at'=>current_time('mysql')]);
+            $submissionId = (int)$wpdb->insert_id;
+            if (!$submissionId) { return ['kind'=>'error','row'=>$job['processed'],'message'=>'Не удалось сохранить заявку.','mapped'=>$mapped]; }
+            $resultKind = 'created';
+        }
+
+        $ownerUser = get_user_by('id', $userId);
+        $documentFullName = !empty($mapped['full_name']) ? $mapped['full_name'] : ($ownerUser ? $ownerUser->display_name : '');
+        $documentId = $this->upsert_bridge_document($userId, $submissionId, $templateId, array_merge($data, ['full_name'=>$documentFullName]), $signatureUrl, $existingDocumentId);
+        if (is_wp_error($documentId)) { $documentId = 0; }
+
+        $this->save_map_row('application', $entryId, ['target_user_id'=>$userId,'target_submission_id'=>$submissionId,'target_document_id'=>(int)$documentId,'status'=>'imported','message'=>'OK (API)']);
+        return ['kind'=>$resultKind,'row'=>$job['processed'],'message'=>$resultKind === 'created' ? 'Заявка создана по API.' : 'Заявка обновлена по API.','user_id'=>$userId,'submission_id'=>$submissionId,'mapped'=>$mapped];
+    }
+
     public function page() {
         if (!$this->can_manage()) { wp_die('Недостаточно прав.'); }
         global $wpdb;
         $forms = $wpdb->get_results("SELECT id,name FROM {$this->forms_table} ORDER BY name ASC");
         $templates = $wpdb->get_results("SELECT id,name FROM {$this->templates_table} ORDER BY name ASC");
         $pdf = $this->pdf_settings();
+        $bridge = $this->bridge_settings();
         ?>
         <div class="wrap zau-legacy-wrap">
             <h1>Перенос со старого сайта</h1>
@@ -994,11 +1374,54 @@ final class ZAU_Legacy_Import {
 
             <section class="zau-ui-card">
                 <h2>Как это работает</h2>
+                <p>Два способа переноса — выберите один или сочетайте оба:</p>
                 <ol>
-                    <li>Выгрузите со старого сайта пользователей Ultimate Member в CSV (обязательно с колонкой ID пользователя) и перенесите их первым шагом.</li>
-                    <li>Выгрузите записи формы заявления в CSV (обязательно с ID записи и ID пользователя-владельца) и перенесите их вторым шагом — они автоматически привяжутся к уже перенесённым аккаунтам по точному ID.</li>
-                    <li>Скопируйте PDF заявлений и личных карточек по FTP/SFTP в указанную папку загрузок и привяжите их по уникальному ID в конце имени файла третьим шагом.</li>
+                    <li><strong>По API (надёжнее и без ручных выгрузок).</strong> На старом сайте устанавливается отдельный плагин-компаньон «ZAU — мост экспорта старого кабинета» (папка <code>zau-legacy-bridge-companion</code> в этом же комплекте). Он отдаёт новому сайту аккаунты Ultimate Member и записи форм напрямую — с реальными подписями и настоящей датой заполнения заявления. Ничего не нужно выгружать и загружать руками, и невозможно перепутать файл с человеком, потому что данные приходят по точному ID, а не по имени файла.</li>
+                    <li><strong>Через CSV (если доступа по API нет).</strong> Шаги 1–3 ниже: выгрузите CSV с ID пользователя и ID заявления, загрузите их по очереди, затем привяжите PDF по ID в имени файла.</li>
                 </ol>
+            </section>
+
+            <section class="zau-ui-card" data-zau-bridge>
+                <h2>Подключение по API</h2>
+                <p class="description">Установите на <code>uchet.zdravunion.kz</code> плагин-компаньон из папки <code>zau-legacy-bridge-companion</code>, включите API в его настройках и скопируйте оттуда адрес и секретный ключ сюда.</p>
+                <div class="zau-ui-grid">
+                    <label>Адрес старого сайта<input type="text" data-zau-bridge-url value="<?php echo esc_attr($bridge['url']); ?>" placeholder="https://uchet.zdravunion.kz"></label>
+                    <label>Секретный ключ<input type="text" data-zau-bridge-secret value="<?php echo esc_attr($bridge['secret']); ?>"></label>
+                </div>
+                <div class="zau-ui-actions">
+                    <button type="button" class="button button-primary" data-zau-bridge-save-settings>Сохранить подключение</button>
+                    <button type="button" class="button" data-zau-bridge-test>Проверить подключение</button>
+                </div>
+                <p data-zau-bridge-test-result></p>
+
+                <h3>Шаг А. Аккаунты Ultimate Member по API</h3>
+                <p class="description">Данные со старого сайта считаются достоверными: пустые поля заполняются, а с включённой галочкой — заменяют текущие значения. Статус участия никогда не откатывается назад.</p>
+                <div class="zau-ui-options">
+                    <label><input type="checkbox" data-zau-bridge-overwrite checked> Заменять уже заполненные поля более достоверными данными со старого сайта</label>
+                </div>
+                <div class="zau-ui-actions">
+                    <button type="button" class="button button-secondary" data-zau-bridge-start="accounts:dry">Только проверить</button>
+                    <button type="button" class="button button-primary button-hero" data-zau-bridge-start="accounts:import">Перенести аккаунты по API</button>
+                </div>
+                <div class="zau-ui-progress-wrap" data-zau-bridge-progress="accounts" hidden>
+                    <div class="zau-ui-progress"><span data-zau-progress-bar></span></div>
+                    <p data-zau-progress-text></p>
+                    <div class="zau-ui-stats" data-zau-stats></div>
+                    <pre data-zau-log></pre>
+                </div>
+
+                <h3>Шаг Б. Формы старого сайта → шаблоны нового кабинета</h3>
+                <p class="description">Для каждой формы старого сайта (заявление, личная карточка и т.д.) выберите, в какую форму нового кабинета сохранять записи и какой PDF-шаблон к ним применять — так данные точно лягут в нужный документ.</p>
+                <div class="zau-ui-actions">
+                    <button type="button" class="button" data-zau-bridge-load-forms>Загрузить список форм со старого сайта</button>
+                </div>
+                <div data-zau-bridge-forms></div>
+                <div class="zau-ui-progress-wrap" data-zau-bridge-progress="applications" hidden>
+                    <div class="zau-ui-progress"><span data-zau-progress-bar></span></div>
+                    <p data-zau-progress-text></p>
+                    <div class="zau-ui-stats" data-zau-stats></div>
+                    <pre data-zau-log></pre>
+                </div>
             </section>
 
             <section class="zau-ui-card" data-zau-scope="accounts">

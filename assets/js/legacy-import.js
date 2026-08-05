@@ -172,4 +172,138 @@
         attachPdfBatch($section);
         setTimeout(function(){ $section.find('[data-zau-pdf-attach]').prop('disabled',false); }, 500);
     });
+    /* ---- Подключение к старому сайту по API ---- */
+    let bridgeForms = [];
+
+    $(document).on('click','[data-zau-bridge-save-settings]',function(){
+        const $section = $(this).closest('[data-zau-bridge]');
+        ajax({action:'zau_legacy_bridge_save_settings', url:$section.find('[data-zau-bridge-url]').val(), secret:$section.find('[data-zau-bridge-secret]').val()}).done(function(resp){
+            if(!resp || !resp.success){ message($section, resp && resp.data && resp.data.message ? resp.data.message : 'Не удалось сохранить.', 'error'); return; }
+            message($section, resp.data.message, 'success');
+        });
+    });
+
+    $(document).on('click','[data-zau-bridge-test]',function(){
+        const $section = $(this).closest('[data-zau-bridge]');
+        const $btn = $(this).prop('disabled',true).text('Проверяем…');
+        ajax({action:'zau_legacy_bridge_test'}).done(function(resp){
+            if(!resp || !resp.success){ $section.find('[data-zau-bridge-test-result]').text((resp && resp.data && resp.data.message) || 'Не удалось подключиться.'); return; }
+            const d = resp.data;
+            $section.find('[data-zau-bridge-test-result]').text('Подключено: '+d.site+' · WordPress '+d.wp_version+' · Ultimate Member: '+(d.um_active?'да':'нет')+' · WPForms: '+(d.wpforms_active?'да':'нет')+' · пользователей: '+d.user_count+' · форм: '+d.forms_count);
+        }).always(function(){ $btn.prop('disabled',false).text('Проверить подключение'); });
+    });
+
+    function fieldMapSelect(index, selected){
+        let html = '<select class="zau-map-target" data-index="'+esc(index)+'">';
+        Object.keys(cfg.applicationFields || {}).forEach(function(key){
+            html += '<option value="'+esc(key)+'"'+(key===selected?' selected':'')+'>'+esc(cfg.applicationFields[key])+'</option>';
+        });
+        return html + '</select>';
+    }
+    function renderBridgeForms($section, resp){
+        bridgeForms = resp.forms || [];
+        let html = '';
+        bridgeForms.forEach(function(form, formIndex){
+            html += '<div class="zau-ui-card" data-zau-bridge-form-card data-form-id="'+esc(form.id)+'" data-form-index="'+formIndex+'">';
+            html += '<h4>'+esc(form.title)+' · записей: '+form.entry_count+'</h4>';
+            html += '<div class="zau-ui-grid">';
+            html += '<label>Форма нового кабинета<select data-zau-bridge-target-form><option value="">— выберите —</option>';
+            (resp.new_forms || []).forEach(function(f){ html += '<option value="'+f.id+'"'+(Number(form.target_form_id)===Number(f.id)?' selected':'')+'>'+esc(f.name)+'</option>'; });
+            html += '</select></label>';
+            html += '<label>PDF-шаблон<select data-zau-bridge-target-template><option value="0">— выберите —</option>';
+            (resp.templates || []).forEach(function(t){ html += '<option value="'+t.id+'"'+(Number(form.template_id)===Number(t.id)?' selected':'')+'>'+esc(t.name)+'</option>'; });
+            html += '</select></label></div>';
+            html += '<div class="zau-ui-table-wrap"><table class="widefat striped"><thead><tr><th>Поле старой формы</th><th>Тип</th><th>Поле нового кабинета</th></tr></thead><tbody>';
+            (form.fields || []).forEach(function(field){
+                html += '<tr><td>'+esc(field.label)+'</td><td>'+esc(field.type)+'</td><td>'+fieldMapSelect(field.label, (form.field_map || {})[field.label] || '')+'</td></tr>';
+            });
+            html += '</tbody></table></div>';
+            html += '<div class="zau-ui-actions">';
+            html += '<button type="button" class="button button-primary" data-zau-bridge-save-form>Сохранить соответствие</button>';
+            html += '<button type="button" class="button button-secondary" data-zau-bridge-start-application data-mode="dry">Только проверить</button>';
+            html += '<button type="button" class="button button-primary" data-zau-bridge-start-application data-mode="import">Перенести заявления по этой форме</button>';
+            html += '</div></div>';
+        });
+        $section.find('[data-zau-bridge-forms]').html(html || '<p>Старый сайт не вернул ни одной формы.</p>');
+    }
+
+    $(document).on('click','[data-zau-bridge-load-forms]',function(){
+        const $section = $(this).closest('[data-zau-bridge]');
+        const $btn = $(this).prop('disabled',true).text('Загружаем…');
+        ajax({action:'zau_legacy_bridge_list_forms'}).done(function(resp){
+            if(!resp || !resp.success){ message($section, resp && resp.data && resp.data.message ? resp.data.message : 'Не удалось загрузить список форм.', 'error'); return; }
+            renderBridgeForms($section, resp.data);
+        }).always(function(){ $btn.prop('disabled',false).text('Загрузить список форм со старого сайта'); });
+    });
+
+    $(document).on('click','[data-zau-bridge-save-form]',function(){
+        const $card = $(this).closest('[data-zau-bridge-form-card]');
+        const $section = $(this).closest('[data-zau-bridge]');
+        const fieldMap = {};
+        $card.find('.zau-map-target').each(function(){ const v = $(this).val(); if(v){ fieldMap[$(this).data('index')] = v; } });
+        ajax({
+            action:'zau_legacy_bridge_save_form_map',
+            form_id:$card.data('form-id'),
+            target_form_id:$card.find('[data-zau-bridge-target-form]').val(),
+            template_id:$card.find('[data-zau-bridge-target-template]').val(),
+            field_map:JSON.stringify(fieldMap)
+        }).done(function(resp){
+            if(!resp || !resp.success){ message($section, resp && resp.data && resp.data.message ? resp.data.message : 'Не удалось сохранить соответствие.', 'error'); return; }
+            message($section, resp.data.message, 'success');
+        });
+    });
+
+    function bridgeStatLabel(key){ return statLabel(key); }
+    function renderBridgeProgress(scope, $section, formId, job){
+        const $panel = $section.find('[data-zau-bridge-progress="'+scope+'"]');
+        const total = Number(job.total || 0), done = Number(job.processed || 0), pct = total ? Math.min(100, Math.round(done/total*100)) : 0;
+        $panel.prop('hidden', false);
+        $panel.find('[data-zau-progress-bar]').css('width', pct+'%');
+        $panel.find('[data-zau-progress-text]').text(done+' из '+total+' · '+pct+'%'+(job.dry_run?' · режим проверки':''));
+        const stats = job.stats || {};
+        let html=''; Object.keys(stats).forEach(k => { if(Number(stats[k])) html += '<span><strong>'+stats[k]+'</strong>'+esc(bridgeStatLabel(k))+'</span>'; });
+        $panel.find('[data-zau-stats]').html(html || '<span>Пока нет обработанных записей</span>');
+        $panel.find('[data-zau-log]').text((job.log || []).join('\n'));
+        if(job.status === 'finished'){
+            message($section, job.dry_run ? 'Проверка по API завершена. Данные не записывались.' : 'Перенос по API завершён.', 'success');
+            return;
+        }
+        setTimeout(function(){ bridgeProcessBatch(scope, $section, formId); }, 300);
+    }
+    function bridgeProcessBatch(scope, $section, formId){
+        const data = {action:'zau_legacy_bridge_process', scope:scope};
+        if(scope === 'applications'){ data.form_id = formId; }
+        ajax(data).done(function(resp){
+            if(!resp || !resp.success){ message($section, resp && resp.data && resp.data.message ? resp.data.message : 'Ошибка обработки партии по API.', 'error'); return; }
+            renderBridgeProgress(scope, $section, formId, resp.data);
+        }).fail(function(xhr){ message($section, 'Сервер остановил перенос по API: HTTP '+xhr.status+'. Нажмите кнопку переноса повторно — уже обработанные записи не задублируются.', 'error'); });
+    }
+
+    $(document).on('click','[data-zau-bridge-start]',function(){
+        const $section = $(this).closest('[data-zau-bridge]');
+        const [scope, mode] = String($(this).data('zau-bridge-start')).split(':');
+        const dry = mode === 'dry';
+        const data = {action:'zau_legacy_bridge_start', scope:scope, dry_run:dry?1:0, overwrite:$section.find('[data-zau-bridge-overwrite]').is(':checked')?1:0, default_status:'Состоит в профсоюзе'};
+        ajax(data).done(function(resp){
+            if(!resp || !resp.success){ message($section, resp && resp.data && resp.data.message ? resp.data.message : 'Не удалось запустить перенос по API.', 'error'); return; }
+            $section.find('[data-zau-bridge-progress="'+scope+'"]')[0].scrollIntoView({behavior:'smooth',block:'start'});
+            renderBridgeProgress(scope, $section, '', resp.data);
+        }).fail(function(xhr){ message($section, 'Ошибка запуска: HTTP '+xhr.status, 'error'); });
+    });
+
+    $(document).on('click','[data-zau-bridge-start-application]',function(){
+        const $card = $(this).closest('[data-zau-bridge-form-card]');
+        const $section = $(this).closest('[data-zau-bridge]');
+        const formId = $card.data('form-id');
+        const dry = $(this).data('mode') === 'dry';
+        const targetFormId = $card.find('[data-zau-bridge-target-form]').val();
+        const templateId = $card.find('[data-zau-bridge-target-template]').val();
+        if(!targetFormId || !templateId){ message($section, 'Сначала сохраните соответствие: выберите форму нового кабинета и PDF-шаблон.', 'error'); return; }
+        const data = {action:'zau_legacy_bridge_start', scope:'applications', form_id:formId, dry_run:dry?1:0};
+        ajax(data).done(function(resp){
+            if(!resp || !resp.success){ message($section, resp && resp.data && resp.data.message ? resp.data.message : 'Не удалось запустить перенос заявлений по API.', 'error'); return; }
+            $section.find('[data-zau-bridge-progress="applications"]')[0].scrollIntoView({behavior:'smooth',block:'start'});
+            renderBridgeProgress('applications', $section, formId, resp.data);
+        }).fail(function(xhr){ message($section, 'Ошибка запуска: HTTP '+xhr.status, 'error'); });
+    });
 })(jQuery);
