@@ -327,6 +327,73 @@ abstract class ZAU_Union_Elementor_Widget_Base extends \Elementor\Widget_Base {
         $this->end_controls_section();
     }
 
+    /** Список стандартных и собственных вкладок кабинета — общий для виджета «Личный кабинет / раздел»
+     * и виджета «Личный кабинет с входом», чтобы оба предлагали одинаковый набор вкладок. */
+    protected function get_cabinet_tabs_options() {
+        $builtInTabs = ['home'=>'Главная','documents'=>'Документы','submissions'=>'Заявления','card'=>'Личная карточка','benefits'=>'Акции и скидки','members'=>'Участники','registry'=>'Реестр организации','info'=>'Материалы','logins'=>'История входов'];
+        $customTabs = [];
+        foreach (get_posts(['post_type'=>'zau_union_tab','post_status'=>'publish','numberposts'=>-1,'orderby'=>['menu_order'=>'ASC','date'=>'ASC']]) as $tabPost) {
+            if (get_post_meta($tabPost->ID, '_zau_tab_enabled', true) === '0') { continue; }
+            $slug = sanitize_title((string)get_post_meta($tabPost->ID, '_zau_tab_slug', true));
+            if (!$slug) { $slug = 'custom-' . $tabPost->ID; }
+            $customTabs[$slug] = 'Своя вкладка: ' . $tabPost->post_title;
+        }
+        return [$builtInTabs, $customTabs, $builtInTabs + $customTabs];
+    }
+
+    /** Контролы полного личного кабинета. $condition позволяет одному и тому же набору полей
+     * показываться либо всегда (новый виджет «Кабинет или вход»), либо только при выборе
+     * соответствующего варианта в другом контроле (существующий виджет «Личный кабинет / раздел»). */
+    protected function register_full_cabinet_controls($condition = []) {
+        [$builtInTabs, , $allTabs] = $this->get_cabinet_tabs_options();
+        $withCondition = function($args) use ($condition) { return $condition ? ($args + ['condition'=>$condition]) : $args; };
+        $this->add_control('cabinet_default_tab', $withCondition(['label'=>'Открывать вкладку','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'home','options'=>$allTabs]));
+        $this->add_control('cabinet_tabs', $withCondition(['label'=>'Стандартные вкладки','type'=>\Elementor\Controls_Manager::SELECT2,'multiple'=>true,'default'=>array_keys($builtInTabs),'options'=>$builtInTabs,'description'=>'Для обычного участника вкладки ответственного автоматически скрываются. Собственные вкладки управляются отдельным переключателем ниже.']));
+        $this->add_control('show_custom_tabs', $withCondition(['label'=>'Показывать собственные вкладки','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes','description'=>'Создание и доступ: «Профсоюз → Вкладки кабинета».']));
+        $this->add_control('show_quick_actions', $withCondition(['label'=>'Быстрые действия на главной','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']));
+        $this->add_control('show_document_search', $withCondition(['label'=>'Поиск и фильтр документов','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']));
+        $this->add_control('show_member_card', $withCondition(['label'=>'Показывать личную карточку','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes','description'=>'Скрывает вкладку, быстрый переход и содержимое личной карточки в этом экземпляре кабинета.']));
+        $this->add_control('mobile_bottom_nav', $withCondition(['label'=>'Закреплённые вкладки на телефоне','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']));
+    }
+
+    /** Строит шорткод полного личного кабинета из тех же настроек, что задаёт register_full_cabinet_controls(). */
+    protected function build_full_cabinet_shortcode($s) {
+        $defaultTab = sanitize_key($s['cabinet_default_tab'] ?? 'home');
+        $tabs = is_array($s['cabinet_tabs'] ?? null) ? array_values(array_filter(array_map('sanitize_key', $s['cabinet_tabs']))) : ['home','documents','submissions','members','registry','info','logins'];
+        $showCustom = (($s['show_custom_tabs'] ?? 'yes') === 'yes') ? 'yes' : 'no';
+        $quick = (($s['show_quick_actions'] ?? 'yes') === 'yes') ? 'yes' : 'no';
+        $docSearch = (($s['show_document_search'] ?? 'yes') === 'yes') ? 'yes' : 'no';
+        $memberCard = (($s['show_member_card'] ?? 'yes') === 'yes') ? 'yes' : 'no';
+        if ($memberCard === 'no') { $tabs = array_values(array_diff($tabs, ['card'])); }
+        $bottomNav = (($s['mobile_bottom_nav'] ?? 'yes') === 'yes') ? 'yes' : 'no';
+        return '[zau_union_cabinet default_tab="'.esc_attr($defaultTab).'" tabs="'.esc_attr(implode(',',$tabs)).'" custom_tabs="'.$showCustom.'" quick_actions="'.$quick.'" document_search="'.$docSearch.'" member_card="'.$memberCard.'" mobile_bottom_nav="'.$bottomNav.'"' . $this->auth_shortcode_attributes($s) . ']';
+    }
+
+    /** Контролы экрана «вход/регистрация» для гостя — те же поля, что у отдельного виджета «Вход + регистрация». */
+    protected function register_portal_content_controls() {
+        $this->add_control('form_id', ['label'=>'Форма после входа','type'=>\Elementor\Controls_Manager::SELECT,'options'=>$this->get_form_options(),'default'=>0]);
+        $this->add_control('pin_setup', ['label'=>'Создание постоянного PIN','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'inherit','options'=>['inherit'=>'Как в общих настройках','off'=>'Не показывать','optional'=>'Предлагать','required'=>'Требовать']]);
+        $this->add_control('default_flow', ['label'=>'Что показывать первым','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'choice','options'=>['choice'=>'Сначала выбор «Войти / Зарегистрироваться»','register'=>'Сразу регистрация нового участника','login'=>'Сразу вход существующего участника']]);
+        $this->add_control('show_start_choice', ['label'=>'Сначала показывать выбор «Войти / Зарегистрироваться»','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']);
+        $this->add_control('show_flow_tabs', ['label'=>'Показывать выбор «Регистрация / Вход»','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']);
+        $this->add_control('login_return_url', ['label'=>'После входа перейти','type'=>\Elementor\Controls_Manager::URL,'placeholder'=>home_url('/lk-profsoyuz/'),'description'=>'Переход только для существующего участника. После подтверждения новой регистрации откроется анкета на этой странице.']);
+        $this->add_control('mobile_steps', ['label'=>'Пошаговая форма AQNIET','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']);
+    }
+
+    /** Строит шорткод экрана «вход/регистрация» из тех же настроек, что задаёт register_portal_content_controls(). */
+    protected function build_guest_portal_shortcode($s) {
+        $id = absint($s['form_id'] ?? 0);
+        $pin = in_array(($s['pin_setup'] ?? 'inherit'), ['inherit','off','optional','required'], true) ? $s['pin_setup'] : 'inherit';
+        $flow = in_array(($s['default_flow'] ?? 'choice'), ['choice','register','login'], true) ? $s['default_flow'] : 'choice';
+        $showFlow = (($s['show_flow_tabs'] ?? 'yes') === 'yes') ? 'yes' : 'no';
+        $loginUrl = !empty($s['login_return_url']['url']) ? esc_url_raw($s['login_return_url']['url']) : '';
+        $mobileSteps = (($s['mobile_steps'] ?? 'yes') === 'yes') ? 'yes' : 'no';
+        $startScreen = (($s['show_start_choice'] ?? 'yes') === 'yes') ? 'yes' : 'no';
+        if ($flow === 'choice') { $startScreen = 'yes'; }
+        $fallbackFlow = $flow === 'choice' ? 'register' : $flow;
+        return '[zau_union_portal' . ($id ? ' id="'.$id.'"' : '') . ' pin_setup="'.esc_attr($pin).'" mobile_steps="'.$mobileSteps.'" default_flow="'.esc_attr($fallbackFlow).'" start_screen="'.$startScreen.'" show_flow_tabs="'.$showFlow.'"' . ($loginUrl ? ' login_return_url="'.esc_attr($loginUrl).'"' : '') . $this->auth_shortcode_attributes($s) . ']';
+    }
+
     protected function wrapper_classes_from_settings($settings) {
         $classes = [];
         if (($settings['hide_native_heading'] ?? '') === 'yes') { $classes[] = 'zau-e-hide-heading'; }
@@ -393,13 +460,7 @@ class ZAU_Union_Elementor_Portal_Widget extends ZAU_Union_Elementor_Widget_Base 
     public function get_icon() { return 'eicon-sign-in'; }
     protected function register_controls() {
         $this->start_controls_section('content', ['label'=>'Портал']);
-        $this->add_control('form_id', ['label'=>'Форма после входа','type'=>\Elementor\Controls_Manager::SELECT,'options'=>$this->get_form_options(),'default'=>0]);
-        $this->add_control('pin_setup', ['label'=>'Создание постоянного PIN','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'inherit','options'=>['inherit'=>'Как в общих настройках','off'=>'Не показывать','optional'=>'Предлагать','required'=>'Требовать']]);
-        $this->add_control('default_flow', ['label'=>'Что показывать первым','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'choice','options'=>['choice'=>'Сначала выбор «Войти / Зарегистрироваться»','register'=>'Сразу регистрация нового участника','login'=>'Сразу вход существующего участника']]);
-        $this->add_control('show_start_choice', ['label'=>'Сначала показывать выбор «Войти / Зарегистрироваться»','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']);
-        $this->add_control('show_flow_tabs', ['label'=>'Показывать выбор «Регистрация / Вход»','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']);
-        $this->add_control('login_return_url', ['label'=>'После входа перейти','type'=>\Elementor\Controls_Manager::URL,'placeholder'=>home_url('/lk-profsoyuz/'),'description'=>'Переход только для существующего участника. После подтверждения новой регистрации откроется анкета на этой странице.']);
-        $this->add_control('mobile_steps', ['label'=>'Пошаговая форма AQNIET','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']);
+        $this->register_portal_content_controls();
         $this->end_controls_section();
         $this->register_auth_method_controls();
         $this->register_common_content_controls();
@@ -407,16 +468,7 @@ class ZAU_Union_Elementor_Portal_Widget extends ZAU_Union_Elementor_Widget_Base 
     }
     protected function render() {
         $s = $this->get_settings_for_display();
-        $id = absint($s['form_id'] ?? 0);
-        $pin=in_array(($s['pin_setup']??'inherit'),['inherit','off','optional','required'],true)?$s['pin_setup']:'inherit';
-        $flow=in_array(($s['default_flow']??'choice'),['choice','register','login'],true)?$s['default_flow']:'choice';
-        $showFlow=(($s['show_flow_tabs']??'yes')==='yes')?'yes':'no';
-        $loginUrl=!empty($s['login_return_url']['url'])?esc_url_raw($s['login_return_url']['url']):'';
-        $mobileSteps=(($s['mobile_steps']??'yes')==='yes')?'yes':'no';
-        $startScreen=(($s['show_start_choice']??'yes')==='yes')?'yes':'no';
-        if($flow==='choice')$startScreen='yes';
-        $fallbackFlow=$flow==='choice'?'register':$flow;
-        $this->render_shortcode_in_wrapper('[zau_union_portal' . ($id ? ' id="'.$id.'"' : '') . ' pin_setup="'.esc_attr($pin).'" mobile_steps="'.$mobileSteps.'" default_flow="'.esc_attr($fallbackFlow).'" start_screen="'.$startScreen.'" show_flow_tabs="'.$showFlow.'"' . ($loginUrl?' login_return_url="'.esc_attr($loginUrl).'"':'') . $this->auth_shortcode_attributes($s) . ']', $this->wrapper_classes_from_settings($s));
+        $this->render_shortcode_in_wrapper($this->build_guest_portal_shortcode($s), $this->wrapper_classes_from_settings($s));
     }
 }
 
@@ -425,15 +477,7 @@ class ZAU_Union_Cabinet_Section_Widget extends ZAU_Union_Elementor_Widget_Base {
     public function get_title() { return 'ZAU — личный кабинет / раздел'; }
     public function get_icon() { return 'eicon-dashboard'; }
     protected function register_controls() {
-        $builtInTabs=['home'=>'Главная','documents'=>'Документы','submissions'=>'Заявления','card'=>'Личная карточка','benefits'=>'Акции и скидки','members'=>'Участники','registry'=>'Реестр организации','info'=>'Материалы','logins'=>'История входов'];
-        $customTabs=[];
-        foreach(get_posts(['post_type'=>'zau_union_tab','post_status'=>'publish','numberposts'=>-1,'orderby'=>['menu_order'=>'ASC','date'=>'ASC']]) as $tabPost){
-            if(get_post_meta($tabPost->ID,'_zau_tab_enabled',true)==='0')continue;
-            $slug=sanitize_title((string)get_post_meta($tabPost->ID,'_zau_tab_slug',true));
-            if(!$slug)$slug='custom-'.$tabPost->ID;
-            $customTabs[$slug]='Своя вкладка: '.$tabPost->post_title;
-        }
-        $allTabs=$builtInTabs+$customTabs;
+        [, $customTabs, ] = $this->get_cabinet_tabs_options();
         $sectionOptions=['full'=>'Личный кабинет целиком','profile'=>'Шапка профиля и статус','navigation'=>'Навигация','stats'=>'Статистика','documents'=>'Мои документы','submissions'=>'Мои заявления','card'=>'Личная карточка','benefits'=>'Акции и скидки','members'=>'Участники организации','registry'=>'Реестр организации','info'=>'Материалы','logins'=>'История входов','logout'=>'Кнопка выхода'];
         foreach($customTabs as $slug=>$label)$sectionOptions[$slug]=$label;
         $this->start_controls_section('content_section', ['label'=>'Содержимое']);
@@ -441,13 +485,7 @@ class ZAU_Union_Cabinet_Section_Widget extends ZAU_Union_Elementor_Widget_Base {
             'label'=>'Что вывести','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'full',
             'options'=>$sectionOptions,
         ]);
-        $this->add_control('cabinet_default_tab', ['label'=>'Открывать вкладку','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'home','options'=>$allTabs,'condition'=>['section_type'=>'full']]);
-        $this->add_control('cabinet_tabs', ['label'=>'Стандартные вкладки','type'=>\Elementor\Controls_Manager::SELECT2,'multiple'=>true,'default'=>array_keys($builtInTabs),'options'=>$builtInTabs,'condition'=>['section_type'=>'full'],'description'=>'Для обычного участника вкладки ответственного автоматически скрываются. Собственные вкладки управляются отдельным переключателем ниже.']);
-        $this->add_control('show_custom_tabs', ['label'=>'Показывать собственные вкладки','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes','condition'=>['section_type'=>'full'],'description'=>'Создание и доступ: «Профсоюз → Вкладки кабинета».']);
-        $this->add_control('show_quick_actions', ['label'=>'Быстрые действия на главной','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes','condition'=>['section_type'=>'full']]);
-        $this->add_control('show_document_search', ['label'=>'Поиск и фильтр документов','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes','condition'=>['section_type'=>'full']]);
-        $this->add_control('show_member_card', ['label'=>'Показывать личную карточку','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes','condition'=>['section_type'=>'full'],'description'=>'Скрывает вкладку, быстрый переход и содержимое личной карточки в этом экземпляре кабинета.']);
-        $this->add_control('mobile_bottom_nav', ['label'=>'Закреплённые вкладки на телефоне','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes','condition'=>['section_type'=>'full']]);
+        $this->register_full_cabinet_controls(['section_type'=>'full']);
         $this->add_control('custom_title', ['label'=>'Свой заголовок','type'=>\Elementor\Controls_Manager::TEXT,'condition'=>['section_type'=>['documents','submissions','card','benefits','members','info','logins']]]);
         $this->add_control('custom_subtitle', ['label'=>'Своё описание','type'=>\Elementor\Controls_Manager::TEXTAREA,'rows'=>3,'condition'=>['section_type'=>['documents','submissions','card','benefits','members','info','logins']]]);
         $this->add_control('show_heading', ['label'=>'Показывать заголовок раздела','type'=>\Elementor\Controls_Manager::SWITCHER,'label_on'=>'Да','label_off'=>'Нет','return_value'=>'yes','default'=>'yes','condition'=>['section_type'=>['documents','submissions','card','benefits','members','info','logins']]]);
@@ -462,15 +500,7 @@ class ZAU_Union_Cabinet_Section_Widget extends ZAU_Union_Elementor_Widget_Base {
         $auth = $this->auth_shortcode_attributes($s);
         $type = sanitize_key($s['section_type'] ?? 'full');
         if ($type === 'full') {
-            $defaultTab=sanitize_key($s['cabinet_default_tab']??'home');
-            $tabs=is_array($s['cabinet_tabs']??null)?array_values(array_filter(array_map('sanitize_key',$s['cabinet_tabs']))):['home','documents','submissions','members','registry','info','logins'];
-            $showCustom=(($s['show_custom_tabs']??'yes')==='yes')?'yes':'no';
-            $quick=(($s['show_quick_actions']??'yes')==='yes')?'yes':'no';
-            $docSearch=(($s['show_document_search']??'yes')==='yes')?'yes':'no';
-            $memberCard=(($s['show_member_card']??'yes')==='yes')?'yes':'no';
-            if($memberCard==='no')$tabs=array_values(array_diff($tabs,['card']));
-            $bottomNav=(($s['mobile_bottom_nav']??'yes')==='yes')?'yes':'no';
-            $shortcode = '[zau_union_cabinet default_tab="'.esc_attr($defaultTab).'" tabs="'.esc_attr(implode(',',$tabs)).'" custom_tabs="'.$showCustom.'" quick_actions="'.$quick.'" document_search="'.$docSearch.'" member_card="'.$memberCard.'" mobile_bottom_nav="'.$bottomNav.'"' . $auth . ']';
+            $shortcode = $this->build_full_cabinet_shortcode($s);
         }
         elseif ($type === 'registry') { $shortcode = '[zau_union_org_registry' . $auth . ']'; }
         elseif (get_page_by_path($type,OBJECT,'zau_union_tab') || get_posts(['post_type'=>'zau_union_tab','post_status'=>'publish','numberposts'=>1,'meta_key'=>'_zau_tab_slug','meta_value'=>$type])) { $shortcode = '[zau_union_custom_tab slug="'.esc_attr($type).'"' . $auth . ']'; }
@@ -549,5 +579,52 @@ class ZAU_Union_Elementor_My_Documents_Widget extends ZAU_Union_Elementor_Widget
     protected function render() {
         $s = $this->get_settings_for_display();
         $this->render_shortcode_in_wrapper('[zau_my_certificates' . $this->auth_shortcode_attributes($s) . ']', $this->wrapper_classes_from_settings($s));
+    }
+}
+
+/**
+ * Один виджет для главной страницы: авторизованному участнику показывает личный кабинет,
+ * гостю — экран «Войти / Зарегистрироваться». Переиспользует те же контролы и тот же
+ * генератор шорткодов, что и отдельные виджеты «Личный кабинет / раздел» и «Вход + регистрация»,
+ * поэтому ведёт себя идентично им и не меняет их поведение.
+ */
+class ZAU_Union_Elementor_Cabinet_Or_Auth_Widget extends ZAU_Union_Elementor_Widget_Base {
+    public function get_name() { return 'zau-union-cabinet-or-auth'; }
+    public function get_title() { return 'ZAU — Личный кабинет / Вход'; }
+    public function get_icon() { return 'eicon-single-page'; }
+    protected function register_controls() {
+        $this->start_controls_section('content_member', ['label'=>'Если участник вошёл']);
+        $this->register_full_cabinet_controls();
+        $this->end_controls_section();
+
+        $this->start_controls_section('content_guest', ['label'=>'Если гость (не вошёл)']);
+        $this->register_portal_content_controls();
+        $this->end_controls_section();
+
+        $this->start_controls_section('content_editor_preview', ['label'=>'Предпросмотр в редакторе']);
+        $this->add_control('preview_state', [
+            'label'=>'Что показать в редакторе Elementor',
+            'type'=>\Elementor\Controls_Manager::SELECT,
+            'default'=>'auto',
+            'options'=>['auto'=>'Как у реального посетителя (авто)','member'=>'Как для вошедшего участника','guest'=>'Как для гостя'],
+            'description'=>'Действует только внутри редактора/предпросмотра Elementor — помогает увидеть оба состояния, не выходя из своего аккаунта. На опубликованной странице всегда используется реальный статус входа посетителя.',
+        ]);
+        $this->end_controls_section();
+
+        $this->register_auth_method_controls();
+        $this->register_common_content_controls();
+        $this->register_style_controls();
+    }
+    protected function render() {
+        $s = $this->get_settings_for_display();
+        $preview = sanitize_key($s['preview_state'] ?? 'auto');
+        $inEditor = class_exists('\\Elementor\\Plugin') && \Elementor\Plugin::$instance
+            && ((\Elementor\Plugin::$instance->editor && \Elementor\Plugin::$instance->editor->is_edit_mode())
+                || (\Elementor\Plugin::$instance->preview && \Elementor\Plugin::$instance->preview->is_preview_mode()));
+        $showMember = is_user_logged_in();
+        if ($inEditor && $preview !== 'auto') { $showMember = ($preview === 'member'); }
+        $shortcode = $showMember ? $this->build_full_cabinet_shortcode($s) : $this->build_guest_portal_shortcode($s);
+        $extraClass = 'zau-e-cabinet-or-auth ' . ($showMember ? 'zau-e-state-member' : 'zau-e-state-guest');
+        $this->render_shortcode_in_wrapper($shortcode, $this->wrapper_classes_from_settings($s) . ' ' . $extraClass);
     }
 }

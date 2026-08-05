@@ -25,5 +25,6 @@ final class ZAU_Union_Elementor {
         $widgets_manager->register(new ZAU_Union_Elementor_Org_Registry_Widget());
         $widgets_manager->register(new ZAU_Union_Elementor_Verify_Widget());
         $widgets_manager->register(new ZAU_Union_Elementor_My_Documents_Widget());
+        $widgets_manager->register(new ZAU_Union_Elementor_Cabinet_Or_Auth_Widget());
     }
 }
