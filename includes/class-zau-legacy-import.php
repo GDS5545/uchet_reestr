@@ -14,8 +14,8 @@ if (!defined('ABSPATH')) { exit; }
  * безошибочно приложить готовый PDF к нужному аккаунту/заявлению.
  */
 final class ZAU_Legacy_Import {
-    const VERSION = '3.0.0';
-    const DB_VERSION = '3.0.0';
+    const VERSION = '3.1.0';
+    const DB_VERSION = '3.1.0';
     const OPT_DB_VERSION = 'zau_legacy_import_db_version';
     const NONCE = 'zau_legacy_import_nonce';
 

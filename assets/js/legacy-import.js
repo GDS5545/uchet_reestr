@@ -177,10 +177,14 @@
 
     $(document).on('click','[data-zau-bridge-save-settings]',function(){
         const $section = $(this).closest('[data-zau-bridge]');
-        ajax({action:'zau_legacy_bridge_save_settings', url:$section.find('[data-zau-bridge-url]').val(), secret:$section.find('[data-zau-bridge-secret]').val()}).done(function(resp){
+        const url = $section.find('[data-zau-bridge-url]').val();
+        const secret = $section.find('[data-zau-bridge-secret]').val();
+        if(!url || !secret){ message($section, 'Укажите адрес старого сайта и секретный ключ.', 'error'); return; }
+        const $btn = $(this).prop('disabled',true).text('Сохраняем…');
+        ajax({action:'zau_legacy_bridge_save_settings', url:url, secret:secret}).done(function(resp){
             if(!resp || !resp.success){ message($section, resp && resp.data && resp.data.message ? resp.data.message : 'Не удалось сохранить.', 'error'); return; }
             message($section, resp.data.message, 'success');
-        });
+        }).fail(function(xhr){ message($section, 'Ошибка сохранения: HTTP '+xhr.status+(xhr.responseText ? (' · '+String(xhr.responseText).slice(0,200)) : ''), 'error'); }).always(function(){ $btn.prop('disabled',false).text('Сохранить подключение'); });
     });
 
     $(document).on('click','[data-zau-bridge-test]',function(){
@@ -190,7 +194,7 @@
             if(!resp || !resp.success){ $section.find('[data-zau-bridge-test-result]').text((resp && resp.data && resp.data.message) || 'Не удалось подключиться.'); return; }
             const d = resp.data;
             $section.find('[data-zau-bridge-test-result]').text('Подключено: '+d.site+' · WordPress '+d.wp_version+' · Ultimate Member: '+(d.um_active?'да':'нет')+' · WPForms: '+(d.wpforms_active?'да':'нет')+' · пользователей: '+d.user_count+' · форм: '+d.forms_count);
-        }).always(function(){ $btn.prop('disabled',false).text('Проверить подключение'); });
+        }).fail(function(xhr){ $section.find('[data-zau-bridge-test-result]').text('Ошибка проверки: HTTP '+xhr.status+(xhr.responseText ? (' · '+String(xhr.responseText).slice(0,200)) : '')); }).always(function(){ $btn.prop('disabled',false).text('Проверить подключение'); });
     });
 
     function fieldMapSelect(index, selected){
@@ -233,7 +237,7 @@
         ajax({action:'zau_legacy_bridge_list_forms'}).done(function(resp){
             if(!resp || !resp.success){ message($section, resp && resp.data && resp.data.message ? resp.data.message : 'Не удалось загрузить список форм.', 'error'); return; }
             renderBridgeForms($section, resp.data);
-        }).always(function(){ $btn.prop('disabled',false).text('Загрузить список форм со старого сайта'); });
+        }).fail(function(xhr){ message($section, 'Ошибка загрузки списка форм: HTTP '+xhr.status, 'error'); }).always(function(){ $btn.prop('disabled',false).text('Загрузить список форм со старого сайта'); });
     });
 
     $(document).on('click','[data-zau-bridge-save-form]',function(){
@@ -250,7 +254,7 @@
         }).done(function(resp){
             if(!resp || !resp.success){ message($section, resp && resp.data && resp.data.message ? resp.data.message : 'Не удалось сохранить соответствие.', 'error'); return; }
             message($section, resp.data.message, 'success');
-        });
+        }).fail(function(xhr){ message($section, 'Ошибка сохранения соответствия: HTTP '+xhr.status, 'error'); });
     });
 
     function bridgeStatLabel(key){ return statLabel(key); }
