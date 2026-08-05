@@ -100,7 +100,8 @@
             overwrite:$section.find('[name="overwrite"]').is(':checked') ? 1 : 0,
             default_status:$section.find('[name="default_status"]').val(),
             batch_size:$section.find('[name="batch_size"]').val(),
-            form_id: scope === 'applications' ? $section.find('[data-zau-form-id]').val() : ''
+            form_id: scope === 'applications' ? $section.find('[data-zau-form-id]').val() : '',
+            template_id: scope === 'applications' ? $section.find('[data-zau-csv-template]').val() : ''
         };
         $section.find('[data-zau-start]').prop('disabled',true);
         ajax(data).done(function(resp){

@@ -14,8 +14,8 @@ if (!defined('ABSPATH')) { exit; }
  * безошибочно приложить готовый PDF к нужному аккаунту/заявлению.
  */
 final class ZAU_Legacy_Import {
-    const VERSION = '3.1.0';
-    const DB_VERSION = '3.1.0';
+    const VERSION = '3.2.0';
+    const DB_VERSION = '3.2.0';
     const OPT_DB_VERSION = 'zau_legacy_import_db_version';
     const NONCE = 'zau_legacy_import_nonce';
 
@@ -196,6 +196,15 @@ final class ZAU_Legacy_Import {
             'branch_name' => 'Филиал профсоюза',
             'submission_date' => 'Дата подачи заявления',
             'status' => 'Статус заявления',
+            'document_no' => 'Номер документа (сохранить старую нумерацию)',
+            'issue_date' => 'Дата выдачи документа',
+            'signature_url' => 'Подпись (ссылка на файл/изображение)',
+            'signature2_url' => 'Вторая подпись (ссылка на файл/изображение)',
+            'stamp_url' => 'Печать / штамп (ссылка на файл/изображение)',
+            'extra1' => 'Доп. поле шаблона 1 (extra1)',
+            'extra2' => 'Доп. поле шаблона 2 (extra2)',
+            'extra3' => 'Доп. поле шаблона 3 (extra3)',
+            'extra4' => 'Доп. поле шаблона 4 (extra4)',
         ];
     }
 
@@ -224,6 +233,15 @@ final class ZAU_Legacy_Import {
             'submission_date' => ['дата подачи','дата заявления','дата заявки','created at','дата создания'],
             'status' => ['статус'],
             'member_status' => ['статус участника','статус членства'],
+            'document_no' => ['номер документа','номер заявления','номер сертификата','document no','application no'],
+            'issue_date' => ['дата выдачи','дата документа','issue date'],
+            'signature_url' => ['подпись','signature'],
+            'signature2_url' => ['вторая подпись','подпись 2','second signature'],
+            'stamp_url' => ['печать','штамп','stamp'],
+            'extra1' => ['доп поле 1','extra1','дополнительное поле 1'],
+            'extra2' => ['доп поле 2','extra2','дополнительное поле 2'],
+            'extra3' => ['доп поле 3','extra3','дополнительное поле 3'],
+            'extra4' => ['доп поле 4','extra4','дополнительное поле 4'],
         ];
         foreach ($rules as $target => $variants) {
             if (!isset($known[$target])) { continue; }
@@ -372,11 +390,16 @@ final class ZAU_Legacy_Import {
             wp_send_json_error(['message'=>'Для заявлений обязательны и «ID записи заявления», и «ID пользователя Ultimate Member» (для привязки к аккаунту).'], 400);
         }
         $formId = 0;
+        $templateId = 0;
         if ($scope === 'applications') {
             $formId = absint($_POST['form_id'] ?? 0);
+            $templateId = absint($_POST['template_id'] ?? 0);
             global $wpdb;
             if (!$formId || !$wpdb->get_var($wpdb->prepare("SELECT id FROM {$this->forms_table} WHERE id=%d", $formId))) {
                 wp_send_json_error(['message'=>'Выберите форму заявления, к которой будут привязаны перенесённые записи.'], 400);
+            }
+            if ($templateId && !$wpdb->get_var($wpdb->prepare("SELECT id FROM {$this->templates_table} WHERE id=%d", $templateId))) {
+                wp_send_json_error(['message'=>'Выбранный PDF-шаблон не найден.'], 400);
             }
         }
         $dryRun = !empty($_POST['dry_run']);
@@ -385,6 +408,7 @@ final class ZAU_Legacy_Import {
             'overwrite'=>!empty($_POST['overwrite']) ? 1 : 0,
             'default_status'=>sanitize_text_field((string)($_POST['default_status'] ?? 'Заявление подано')),
             'form_id'=>$formId,
+            'template_id'=>$templateId,
             'batch_size'=>max(10, min(200, absint($_POST['batch_size'] ?? 50))),
         ];
         $job = [
@@ -470,8 +494,9 @@ final class ZAU_Legacy_Import {
             if ($key === 'email') { $value = sanitize_email($value); }
             elseif ($key === 'phone') { $value = $this->normalize_phone($value); }
             elseif (in_array($key, ['iin','organization_bin'], true)) { $value = preg_replace('/\D+/', '', $value); }
-            elseif (in_array($key, ['registration_date','submission_date','birth_date'], true)) { $value = $this->normalize_date($value); }
+            elseif (in_array($key, ['registration_date','submission_date','birth_date','issue_date'], true)) { $value = $this->normalize_date($value); }
             elseif (in_array($key, ['legacy_user_id','legacy_entry_id'], true)) { $value = sanitize_text_field($value); }
+            elseif ($key === 'document_no') { $value = sanitize_text_field(str_replace(["\r","\n","\t"], ' ', $value)); }
             $out[$key] = $value;
         }
         if (empty($out['full_name'])) { $out['full_name'] = trim(implode(' ', array_filter([$out['last_name'] ?? '', $out['first_name'] ?? '', $out['middle_name'] ?? '']))); }
@@ -723,18 +748,41 @@ final class ZAU_Legacy_Import {
         $data['legacy_fields'] = $legacyFields;
         $createdAt = $this->mysql_date($mapped['submission_date'] ?? '') ?: current_time('mysql');
         $status = sanitize_key($mapped['status'] ?? 'submitted') ?: 'submitted';
+        $signatures = !empty($mapped['signature_url']) ? ['signature'=>esc_url_raw($mapped['signature_url'])] : [];
+        $existingDocumentId = $existingMap ? (int)$existingMap->target_document_id : 0;
+        $resultKind = '';
         if ($existingMap && $existingMap->target_submission_id) {
             $submissionId = (int)$existingMap->target_submission_id;
-            $ok = $wpdb->update($this->submissions_table, ['status'=>$status,'data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),'updated_at'=>current_time('mysql')], ['id'=>$submissionId]);
+            $ok = $wpdb->update($this->submissions_table, ['status'=>$status,'data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),'signature_urls_json'=>wp_json_encode($signatures, JSON_UNESCAPED_UNICODE),'updated_at'=>current_time('mysql')], ['id'=>$submissionId]);
             if ($ok === false) { return ['kind'=>'error','row'=>$rowNumber,'message'=>'Не удалось обновить ранее перенесённую заявку.','mapped'=>$mapped]; }
-            $this->save_map_row('application', $entryId, ['target_user_id'=>$userId,'target_submission_id'=>$submissionId,'status'=>'imported','message'=>'OK']);
-            return ['kind'=>'updated','row'=>$rowNumber,'message'=>'Заявка обновлена.','user_id'=>$userId,'submission_id'=>$submissionId,'mapped'=>$mapped];
+            $resultKind = 'updated';
+        } else {
+            $wpdb->insert($this->submissions_table, ['form_id'=>$formId,'user_id'=>$userId,'status'=>$status,'data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),'signature_urls_json'=>wp_json_encode($signatures, JSON_UNESCAPED_UNICODE),'ip'=>'legacy-import','created_at'=>$createdAt,'updated_at'=>current_time('mysql')]);
+            $submissionId = (int)$wpdb->insert_id;
+            if (!$submissionId) { return ['kind'=>'error','row'=>$rowNumber,'message'=>'Не удалось сохранить заявку.','mapped'=>$mapped]; }
+            $resultKind = 'created';
         }
-        $wpdb->insert($this->submissions_table, ['form_id'=>$formId,'user_id'=>$userId,'status'=>$status,'data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),'signature_urls_json'=>'{}','ip'=>'legacy-import','created_at'=>$createdAt,'updated_at'=>current_time('mysql')]);
-        $submissionId = (int)$wpdb->insert_id;
-        if (!$submissionId) { return ['kind'=>'error','row'=>$rowNumber,'message'=>'Не удалось сохранить заявку.','mapped'=>$mapped]; }
-        $this->save_map_row('application', $entryId, ['target_user_id'=>$userId,'target_submission_id'=>$submissionId,'status'=>'imported','message'=>'OK']);
-        return ['kind'=>'created','row'=>$rowNumber,'message'=>'Заявка создана.','user_id'=>$userId,'submission_id'=>$submissionId,'mapped'=>$mapped];
+
+        $documentId = 0;
+        $collision = '';
+        $templateId = absint($job['options']['template_id'] ?? 0);
+        if ($templateId) {
+            $ownerUser = get_user_by('id', $userId);
+            $documentFullName = !empty($mapped['full_name']) ? $mapped['full_name'] : ($ownerUser ? $ownerUser->display_name : '');
+            $urls = [
+                'signature' => $mapped['signature_url'] ?? '',
+                'signature2' => $mapped['signature2_url'] ?? '',
+                'stamp' => $mapped['stamp_url'] ?? '',
+            ];
+            $documentId = $this->upsert_document_for_submission($userId, $submissionId, $templateId, array_merge($data, ['full_name'=>$documentFullName]), $urls, $existingDocumentId, $collision);
+            if (is_wp_error($documentId)) { $collision = $documentId->get_error_message(); $documentId = 0; }
+        }
+
+        $this->save_map_row('application', $entryId, ['target_user_id'=>$userId,'target_submission_id'=>$submissionId,'target_document_id'=>(int)$documentId,'status'=>'imported','message'=>'OK']);
+        $message = $resultKind === 'created' ? 'Заявка создана.' : 'Заявка обновлена.';
+        if ($templateId && $documentId) { $message .= ' Документ по шаблону подготовлен.'; }
+        if ($collision !== '') { $message .= ' ' . $collision; }
+        return ['kind'=>$resultKind,'row'=>$rowNumber,'message'=>$message,'user_id'=>$userId,'submission_id'=>$submissionId,'mapped'=>$mapped];
     }
 
     private function apply_result(&$job, $result) {
@@ -1256,35 +1304,100 @@ final class ZAU_Legacy_Import {
         return trailingslashit($uploads['baseurl']) . $sub . '/' . $name;
     }
 
-    /** Создаёт (или обновляет данные и подпись у уже существующего) черновик документа для заявления/карточки,
-     * перенесённых по API. PDF ещё не отрисован — это делает либо существующий инструмент «Массовое
-     * пересоздание», либо шаг 3 «Привязка PDF», если старый готовый PDF будет скопирован по FTP. */
-    private function upsert_bridge_document($userId, $submissionId, $templateId, $data, $signatureUrl, $existingDocumentId) {
+    private function document_no_taken($no, $excludeId = 0) {
         global $wpdb;
+        if ($no === '') { return false; }
+        if ($excludeId) {
+            return (bool)$wpdb->get_var($wpdb->prepare("SELECT id FROM {$this->docs_table} WHERE document_no=%s AND id<>%d LIMIT 1", $no, $excludeId));
+        }
+        return (bool)$wpdb->get_var($wpdb->prepare("SELECT id FROM {$this->docs_table} WHERE document_no=%s LIMIT 1", $no));
+    }
+
+    private function display_date($value) {
+        $value = (string)$value;
+        if ($value === '') { return wp_date('d.m.Y'); }
+        $ts = strtotime($value);
+        return $ts ? wp_date('d.m.Y', $ts) : wp_date('d.m.Y');
+    }
+
+    /** Создаёт (или обновляет данные, подписи и номер у уже существующего черновика) документ для заявления/
+     * карточки, перенесённых по CSV или API. Поля document_no/issue_date/подписи/extra1-4 берутся из
+     * сопоставленных полей старой формы, если админ их сопоставил — иначе используются значения по умолчанию.
+     * PDF ещё не отрисован — это делает либо «Массовое пересоздание», либо шаг 3 «Привязка PDF», если готовый
+     * PDF будет скопирован по FTP. Возвращает ID документа или WP_Error; если запрошенный document_no уже
+     * занят другим документом, откатывается на автоматическую нумерацию и сообщает об этом в $collision. */
+    private function upsert_document_for_submission($userId, $submissionId, $templateId, $data, $urls, $existingDocumentId, &$collision = null) {
+        global $wpdb;
+        $collision = '';
         $tpl = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->templates_table} WHERE id=%d", $templateId));
-        if (!$tpl) { return new WP_Error('zau_bridge_template', 'Выбранный PDF-шаблон больше не существует.'); }
+        if (!$tpl) { return new WP_Error('zau_document_template', 'Выбранный PDF-шаблон больше не существует.'); }
         $now = current_time('mysql');
+        $signatureUrl = esc_url_raw((string)($urls['signature'] ?? ''));
+        $signature2Url = esc_url_raw((string)($urls['signature2'] ?? ''));
+        $stampUrl = esc_url_raw((string)($urls['stamp'] ?? ''));
+        $issueDate = !empty($data['issue_date']) ? $this->display_date($data['issue_date']) : wp_date('d.m.Y');
+        $extras = [
+            'extra1' => sanitize_textarea_field((string)($data['extra1'] ?? '')),
+            'extra2' => sanitize_textarea_field((string)($data['extra2'] ?? '')),
+            'extra3' => sanitize_textarea_field((string)($data['extra3'] ?? '')),
+            'extra4' => sanitize_textarea_field((string)($data['extra4'] ?? '')),
+        ];
+        $requestedNo = sanitize_text_field((string)($data['document_no'] ?? ''));
+
         if ($existingDocumentId) {
             $existing = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->docs_table} WHERE id=%d", $existingDocumentId));
             if ($existing && $existing->record_status === 'draft') {
-                $wpdb->update($this->docs_table, [
+                $update = [
                     'full_name'=>sanitize_text_field($data['full_name'] ?? ''),
                     'organization'=>sanitize_text_field($data['organization'] ?? ''),
-                    'signature_url'=>esc_url_raw($signatureUrl),
+                    'issue_date'=>$issueDate,
                     'data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),
                     'updated_at'=>$now,
-                ], ['id'=>$existingDocumentId]);
+                ] + $extras;
+                if ($signatureUrl !== '') { $update['signature_url'] = $signatureUrl; }
+                if ($signature2Url !== '') { $update['signature2_url'] = $signature2Url; }
+                if ($stampUrl !== '') { $update['stamp_url'] = $stampUrl; }
+                if ($requestedNo !== '' && $requestedNo !== $existing->document_no) {
+                    if ($this->document_no_taken($requestedNo, (int)$existingDocumentId)) {
+                        $collision = 'Номер документа «' . $requestedNo . '» уже занят другим документом — оставлен прежний номер «' . $existing->document_no . '».';
+                    } else {
+                        $update['document_no'] = $requestedNo;
+                    }
+                }
+                $wpdb->update($this->docs_table, $update, ['id'=>$existingDocumentId]);
                 return (int)$existingDocumentId;
             }
             if ($existing) { return (int)$existingDocumentId; }
         }
+
         $token = bin2hex(random_bytes(24));
-        $row = ['template_id'=>$templateId,'user_id'=>$userId,'created_by'=>get_current_user_id(),'source_submission_id'=>$submissionId,'full_name'=>sanitize_text_field($data['full_name'] ?? ''),'document_title'=>$tpl->name,'organization'=>sanitize_text_field($data['organization'] ?? ''),'issue_date'=>wp_date('d.m.Y'),'document_no'=>'PENDING-'.$token,'member_status'=>(string)get_user_meta($userId,'zau_member_status',true),'signature_url'=>esc_url_raw($signatureUrl),'signature2_url'=>'','stamp_url'=>'','data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),'orientation'=>$tpl->orientation,'verify_token'=>$token,'record_status'=>'draft','created_at'=>$now,'updated_at'=>$now];
-        if (!$wpdb->insert($this->docs_table, $row)) { return new WP_Error('zau_bridge_document', 'Не удалось создать запись документа.'); }
+        $useRequestedNo = $requestedNo !== '' && !$this->document_no_taken($requestedNo);
+        if ($requestedNo !== '' && !$useRequestedNo) { $collision = 'Номер документа «' . $requestedNo . '» уже занят другим документом — присвоен автоматический номер.'; }
+        $row = [
+            'template_id'=>$templateId,'user_id'=>$userId,'created_by'=>get_current_user_id(),'source_submission_id'=>$submissionId,
+            'full_name'=>sanitize_text_field($data['full_name'] ?? ''),'document_title'=>$tpl->name,'organization'=>sanitize_text_field($data['organization'] ?? ''),
+            'issue_date'=>$issueDate,'document_no'=>$useRequestedNo ? $requestedNo : ('PENDING-'.$token),
+            'member_status'=>(string)get_user_meta($userId,'zau_member_status',true),
+            'signature_url'=>$signatureUrl,'signature2_url'=>$signature2Url,'stamp_url'=>$stampUrl,
+            'data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),'orientation'=>$tpl->orientation,'verify_token'=>$token,
+            'record_status'=>'draft','created_at'=>$now,'updated_at'=>$now,
+        ] + $extras;
+        if (!$wpdb->insert($this->docs_table, $row)) { return new WP_Error('zau_document_insert', 'Не удалось создать запись документа.'); }
         $documentId = (int)$wpdb->insert_id;
-        $documentNo = class_exists('ZAU_Certificate_PDF_Generator') ? ZAU_Certificate_PDF_Generator::instance()->format_document_number($tpl, $documentId) : ('DOC-' . $documentId);
-        $wpdb->update($this->docs_table, ['document_no'=>$documentNo], ['id'=>$documentId]);
+        if (!$useRequestedNo) {
+            $documentNo = class_exists('ZAU_Certificate_PDF_Generator') ? ZAU_Certificate_PDF_Generator::instance()->format_document_number($tpl, $documentId) : ('DOC-' . $documentId);
+            $wpdb->update($this->docs_table, ['document_no'=>$documentNo], ['id'=>$documentId]);
+        }
         return $documentId;
+    }
+
+    /** Пытается скачать вложение со старого сайта через защищённый мост; если это не файл в его uploads
+     * (внешняя ссылка), использует значение как обычный URL. Пустая строка на входе — пустая строка на выходе. */
+    private function resolve_bridge_asset_url($value, $subdir, $prefix) {
+        $value = trim((string)$value);
+        if ($value === '' || !preg_match('#^https?://#i', $value)) { return ''; }
+        $downloaded = $this->download_bridge_file($value, $subdir, $prefix);
+        return $downloaded !== '' ? $downloaded : esc_url_raw($value);
     }
 
     private function process_bridge_application_row($entry, $formMap, $job) {
@@ -1320,7 +1433,11 @@ final class ZAU_Legacy_Import {
         $signatureUrl = '';
         if (!empty($entry['signature_url'])) {
             $signatureUrl = $this->download_bridge_file($entry['signature_url'], 'zau-signatures', 'legacy-' . $entryId);
+        } elseif (!empty($mapped['signature_url'])) {
+            $signatureUrl = $this->resolve_bridge_asset_url($mapped['signature_url'], 'zau-signatures', 'legacy-' . $entryId);
         }
+        $signature2Url = !empty($mapped['signature2_url']) ? $this->resolve_bridge_asset_url($mapped['signature2_url'], 'zau-signatures', 'legacy-' . $entryId . '-2') : '';
+        $stampUrl = !empty($mapped['stamp_url']) ? $this->resolve_bridge_asset_url($mapped['stamp_url'], 'zau-stamps', 'legacy-' . $entryId) : '';
 
         global $wpdb;
         $data = $mapped;
@@ -1353,11 +1470,15 @@ final class ZAU_Legacy_Import {
 
         $ownerUser = get_user_by('id', $userId);
         $documentFullName = !empty($mapped['full_name']) ? $mapped['full_name'] : ($ownerUser ? $ownerUser->display_name : '');
-        $documentId = $this->upsert_bridge_document($userId, $submissionId, $templateId, array_merge($data, ['full_name'=>$documentFullName]), $signatureUrl, $existingDocumentId);
+        $collision = '';
+        $urls = ['signature'=>$signatureUrl, 'signature2'=>$signature2Url, 'stamp'=>$stampUrl];
+        $documentId = $this->upsert_document_for_submission($userId, $submissionId, $templateId, array_merge($data, ['full_name'=>$documentFullName]), $urls, $existingDocumentId, $collision);
         if (is_wp_error($documentId)) { $documentId = 0; }
 
         $this->save_map_row('application', $entryId, ['target_user_id'=>$userId,'target_submission_id'=>$submissionId,'target_document_id'=>(int)$documentId,'status'=>'imported','message'=>'OK (API)']);
-        return ['kind'=>$resultKind,'row'=>$job['processed'],'message'=>$resultKind === 'created' ? 'Заявка создана по API.' : 'Заявка обновлена по API.','user_id'=>$userId,'submission_id'=>$submissionId,'mapped'=>$mapped];
+        $message = $resultKind === 'created' ? 'Заявка создана по API.' : 'Заявка обновлена по API.';
+        if ($collision !== '') { $message .= ' ' . $collision; }
+        return ['kind'=>$resultKind,'row'=>$job['processed'],'message'=>$message,'user_id'=>$userId,'submission_id'=>$submissionId,'mapped'=>$mapped];
     }
 
     public function page() {
@@ -1464,7 +1585,7 @@ final class ZAU_Legacy_Import {
             <section class="zau-ui-card" data-zau-scope="applications">
                 <h2>Шаг 2. Заявления</h2>
                 <p class="description">Каждая строка обязательно содержит ID записи заявления и ID пользователя Ultimate Member — владельца. Если аккаунт с таким ID ещё не перенесён, строка будет пропущена и попадёт в отчёт для ручной проверки.</p>
-                <p>
+                <div class="zau-ui-grid">
                     <label>Форма, к которой привязать перенесённые заявления
                         <select data-zau-form-id>
                             <option value="">— выберите форму —</option>
@@ -1473,7 +1594,15 @@ final class ZAU_Legacy_Import {
                             <?php endforeach; ?>
                         </select>
                     </label>
-                </p>
+                    <label>PDF-шаблон документа (необязательно — сопоставьте «Номер документа», «Подпись» и доп. поля выше, чтобы данные попали в документ)
+                        <select data-zau-csv-template>
+                            <option value="0">— не создавать документ —</option>
+                            <?php foreach ((array)$templates as $tpl): ?>
+                                <option value="<?php echo (int)$tpl->id; ?>"><?php echo esc_html($tpl->name); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                </div>
                 <form class="zau-legacy-upload-form" data-scope="applications" enctype="multipart/form-data">
                     <input type="file" name="file" accept=".csv,.txt,text/csv,text/plain" required>
                     <button type="submit" class="button button-primary">Загрузить CSV заявлений</button>
