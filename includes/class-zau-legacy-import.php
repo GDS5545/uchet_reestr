@@ -14,8 +14,8 @@ if (!defined('ABSPATH')) { exit; }
  * безошибочно приложить готовый PDF к нужному аккаунту/заявлению.
  */
 final class ZAU_Legacy_Import {
-    const VERSION = '3.2.0';
-    const DB_VERSION = '3.2.0';
+    const VERSION = '3.2.1';
+    const DB_VERSION = '3.2.1';
     const OPT_DB_VERSION = 'zau_legacy_import_db_version';
     const NONCE = 'zau_legacy_import_nonce';
 
@@ -983,9 +983,19 @@ final class ZAU_Legacy_Import {
         $bytes = @file_get_contents($path);
         if ($bytes === false || strlen($bytes) < 100) { return 'не удалось прочитать файл.'; }
 
+        /* Сначала проверяем, не создан ли уже черновик документа переносом заявлений (шаг Б API или
+         * CSV с выбранным шаблоном) — он привязан к этому же legacy_id через основную карту
+         * сопоставления ($map, kind=account/application). Только если такого черновика нет, смотрим
+         * в собственную историю этого шага (когда шаг 3 применяется отдельно, без переноса заявлений).
+         * Иначе на одну и ту же запись создавались бы два документа — черновик от шага Б и ещё один
+         * от привязки PDF по имени файла. */
         $mapKind = $info['role'] === 'card' ? 'pdf_account' : 'pdf_application';
-        $existingDocMap = $this->find_map_row($mapKind, $info['legacy_id']);
-        $existingDoc = ($existingDocMap && $existingDocMap->target_document_id) ? $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->docs_table} WHERE id=%d", (int)$existingDocMap->target_document_id)) : null;
+        $existingDocumentId = (int)$map->target_document_id;
+        if (!$existingDocumentId) {
+            $existingDocMap = $this->find_map_row($mapKind, $info['legacy_id']);
+            $existingDocumentId = ($existingDocMap && $existingDocMap->target_document_id) ? (int)$existingDocMap->target_document_id : 0;
+        }
+        $existingDoc = $existingDocumentId ? $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->docs_table} WHERE id=%d", $existingDocumentId)) : null;
 
         $user = get_user_by('id', $userId);
         $fullName = $user ? $user->display_name : '';
@@ -1034,6 +1044,12 @@ final class ZAU_Legacy_Import {
         ], ['id'=>$documentId]);
 
         $this->save_map_row($mapKind, $info['legacy_id'], ['target_user_id'=>$userId,'target_submission_id'=>$submissionId,'target_document_id'=>$documentId,'status'=>'imported','message'=>$filename]);
+        if (!$existingDoc) {
+            /* Документ создан именно этим шагом (черновика от переноса заявлений ещё не было) —
+             * записываем его ID и в основную карту (kind=account/application), чтобы более поздний
+             * повторный перенос заявлений по API/CSV дозаполнил этот же документ, а не создал второй. */
+            $this->save_map_row($kind, $info['legacy_id'], ['target_document_id'=>$documentId]);
+        }
         return true;
     }
 
