@@ -1,0 +1,313 @@
+.zau-union-panel,.zau-union-form,.zau-cabinet{max-width:920px;margin:28px auto;padding:26px;background:#fff;border:1px solid #e1e6e3;border-radius:18px;box-shadow:0 12px 38px rgba(21,54,40,.07);font-family:Arial,sans-serif}.zau-union-panel h2,.zau-union-form h2{margin-top:0}.zau-union-panel label,.zau-union-form label{display:flex;flex-direction:column;gap:7px;font-weight:700;color:#363d39}.zau-union-panel input,.zau-union-form input[type=text],.zau-union-form input[type=email],.zau-union-form input[type=tel],.zau-union-form input[type=number],.zau-union-form input[type=date],.zau-union-form textarea,.zau-union-form select{box-sizing:border-box;width:100%;padding:13px 14px;border:1px solid #cbd3cf;border-radius:9px;background:#fff;font:inherit;min-height:48px}.zau-union-form textarea{min-height:110px}.zau-union-button,.zau-bin-button{display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:9px;background:#0878b8;color:#fff!important;padding:12px 20px;font-weight:700;text-decoration:none;cursor:pointer}.zau-union-button:disabled,.zau-bin-button:disabled{opacity:.6;cursor:wait}.zau-link-button{border:0;background:none;color:#0878b8;padding:8px 0;cursor:pointer;text-decoration:underline}.zau-otp-step{display:grid;gap:13px}.zau-message{margin-top:13px;color:#167044}.zau-message.is-error,.zau-bin-status.is-error{color:#b42318}.zau-union-note{max-width:920px;margin:10px auto;padding:12px 18px;background:#fff7df;border-radius:10px}.zau-union-form-head{margin-bottom:24px}.zau-form-field{margin:0 0 19px}.zau-form-field label>span,.zau-form-field label span{color:#d63b3b}.zau-form-heading{margin:32px 0 18px;padding:14px 18px;background:#f3f7f5;border-left:5px solid #157349;border-radius:8px}.zau-form-heading h3{margin:0}.zau-checkbox{display:grid!important;grid-template-columns:24px 1fr;align-items:start;gap:10px!important;font-weight:400!important}.zau-checkbox input{width:20px;height:20px;margin-top:2px}.zau-bin-row{display:grid;grid-template-columns:1fr auto;gap:9px}.zau-bin-status{display:block;margin-top:7px;color:#66736c}.zau-signature-wrap{border:1px solid #cbd3cf;border-radius:10px;padding:10px;background:#fff}.zau-signature-canvas{display:block;width:100%;height:180px;background:linear-gradient(#fff 85%,#e8ecea 85%,#e8ecea 86%,#fff 86%);touch-action:none;border-radius:7px}.zau-form-actions{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:24px}.zau-form-progress{color:#59636e}.zau-form-error,.zau-form-success{margin-top:18px;padding:16px;border-radius:10px}.zau-form-error{background:#fff1f0;color:#9f241b}.zau-form-success{background:#ecf9f1;color:#164f32}.zau-form-success h3{margin-top:0}.zau-result-links{display:flex;flex-direction:column;gap:8px}.zau-offscreen-render,.zau-offscreen-qr{position:fixed;left:-10000px;top:-10000px}.zau-cabinet-hero{display:flex;justify-content:space-between;gap:20px;align-items:center;padding:20px;background:#f3f8f5;border-radius:14px}.zau-cabinet-hero h2{margin:0}.zau-member-status{display:flex;flex-direction:column;text-align:right}.zau-member-status span{color:#66736c}.zau-member-status strong{color:#126d42}.zau-cabinet section{margin-top:28px}.zau-doc-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.zau-doc-card,.zau-info-card,.zau-submission-row{display:flex;flex-direction:column;gap:6px;padding:16px;border:1px solid #e1e6e3;border-radius:12px}.zau-submission-row{display:grid;grid-template-columns:1fr auto auto;margin-bottom:8px}.zau-info-card{margin-bottom:12px}.zau-info-card h4{margin:0}.zau-info-card img{max-width:100%;height:auto}@media(max-width:650px){.zau-union-panel,.zau-union-form,.zau-cabinet{margin:12px;padding:18px}.zau-bin-row{grid-template-columns:1fr}.zau-cabinet-hero{align-items:flex-start;flex-direction:column}.zau-member-status{text-align:left}.zau-doc-grid{grid-template-columns:1fr}.zau-submission-row{grid-template-columns:1fr}.zau-signature-canvas{height:150px}}
+
+.zau-bin-control{position:relative}.zau-bin-suggestions{position:absolute;z-index:30;left:0;right:0;top:calc(100% + 6px);max-height:320px;overflow:auto;background:#fff;border:1px solid #cbd3cf;border-radius:10px;box-shadow:0 14px 34px rgba(20,43,33,.15);padding:6px}.zau-bin-suggestion{display:flex;width:100%;flex-direction:column;gap:4px;padding:11px 12px;border:0;border-bottom:1px solid #edf0ee;background:#fff;text-align:left;cursor:pointer;color:#28332e}.zau-bin-suggestion:last-child{border-bottom:0}.zau-bin-suggestion:hover,.zau-bin-suggestion:focus{background:#eef7f2;outline:none}.zau-bin-suggestion strong{font-size:14px}.zau-bin-suggestion span{font-size:12px;color:#66736c}
+.zau-cabinet-generation{margin-top:18px;padding:14px 16px;border:1px solid #cfe2d7;border-radius:12px;background:#f7fbf8}.zau-cabinet-generation[hidden]{display:none}.zau-cabinet-generation [data-zau-cabinet-progress]{display:block;font-weight:700;color:#385448}.zau-small-button{padding:8px 12px;font-size:14px;white-space:nowrap}.zau-cabinet [data-zau-cabinet-render-holder]{position:fixed;left:-10000px;top:-10000px}.zau-submission-row{grid-template-columns:minmax(0,1fr) auto auto auto;align-items:center}@media(max-width:650px){.zau-submission-row{grid-template-columns:1fr;align-items:stretch}.zau-small-button{width:100%}}
+
+.zau-org-members{margin-top:32px}
+.zau-org-members-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:16px}
+.zau-org-members-head h3{margin:0 0 4px}
+.zau-org-members-head p{margin:0;color:#65706a}
+.zau-org-members-head input{min-width:280px;max-width:100%;padding:11px 13px;border:1px solid #ccd7d1;border-radius:10px}
+.zau-org-members-message{min-height:22px;margin:8px 0;color:#176b46;font-weight:600}
+.zau-org-members-message.is-error{color:#b42318}
+.zau-org-member-list{display:grid;gap:12px}
+.zau-org-member-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:center;padding:16px 18px;border:1px solid #dfe7e2;border-radius:14px;background:#fff}
+.zau-org-member-main{display:grid;gap:4px;min-width:0}
+.zau-org-member-main strong{font-size:18px}
+.zau-org-member-main span,.zau-org-member-main small{overflow-wrap:anywhere}
+.zau-org-member-main small{color:#68736d}
+.zau-org-member-control{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.zau-org-member-control select{min-width:220px;padding:9px 10px;border:1px solid #ccd7d1;border-radius:9px;background:#fff}
+@media(max-width:760px){.zau-org-members-head{display:grid;align-items:stretch}.zau-org-members-head input{min-width:0;width:100%}.zau-org-member-card{grid-template-columns:1fr}.zau-org-member-control{justify-content:flex-start}.zau-org-member-control select{width:100%}}
+
+/* 2.4 — филиалы и адаптивный личный кабинет */
+.zau-branch-summary{margin-top:10px;padding:14px;border:1px solid #cfe1d7;border-radius:12px;background:#f5faf7;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px}.zau-branch-summary[hidden]{display:none}.zau-branch-summary>div{display:grid;gap:2px;min-width:0}.zau-branch-summary span{font-size:12px;color:#6b756f}.zau-branch-summary strong{font-size:14px;overflow-wrap:anywhere}.zau-branch-loading{grid-column:1/-1;color:#607068}
+.zau-branch-full-details{grid-column:1/-1}.zau-branch-full-details strong{display:block;white-space:normal;line-height:1.55;font-weight:600}.zau-branch-full-details span{display:block;margin-bottom:7px;font-weight:700;color:#1565C0}
+.zau-cabinet{max-width:1180px;padding:0;background:transparent;border:0;box-shadow:none}.zau-cabinet-hero{padding:24px;border:1px solid #dfe9e3;background:linear-gradient(135deg,#f1f8f4,#fff);box-shadow:0 12px 34px rgba(25,65,46,.07)}.zau-cabinet-person{display:flex;align-items:center;gap:16px;min-width:0}.zau-cabinet-person h2{font-size:clamp(25px,3vw,38px);line-height:1.1;overflow-wrap:anywhere}.zau-cabinet-person p{margin:8px 0 0;color:#5f6b65;overflow-wrap:anywhere}.zau-cabinet-avatar{display:grid;place-items:center;flex:0 0 58px;width:58px;height:58px;border-radius:18px;background:#157349;color:#fff;font-size:28px;font-weight:800}.zau-cabinet-hero-actions{display:flex;align-items:center;gap:18px}.zau-cabinet-logout{color:#8b2525;text-decoration:none;font-weight:700}.zau-cabinet-nav{position:sticky;top:32px;z-index:15;display:flex;gap:8px;overflow:auto;margin:14px 0;padding:9px;border:1px solid #dfe7e2;border-radius:14px;background:rgba(255,255,255,.96);box-shadow:0 8px 24px rgba(25,54,42,.06);-webkit-overflow-scrolling:touch}.zau-cabinet-nav a{flex:0 0 auto;padding:9px 13px;border-radius:9px;color:#33423b;text-decoration:none;font-weight:700;white-space:nowrap}.zau-cabinet-nav a:hover,.zau-cabinet-nav a:focus{background:#eaf5ef;color:#126d42}.zau-cabinet-stats{display:grid;grid-template-columns:1fr 1fr 2fr 1.5fr;gap:12px}.zau-cabinet-stats>div{display:flex;flex-direction:column;gap:5px;min-width:0;padding:17px;border:1px solid #e0e8e3;border-radius:14px;background:#fff}.zau-cabinet-stats span{font-size:13px;color:#6c7771}.zau-cabinet-stats strong{font-size:19px;overflow-wrap:anywhere}.zau-cabinet-stats small{color:#6c7771}.zau-cabinet-section,.zau-org-members{scroll-margin-top:105px;margin-top:20px!important;padding:22px;border:1px solid #dfe7e2;border-radius:16px;background:#fff;box-shadow:0 8px 26px rgba(26,55,43,.04)}.zau-section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:16px}.zau-section-head h3{margin:0 0 4px;font-size:24px}.zau-section-head p{margin:0;color:#68736d}.zau-doc-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.zau-doc-card{min-height:190px;padding:18px;gap:10px;background:#fff}.zau-doc-card-top{display:flex;align-items:center;justify-content:space-between;gap:10px}.zau-doc-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:#eaf5ef;color:#157349;font-size:24px}.zau-doc-state{padding:5px 9px;border-radius:999px;font-size:12px;font-weight:800}.zau-doc-state.is-active{background:#e8f7ee;color:#166a43}.zau-doc-state.is-revoked{background:#fff0ef;color:#a42a21}.zau-doc-card>strong{font-size:18px;line-height:1.3}.zau-doc-card dl{display:grid;gap:6px;margin:0}.zau-doc-card dl>div{display:grid;grid-template-columns:75px 1fr;gap:8px}.zau-doc-card dt{color:#748078}.zau-doc-card dd{margin:0;font-weight:700;overflow-wrap:anywhere}.zau-doc-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:auto}.zau-secondary-button{background:#eaf5ef;color:#126d42!important}.zau-muted{color:#77827c}.zau-empty-state{grid-column:1/-1;display:flex;flex-direction:column;gap:5px;padding:22px;border:1px dashed #cbd8d1;border-radius:13px;background:#fafcfb;color:#66736c}.zau-submission-list{display:grid;gap:10px}.zau-submission-row{grid-template-columns:minmax(0,1fr) auto auto;margin:0;align-items:center}.zau-submission-row>div{display:grid;gap:4px}.zau-submission-row small{color:#6b756f}.zau-submission-status{padding:6px 9px;border-radius:999px;background:#eef5f1;color:#3d5a4c;font-size:13px;font-weight:700}.zau-info-list{display:grid;gap:12px}.zau-login-history{display:grid;gap:8px}.zau-login-history article{display:grid;grid-template-columns:12px minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid #edf1ef}.zau-login-history article:last-child{border-bottom:0}.zau-login-history article>div{display:grid;gap:3px}.zau-login-history small{color:#6c7771}.zau-login-history time{white-space:nowrap}.zau-login-history code{font-size:12px}.zau-login-dot{width:10px;height:10px;border-radius:50%}.zau-login-dot.is-login{background:#1a8b56}.zau-login-dot.is-logout{background:#9aa49f}.zau-document-modal[hidden]{display:none}.zau-document-modal{position:fixed;z-index:999999;inset:0;display:grid;place-items:center;padding:20px}.zau-document-modal-backdrop{position:absolute;inset:0;background:rgba(13,25,19,.72);backdrop-filter:blur(3px)}.zau-document-modal-dialog{position:relative;display:flex;flex-direction:column;width:min(920px,96vw);max-height:94vh;border-radius:16px;background:#fff;box-shadow:0 28px 80px rgba(0,0,0,.32);overflow:hidden}.zau-document-modal-head{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:15px 18px;border-bottom:1px solid #e3e9e5}.zau-document-modal-head strong{overflow-wrap:anywhere}.zau-document-modal-head button{display:grid;place-items:center;width:38px;height:38px;border:0;border-radius:50%;background:#edf2ef;color:#263a30;font-size:26px;cursor:pointer}.zau-document-modal-body{min-height:240px;overflow:auto;padding:14px;background:#eef2f0;text-align:center}.zau-document-modal-body img{display:block;width:auto;max-width:100%;height:auto;max-height:calc(94vh - 90px);margin:auto;background:#fff;box-shadow:0 5px 24px rgba(0,0,0,.14)}.zau-preview-loading{padding:80px 20px;font-weight:700;color:#5b6861}.zau-modal-open{overflow:hidden}
+@media(max-width:900px){.zau-cabinet-stats{grid-template-columns:1fr 1fr}.zau-doc-grid{grid-template-columns:1fr}.zau-login-history article{grid-template-columns:12px 1fr}.zau-login-history time,.zau-login-history code{grid-column:2}.zau-cabinet-hero-actions{align-items:flex-end;flex-direction:column}}
+@media(max-width:650px){.zau-branch-summary{grid-template-columns:1fr}.zau-cabinet{margin:8px!important;padding:0!important}.zau-cabinet-hero{padding:17px}.zau-cabinet-person{align-items:flex-start}.zau-cabinet-avatar{flex-basis:46px;width:46px;height:46px;border-radius:13px;font-size:22px}.zau-cabinet-hero-actions{width:100%;align-items:flex-start}.zau-cabinet-nav{top:8px;margin:10px 0;border-radius:12px}.zau-cabinet-stats{grid-template-columns:1fr}.zau-cabinet-section,.zau-org-members{padding:16px;border-radius:14px}.zau-section-head h3{font-size:21px}.zau-doc-actions>*{width:100%}.zau-submission-row{grid-template-columns:1fr}.zau-document-modal{padding:0}.zau-document-modal-dialog{width:100vw;max-height:100vh;height:100vh;border-radius:0}.zau-document-modal-body img{max-height:calc(100vh - 74px)}.zau-login-history time,.zau-login-history code{white-space:normal}.zau-member-status{text-align:left}}
+/* 2.5 — блоки личного кабинета для Elementor */
+.zau-cabinet-builder-block{max-width:none;margin:0;padding:0;background:transparent;border:0;box-shadow:none}.zau-cabinet-builder-block>.zau-cabinet-section,.zau-cabinet-builder-block>.zau-org-members{margin-top:0!important}.zau-cabinet-builder-block .zau-cabinet-hero{margin:0}.zau-cabinet-builder-logout{width:auto}.elementor-widget-zau-union-cabinet-section .zau-cabinet{width:100%}
+@media(max-width:650px){.zau-cabinet-builder-block{margin:0!important}.zau-cabinet-builder-block>.zau-cabinet-section,.zau-cabinet-builder-block>.zau-org-members{padding:16px!important}}
+
+/* 2.6 — реестр ответственного организации */
+.zau-org-registry{max-width:1440px;margin:20px auto;padding:22px;border:1px solid #dfe8e3;border-radius:18px;background:#fff;box-shadow:0 12px 36px rgba(25,60,44,.06)}
+.zau-org-registry-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:18px}.zau-org-registry-head h2{margin:0 0 5px;font-size:clamp(25px,3vw,36px)}.zau-org-registry-head p{margin:0;color:#68756e}
+.zau-org-registry-filters{display:grid;grid-template-columns:1.3fr repeat(2,minmax(145px,.7fr)) 1.3fr 1fr 1fr 1.2fr auto;gap:10px;align-items:end;padding:15px;border:1px solid #dce7e1;border-radius:14px;background:#f7faf8}.zau-org-registry-filters label{display:grid;gap:6px;font-size:12px;font-weight:800;color:#53625a}.zau-org-registry-filters input,.zau-org-registry-filters select{width:100%;min-height:42px;padding:9px 10px;border:1px solid #cbd8d1;border-radius:9px;background:#fff;font:inherit;color:#24332b}.zau-org-registry-filters .zau-link-button{min-height:42px;padding:8px 12px;border:1px solid #cbd8d1;border-radius:9px;background:#fff;color:#175f3e;cursor:pointer}
+.zau-org-registry-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:15px 0 5px}.zau-registry-select-all{display:flex;align-items:center;gap:8px;font-weight:700}.zau-org-registry-actions{display:flex;gap:8px;flex-wrap:wrap}.zau-registry-hint{margin:6px 0 12px;color:#6c7871;font-size:13px}.zau-org-registry-message{min-height:22px;color:#176b46;font-weight:700}
+.zau-org-registry-table-wrap{overflow:auto;border:1px solid #dfe7e2;border-radius:14px}.zau-org-registry-table{width:100%;min-width:1180px;border-collapse:collapse}.zau-org-registry-table th{position:sticky;top:0;z-index:2;padding:12px;background:#edf5f0;color:#2b4236;text-align:left;font-size:13px}.zau-org-registry-table td{padding:12px;border-top:1px solid #e5ebe7;vertical-align:top}.zau-org-registry-table td>strong,.zau-org-registry-table td>small{display:block}.zau-org-registry-table td small{margin-top:4px;color:#6c7771}.zau-org-registry-table a{overflow-wrap:anywhere}.zau-registry-docs{display:grid;gap:8px;min-width:300px}.zau-registry-doc{display:grid;grid-template-columns:minmax(180px,1fr) auto auto;gap:7px;align-items:center;padding:8px;border:1px solid #e0e8e3;border-radius:10px;background:#fafcfb}.zau-registry-doc span{display:grid;gap:2px}.zau-registry-doc small{font-size:11px;color:#6d7972}.zau-registry-doc-button{padding:6px 8px;border-radius:7px;background:#e7f3ec;color:#146640!important;text-decoration:none;font-size:12px;font-weight:800}.zau-registry-doc em{color:#7a847f;font-size:12px}
+@media(max-width:1180px){.zau-org-registry-filters{grid-template-columns:repeat(4,minmax(0,1fr))}.zau-org-registry-filters .zau-link-button{width:100%}}
+@media(max-width:760px){.zau-org-registry{margin:8px;padding:14px;border-radius:14px}.zau-org-registry-head{display:grid}.zau-org-registry-head .zau-union-button{width:100%;text-align:center}.zau-org-registry-filters{grid-template-columns:1fr 1fr;padding:12px}.zau-org-registry-toolbar{display:grid;align-items:stretch}.zau-org-registry-actions{display:grid;grid-template-columns:1fr}.zau-org-registry-actions .zau-union-button{width:100%}.zau-org-registry-table-wrap{overflow:visible;border:0}.zau-org-registry-table{min-width:0}.zau-org-registry-table thead{display:none}.zau-org-registry-table,.zau-org-registry-table tbody,.zau-org-registry-table tr,.zau-org-registry-table td{display:block;width:100%}.zau-org-registry-table tr{margin:0 0 14px;padding:13px;border:1px solid #dce5e0;border-radius:13px;background:#fff}.zau-org-registry-table td{display:grid;grid-template-columns:120px minmax(0,1fr);gap:10px;padding:8px 0;border:0}.zau-org-registry-table td:before{content:attr(data-label);color:#6d7872;font-size:12px;font-weight:800}.zau-registry-docs{min-width:0}.zau-registry-doc{grid-template-columns:1fr 1fr}.zau-registry-doc span{grid-column:1/-1}.zau-registry-doc-button{text-align:center}}
+@media(max-width:520px){.zau-org-registry-filters{grid-template-columns:1fr}.zau-org-registry-table td{grid-template-columns:1fr}.zau-org-registry-table td:before{margin-bottom:-5px}}
+.zau-org-members-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}.zau-org-members-tools input{min-width:260px}@media(max-width:760px){.zau-org-members-tools{display:grid;justify-content:stretch}.zau-org-members-tools .zau-union-button,.zau-org-members-tools input{width:100%;min-width:0;text-align:center}}
+/* 2.6.1 — актуализация документов после пересоздания */
+.zau-doc-revision{display:block;margin-top:-2px;color:#738078;font-size:12px;line-height:1.35}.zau-doc-state.is-draft{background:#f0f2f1;color:#647068}.zau-section-head [data-zau-refresh-documents]{flex:0 0 auto}@media(max-width:640px){.zau-section-head{align-items:stretch;flex-direction:column}.zau-section-head [data-zau-refresh-documents]{width:100%}}
+.zau-document-modal-body iframe{display:block;width:100%;height:calc(94vh - 105px);min-height:520px;border:0;background:#fff}.zau-document-modal-body iframe[hidden]{display:none}@media(max-width:700px){.zau-document-modal-body iframe{height:calc(100vh - 95px);min-height:420px}.zau-document-modal{padding:0}.zau-document-modal-dialog{width:100vw;max-height:100vh;border-radius:0}}
+
+/* 2.7 — полное визуальное управление интерфейсами ZAU через Elementor */
+.zau-elementor-interface{
+    --zau-e-accent:#0878b8;
+    --zau-e-accent-hover:#075f91;
+    --zau-e-accent-soft:#eaf5ef;
+    --zau-e-surface:#fff;
+    --zau-e-surface-alt:#f3f8f5;
+    --zau-e-text:#25322b;
+    --zau-e-muted:#68756e;
+    --zau-e-border:#dfe7e2;
+    --zau-e-success:#167044;
+    --zau-e-danger:#b42318;
+    width:100%;
+    color:var(--zau-e-text);
+}
+.zau-elementor-interface .zau-union-panel,
+.zau-elementor-interface .zau-union-form,
+.zau-elementor-interface .zau-cabinet,
+.zau-elementor-interface .zau-org-registry,
+.zau-elementor-interface .zau-public-card,
+.zau-elementor-interface .zau-my-docs{
+    color:var(--zau-e-text);
+    font-family:inherit;
+}
+.zau-elementor-interface h1,
+.zau-elementor-interface h2,
+.zau-elementor-interface h3,
+.zau-elementor-interface h4,
+.zau-elementor-interface strong{color:var(--zau-e-text)}
+.zau-elementor-interface p,
+.zau-elementor-interface small,
+.zau-elementor-interface dt,
+.zau-elementor-interface .zau-muted,
+.zau-elementor-interface .zau-section-head p,
+.zau-elementor-interface .zau-cabinet-person p{color:var(--zau-e-muted)}
+.zau-elementor-interface .zau-union-button:not(.zau-secondary-button),
+.zau-elementor-interface .zau-bin-button{
+    background:var(--zau-e-accent);
+    color:#fff!important;
+}
+.zau-elementor-interface .zau-union-button:not(.zau-secondary-button):hover,
+.zau-elementor-interface .zau-union-button:not(.zau-secondary-button):focus,
+.zau-elementor-interface .zau-bin-button:hover,
+.zau-elementor-interface .zau-bin-button:focus{background:var(--zau-e-accent-hover)}
+.zau-elementor-interface .zau-secondary-button,
+.zau-elementor-interface .zau-registry-doc-button{
+    background:var(--zau-e-accent-soft);
+    color:var(--zau-e-accent)!important;
+}
+.zau-elementor-interface .zau-link-button,
+.zau-elementor-interface a:not(.zau-union-button):not(.zau-registry-doc-button){color:var(--zau-e-accent)}
+.zau-elementor-interface input[type="text"],
+.zau-elementor-interface input[type="email"],
+.zau-elementor-interface input[type="tel"],
+.zau-elementor-interface input[type="number"],
+.zau-elementor-interface input[type="date"],
+.zau-elementor-interface input[type="search"],
+.zau-elementor-interface textarea,
+.zau-elementor-interface select{
+    color:var(--zau-e-text);
+    background:var(--zau-e-surface);
+    border-color:var(--zau-e-border);
+}
+.zau-elementor-interface .zau-doc-card,
+.zau-elementor-interface .zau-info-card,
+.zau-elementor-interface .zau-submission-row,
+.zau-elementor-interface .zau-org-member-card,
+.zau-elementor-interface .zau-cabinet-stats>div,
+.zau-elementor-interface .zau-registry-doc,
+.zau-elementor-interface .zau-empty-state,
+.zau-elementor-interface .zau-cabinet-section,
+.zau-elementor-interface .zau-org-members{
+    background:var(--zau-e-surface);
+    border-color:var(--zau-e-border);
+}
+.zau-elementor-interface .zau-cabinet-hero,
+.zau-elementor-interface .zau-form-heading,
+.zau-elementor-interface .zau-branch-summary,
+.zau-elementor-interface .zau-org-registry-filters,
+.zau-elementor-interface .zau-document-modal-body{background:var(--zau-e-surface-alt)}
+.zau-elementor-interface .zau-cabinet-hero,
+.zau-elementor-interface .zau-cabinet-nav,
+.zau-elementor-interface .zau-org-registry-filters,
+.zau-elementor-interface .zau-org-registry-table-wrap,
+.zau-elementor-interface .zau-document-modal-head{border-color:var(--zau-e-border)}
+.zau-elementor-interface .zau-cabinet-avatar,
+.zau-elementor-interface .zau-doc-icon,
+.zau-elementor-interface .zau-public-icon{background:var(--zau-e-accent-soft);color:var(--zau-e-accent)}
+.zau-elementor-interface .zau-cabinet-avatar{background:var(--zau-e-accent);color:#fff}
+.zau-elementor-interface .zau-member-status strong,
+.zau-elementor-interface .zau-message,
+.zau-elementor-interface .zau-org-registry-message,
+.zau-elementor-interface .zau-org-members-message{color:var(--zau-e-success)}
+.zau-elementor-interface .zau-message.is-error,
+.zau-elementor-interface .zau-bin-status.is-error,
+.zau-elementor-interface .zau-org-members-message.is-error{color:var(--zau-e-danger)}
+.zau-elementor-interface .zau-doc-state.is-active{background:color-mix(in srgb,var(--zau-e-success) 12%,#fff);color:var(--zau-e-success)}
+.zau-elementor-interface .zau-doc-state.is-revoked{background:color-mix(in srgb,var(--zau-e-danger) 10%,#fff);color:var(--zau-e-danger)}
+.zau-elementor-interface .zau-cabinet-nav a:hover,
+.zau-elementor-interface .zau-cabinet-nav a:focus{background:var(--zau-e-accent-soft);color:var(--zau-e-accent)}
+.zau-elementor-interface .zau-org-registry-table th{background:var(--zau-e-accent-soft);color:var(--zau-e-text)}
+.zau-elementor-interface .zau-org-registry-table td{border-color:var(--zau-e-border)}
+.zau-elementor-interface .zau-document-modal-dialog,
+.zau-elementor-interface .zau-document-modal-head{background:var(--zau-e-surface)}
+.zau-elementor-interface.zau-e-hide-heading .zau-union-panel>h2,
+.zau-elementor-interface.zau-e-hide-heading .zau-union-form-head,
+.zau-elementor-interface.zau-e-hide-heading .zau-public-head{display:none}
+.zau-elementor-interface.zau-e-hide-descriptions .zau-union-panel>p,
+.zau-elementor-interface.zau-e-hide-descriptions .zau-union-form-head p,
+.zau-elementor-interface.zau-e-hide-descriptions .zau-section-head p,
+.zau-elementor-interface.zau-e-hide-descriptions .zau-org-registry-head p{display:none}
+.zau-elementor-interface .zau-my-docs{display:grid;gap:12px}
+.zau-elementor-interface .zau-my-doc{
+    padding:16px;
+    border:1px solid var(--zau-e-border);
+    border-radius:12px;
+    background:var(--zau-e-surface);
+}
+.zau-elementor-interface .zau-my-doc a{display:inline-block;margin:8px 10px 0 0}
+.elementor-editor-active .zau-elementor-interface .zau-document-modal{pointer-events:none}
+@media(max-width:650px){
+    .zau-elementor-interface .zau-union-panel,
+    .zau-elementor-interface .zau-union-form,
+    .zau-elementor-interface .zau-cabinet,
+    .zau-elementor-interface .zau-org-registry,
+    .zau-elementor-interface .zau-public-card{max-width:100%}
+}
+
+/* 2.8: configurable authentication and registration PIN */
+.zau-auth{display:grid;gap:18px}
+.zau-auth-tabs{display:flex;flex-wrap:wrap;gap:8px;padding:6px;border:1px solid #d9e4de;border-radius:14px;background:#f5f8f6}
+.zau-auth-tab{appearance:none;border:0;background:transparent;color:#53655c;border-radius:10px;padding:11px 16px;font:inherit;font-weight:700;cursor:pointer;transition:.2s ease}
+.zau-auth-tab:hover,.zau-auth-tab:focus{background:#fff;color:#173f2d}
+.zau-auth-tab.is-active{background:#1f7a4d;color:#fff;box-shadow:0 4px 14px rgba(31,122,77,.18)}
+.zau-auth-method{display:grid;gap:14px}
+.zau-auth-method[hidden]{display:none!important}
+.zau-auth-method label,.zau-pin-reset label{display:grid;gap:7px;font-weight:700;color:#263a30}
+.zau-auth-method input[type="text"],.zau-auth-method input[type="email"],.zau-auth-method input[type="password"],.zau-pin-reset input{width:100%;min-height:48px;padding:11px 13px;border:1px solid #cbd8d1;border-radius:10px;background:#fff;color:#17231d;font:inherit}
+.zau-auth-method .zau-checkbox{display:flex;align-items:center;gap:8px;font-weight:500}
+.zau-auth-method .zau-checkbox input{width:auto;min-height:0}
+.zau-password-reset-link{display:inline-flex;margin-top:2px}
+.zau-pin-reset{display:grid;gap:13px;padding:16px;border:1px solid #d7e3dc;border-radius:12px;background:#f7faf8}
+.zau-pin-reset[hidden],.zau-pin-reset [hidden]{display:none!important}
+.zau-registration-security{margin:20px 0;padding:20px;border:1px solid #d6e4dc;border-radius:16px;background:#f5faf7}
+.zau-registration-security h3{margin:0 0 8px}
+.zau-registration-security>p{margin:0 0 16px;color:#607067}
+.zau-security-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.zau-security-grid label{display:grid;gap:7px;font-weight:700}
+.zau-security-grid input{width:100%;min-height:48px;padding:11px 13px;border:1px solid #cbd8d1;border-radius:10px;background:#fff}
+.zau-required-mark{color:#c0392b}
+.zau-elementor-interface input[type="password"]{color:var(--zau-e-text);background:var(--zau-e-surface);border-color:var(--zau-e-border)}
+.zau-elementor-interface .zau-auth-tabs{background:var(--zau-e-surface-alt);border-color:var(--zau-e-border)}
+.zau-elementor-interface .zau-auth-tab{color:var(--zau-e-muted)}
+.zau-elementor-interface .zau-auth-tab.is-active{background:var(--zau-e-accent);color:#fff}
+.zau-elementor-interface .zau-pin-reset,.zau-elementor-interface .zau-registration-security{background:var(--zau-e-surface-alt);border-color:var(--zau-e-border)}
+@media(max-width:650px){.zau-auth-tabs{display:grid;grid-template-columns:1fr}.zau-auth-tab{width:100%;text-align:center}.zau-security-grid{grid-template-columns:1fr}.zau-auth .zau-union-button{width:100%}}
+
+/* 2.8.1 — понятное разделение регистрации и входа */
+.zau-auth-flow-tabs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:2px 0 4px}
+.zau-auth-flow-tab{display:flex;align-items:center;gap:12px;min-height:76px;padding:13px 16px;border:1px solid #d6e2dc;border-radius:13px;background:#fff;color:#263a30;text-align:left;cursor:pointer;font:inherit}
+.zau-auth-flow-tab strong,.zau-auth-flow-tab small{display:block}.zau-auth-flow-tab strong{font-size:16px}.zau-auth-flow-tab small{margin-top:3px;color:#708078;font-size:12px}
+.zau-auth-flow-tab.is-active{border-color:#1f7a4d;background:#eef8f2;box-shadow:0 0 0 2px rgba(31,122,77,.08)}
+.zau-auth-flow-number,.zau-auth-flow-icon{display:grid;place-items:center;flex:0 0 34px;width:34px;height:34px;border-radius:50%;background:#e6f3eb;color:#1f7a4d;font-weight:800}
+.zau-auth-flow-panel[hidden]{display:none!important}.zau-auth-flow-panel{display:grid;gap:14px;padding:18px;border:1px solid #dfe8e3;border-radius:14px;background:#fbfdfc}.zau-auth-flow-panel>h3{margin:0}.zau-auth-flow-panel>p{margin:0;color:#64736b}
+.zau-auth-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.zau-auth-steps span{padding:8px 9px;border-radius:9px;background:#eef2f0;color:#68756e;font-size:12px;font-weight:700;text-align:center}.zau-auth-steps span.is-active{background:#1f7a4d;color:#fff}
+.zau-auth-method-note,.zau-auth-login-help{margin:0 0 2px!important;padding:10px 12px;border-radius:9px;background:#f2f7f4;color:#56665d!important;font-size:13px}
+.zau-auth-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:12px}.zau-auth-actions .zau-link-button{padding:10px 8px}
+.zau-auth .zau-auth-submit,.zau-auth-method .zau-union-button{min-width:190px;min-height:48px;background:var(--zau-e-accent,#0878b8)!important;color:#fff!important;border:0!important;opacity:1!important;text-indent:0!important;font-size:15px!important;line-height:1.2!important}
+.zau-auth .zau-auth-submit span,.zau-auth-method .zau-union-button span{display:inline!important;visibility:visible!important;color:#fff!important;opacity:1!important}
+.zau-auth-sent-note{padding:10px 12px;border-radius:9px;background:#edf8f1;color:#176b46}
+.zau-message.is-success{color:#167044}.zau-register-flow .zau-otp-step,.zau-login-flow .zau-otp-step{gap:12px}
+@media(max-width:650px){.zau-auth-flow-tabs{grid-template-columns:1fr}.zau-auth-flow-tab{min-height:68px}.zau-auth-steps{grid-template-columns:1fr}.zau-auth-actions{display:grid;grid-template-columns:1fr}.zau-auth-actions .zau-union-button,.zau-auth-actions .zau-link-button,.zau-auth .zau-auth-submit{width:100%;min-width:0}.zau-auth-flow-panel{padding:14px}}
+
+/* 2.8.3 — вход только по PIN на привязанном устройстве */
+.zau-pin-device-help{margin-top:4px;padding-top:12px;border-top:1px solid #e0e8e3;color:#65746c}
+.zau-pin-device-help>small{display:block;margin-bottom:4px;font-size:12px}
+.zau-pin-device-help .zau-auth-actions{margin-top:0;gap:10px}
+.zau-pin-device-help .zau-link-button{padding:5px 0}
+
+/* 2.8.5 — отдельные вкладки личного кабинета */
+.zau-cabinet-tab-panel[hidden]{display:none!important}
+.zau-cabinet-tab-panel{animation:zauTabIn .18s ease-out}
+@keyframes zauTabIn{from{opacity:.35;transform:translateY(5px)}to{opacity:1;transform:none}}
+.zau-cabinet-nav a.is-active,.zau-cabinet-nav a[aria-selected="true"]{background:#157349;color:#fff!important;box-shadow:0 5px 15px rgba(21,115,73,.18)}
+.zau-cabinet-nav a[hidden]{display:none!important}
+.zau-cabinet #zau-home .zau-cabinet-stats{margin-top:4px}
+.zau-cabinet #zau-registry{padding:22px}
+.zau-org-registry.is-embedded{max-width:none;margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+.zau-org-registry.is-embedded .zau-org-registry-filters{margin-top:0}
+.zau-elementor-interface .zau-cabinet-nav a.is-active,.zau-elementor-interface .zau-cabinet-nav a[aria-selected="true"]{background:var(--zau-e-accent);color:#fff!important}
+@media(max-width:650px){.zau-cabinet-nav{display:grid;grid-auto-flow:column;grid-auto-columns:max-content}.zau-cabinet #zau-registry{padding:14px}.zau-cabinet-tab-panel{min-width:0}}
+
+/* 2.8.6 — собственные вкладки кабинета */
+.zau-cabinet-nav .zau-tab-icon{display:inline-flex;align-items:center;justify-content:center;margin-right:7px;line-height:1;font-size:1.05em}
+.zau-cabinet-nav .zau-tab-icon.dashicons{width:1.1em;height:1.1em;font-size:1.1em}
+.zau-custom-tab-panel{min-width:0}
+.zau-custom-tab-panel > :first-child{margin-top:0}
+.zau-custom-tab-panel > :last-child{margin-bottom:0}
+.zau-custom-tab-standalone{width:100%}
+
+
+/* 2.14: защищённая личная карточка */
+.zau-member-card-privacy{display:flex;flex-direction:column;gap:4px;margin:14px 0;padding:13px 15px;border:1px solid color-mix(in srgb,var(--zau-primary,#1565C0) 22%,#dbe6f5);border-radius:14px;background:color-mix(in srgb,var(--zau-primary,#1565C0) 7%,#fff)}
+.zau-member-card-privacy strong{color:#102a43}.zau-member-card-privacy span{color:#52667a;font-size:13px;line-height:1.45}
+.zau-member-card-field.is-sensitive{padding:12px;border:1px solid #dce6f2;border-radius:14px;background:#fbfdff}
+.zau-sensitive-control{display:grid;gap:9px}.zau-sensitive-value{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:42px}
+.zau-sensitive-value code{display:inline-flex;align-items:center;min-height:38px;padding:7px 11px;border:1px solid #d6e1ee;border-radius:10px;background:#f2f6fb;color:#183b56;font-size:15px;letter-spacing:.08em;word-break:break-all}
+.zau-sensitive-button{appearance:none;border:1px solid color-mix(in srgb,var(--zau-primary,#1565C0) 45%,#fff);border-radius:10px;background:#fff;color:var(--zau-primary,#1565C0);font-weight:700;padding:8px 11px;cursor:pointer}
+.zau-sensitive-button:hover,.zau-sensitive-button:focus{background:color-mix(in srgb,var(--zau-primary,#1565C0) 8%,#fff)}
+.zau-sensitive-button:disabled{opacity:.55;cursor:wait}
+@media(max-width:640px){.zau-sensitive-value{align-items:stretch}.zau-sensitive-value code{width:100%}.zau-sensitive-button{flex:1}}
+
+
+/* 2.14.3 — прямая регистрация без подтверждающего кода */
+.zau-direct-registration-note{margin-top:16px;padding:14px 16px;border:1px solid #b8d2f3;border-radius:14px;background:#f3f8ff;color:#243b53;line-height:1.5}
+.zau-direct-registration-note a{font-weight:700;margin-left:4px}
+.zau-registration-trap{position:absolute!important;left:-10000px!important;top:auto!important;width:1px!important;height:1px!important;overflow:hidden!important;opacity:0!important;pointer-events:none!important}
+
+
+/* 2.14.4: direct registration is one continuous, compact form */
+.zau-single-page-registration{max-width:1100px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 20px;align-items:start}
+.zau-single-page-registration>.zau-union-form-head,
+.zau-single-page-registration>.zau-form-heading,
+.zau-single-page-registration>.zau-registration-security,
+.zau-single-page-registration>.zau-form-actions,
+.zau-single-page-registration>[data-zau-form-result],
+.zau-single-page-registration>.zau-offscreen-render,
+.zau-single-page-registration>.zau-form-field.zau-field-signature,
+.zau-single-page-registration>.zau-form-field.zau-field-textarea,
+.zau-single-page-registration>.zau-form-field.zau-field-checkbox,
+.zau-single-page-registration>.zau-form-field.zau-field-branch_select,
+.zau-single-page-registration>.zau-form-field.zau-field-bin_lookup{grid-column:1/-1}
+.zau-single-page-registration>.zau-form-field{margin:0}
+.zau-single-page-registration>.zau-form-heading{margin:12px 0 0}
+.zau-single-page-registration .zau-registration-security{margin:4px 0 0}
+.zau-bin-status.is-success{color:#167044}
+.zau-bin-suggestions{margin-top:8px;border:1px solid #c9d8eb;border-radius:12px;background:#fff;box-shadow:0 14px 30px rgba(31,63,104,.12);overflow:hidden;max-height:280px;overflow-y:auto;position:relative;z-index:5}
+.zau-bin-suggestion{display:flex;width:100%;flex-direction:column;gap:4px;text-align:left;padding:12px 14px;border:0;border-bottom:1px solid #e7eef7;background:#fff;color:#172033;cursor:pointer}
+.zau-bin-suggestion:last-child{border-bottom:0}
+.zau-bin-suggestion:hover,.zau-bin-suggestion:focus{background:#f1f6fd;outline:none}
+.zau-bin-suggestion span{font-size:13px;color:#657289;font-weight:400}
+@media(max-width:760px){.zau-single-page-registration{grid-template-columns:1fr;gap:14px}.zau-single-page-registration>*{grid-column:1!important}}
+
+
+/* 2.14.7 — понятные ошибки регистрации, подсветка и всплывающая подсказка */
+.zau-union-form .zau-form-field,.zau-union-form [data-zau-registration-security]{position:relative;transition:border-color .18s ease,box-shadow .18s ease,background .18s ease}
+.zau-union-form .zau-form-field.is-invalid,.zau-union-form [data-zau-registration-security].is-invalid{padding:12px;border:2px solid #d93025!important;border-radius:14px;background:#fff7f6;box-shadow:0 0 0 4px rgba(217,48,37,.09)}
+.zau-union-form .is-invalid input:not([type=hidden]),.zau-union-form .is-invalid select,.zau-union-form .is-invalid textarea,.zau-union-form .is-invalid .zau-signature-wrap{border-color:#d93025!important;box-shadow:0 0 0 3px rgba(217,48,37,.10)!important}
+.zau-field-error{display:flex;align-items:flex-start;gap:7px;margin-top:8px;color:#b3261e;font-size:13px;font-weight:700;line-height:1.4}
+.zau-field-error:before{content:'!';display:inline-flex;flex:0 0 19px;width:19px;height:19px;align-items:center;justify-content:center;border-radius:50%;background:#d93025;color:#fff;font-size:12px}
+.zau-form-error-summary{display:flex;flex-direction:column;gap:5px;margin-top:14px}
+.zau-form-error-summary strong{font-size:16px}.zau-form-error-summary span{line-height:1.5}
+.zau-form-toast{position:fixed;z-index:2147483000;right:22px;top:22px;width:min(420px,calc(100vw - 28px));display:flex;flex-direction:column;gap:4px;padding:15px 18px;border-radius:15px;background:#fff;color:#172033;box-shadow:0 18px 50px rgba(25,42,70,.25);border-left:6px solid #d93025;opacity:0;transform:translateY(-18px);pointer-events:none;transition:opacity .22s ease,transform .22s ease}
+.zau-form-toast.is-visible{opacity:1;transform:none;pointer-events:auto}.zau-form-toast.is-success{border-left-color:#188038}.zau-form-toast strong{font-size:15px}.zau-form-toast span{font-size:14px;line-height:1.45;color:#44546a}
+@media(max-width:640px){.zau-form-toast{top:auto;right:14px;left:14px;bottom:18px;width:auto}.zau-union-form .zau-form-field.is-invalid,.zau-union-form [data-zau-registration-security].is-invalid{padding:10px}}
+
+
+/* 2.14.9 — стартовый выбор входа или регистрации */
+.zau-auth-choice-intro{display:grid;gap:3px;margin:4px 0 12px;text-align:center;color:#40554a}
+.zau-auth-choice-intro strong{font-size:18px}.zau-auth-choice-intro span{font-size:13px;color:#718078}
+.zau-auth.is-flow-selected>.zau-auth-flow-tabs,.zau-auth.is-flow-selected>.zau-auth-choice-intro{display:none!important}
+.zau-auth.is-choosing .zau-auth-flow-panel{display:none!important}
+.zau-auth-back{justify-self:start;padding:0;border:0;background:transparent;color:#1565c0;font:inherit;font-weight:700;cursor:pointer}
+.zau-auth-back:hover,.zau-auth-back:focus{text-decoration:underline}
+.zau-register-flow>.zau-union-form{margin:0;max-width:none;border:0;box-shadow:none;padding:0;background:transparent}
+.zau-register-flow>.zau-union-form .zau-direct-registration-note [data-zau-open-auth-flow]{display:inline;padding:0;margin-left:4px;border:0;background:none;color:#1565c0;text-decoration:underline;cursor:pointer}
+@media(max-width:650px){.zau-auth-choice-intro{text-align:left}.zau-auth-back{width:auto!important}}
