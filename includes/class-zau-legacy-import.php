@@ -1,0 +1,1122 @@
+<?php
+if (!defined('ABSPATH')) { exit; }
+
+/**
+ * Единственный инструмент переноса данных со старого сайта (uchet.zdravunion.kz:
+ * Ultimate Member + форма заявления). Заменяет собой пять прежних модулей
+ * (universal-import, remote-bridge-import, remote-smart-dedup,
+ * remote-profile-repair, legacy-migration).
+ *
+ * Принцип надёжности: сопоставление ведётся ТОЛЬКО по точным старым ID
+ * (ID пользователя Ultimate Member и ID записи формы заявления), без
+ * нечёткого угадывания по ФИО/email/телефону. Тот же старый ID, что стоит
+ * в конце имени PDF-файла заявления и личной карточки, используется, чтобы
+ * безошибочно приложить готовый PDF к нужному аккаунту/заявлению.
+ */
+final class ZAU_Legacy_Import {
+    const VERSION = '3.0.0';
+    const DB_VERSION = '3.0.0';
+    const OPT_DB_VERSION = 'zau_legacy_import_db_version';
+    const NONCE = 'zau_legacy_import_nonce';
+
+    private static $instance = null;
+    private $map_table;
+    private $submissions_table;
+    private $forms_table;
+    private $orgs_table;
+    private $branches_table;
+    private $docs_table;
+    private $templates_table;
+
+    public static function instance() {
+        if (self::$instance === null) { self::$instance = new self(); }
+        return self::$instance;
+    }
+
+    private function __construct() {
+        global $wpdb;
+        $this->map_table = $wpdb->prefix . 'zau_legacy_import';
+        $this->submissions_table = $wpdb->prefix . 'zau_union_submissions';
+        $this->forms_table = $wpdb->prefix . 'zau_union_forms';
+        $this->orgs_table = $wpdb->prefix . 'zau_union_organizations';
+        $this->branches_table = $wpdb->prefix . 'zau_union_branches';
+        $this->docs_table = $wpdb->prefix . 'zau_certificates';
+        $this->templates_table = $wpdb->prefix . 'zau_cert_templates';
+
+        add_action('plugins_loaded', [$this, 'maybe_upgrade'], 38);
+        add_action('admin_menu', [$this, 'admin_menu'], 38);
+        add_action('admin_enqueue_scripts', [$this, 'admin_assets']);
+
+        add_action('wp_ajax_zau_legacy_upload', [$this, 'ajax_upload']);
+        add_action('wp_ajax_zau_legacy_start', [$this, 'ajax_start']);
+        add_action('wp_ajax_zau_legacy_process', [$this, 'ajax_process']);
+        add_action('wp_ajax_zau_legacy_reset', [$this, 'ajax_reset']);
+        add_action('wp_ajax_zau_legacy_scan_pdfs', [$this, 'ajax_scan_pdfs']);
+        add_action('wp_ajax_zau_legacy_attach_pdfs', [$this, 'ajax_attach_pdfs']);
+        add_action('admin_post_zau_legacy_download_report', [$this, 'download_report']);
+    }
+
+    public function maybe_upgrade() {
+        if (get_option(self::OPT_DB_VERSION) !== self::DB_VERSION) {
+            $this->install_tables();
+            $this->cleanup_old_modules();
+            update_option(self::OPT_DB_VERSION, self::DB_VERSION, false);
+        }
+    }
+
+    public function install_tables() {
+        global $wpdb;
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+        $charset = $wpdb->get_charset_collate();
+        dbDelta("CREATE TABLE {$this->map_table} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            kind varchar(20) NOT NULL,
+            legacy_id varchar(100) NOT NULL,
+            target_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+            target_submission_id bigint(20) unsigned NOT NULL DEFAULT 0,
+            target_document_id bigint(20) unsigned NOT NULL DEFAULT 0,
+            status varchar(20) NOT NULL DEFAULT 'imported',
+            message text NULL,
+            created_at datetime NOT NULL,
+            updated_at datetime NOT NULL,
+            PRIMARY KEY (id),
+            UNIQUE KEY kind_legacy (kind,legacy_id),
+            KEY target_user_id (target_user_id),
+            KEY target_submission_id (target_submission_id)
+        ) $charset;");
+    }
+
+    /**
+     * Удаляет таблицы и настройки пяти прежних модулей импорта. Сами перенесённые
+     * пользователи, заявления и документы не затрагиваются — эти модули хранили
+     * только служебные карты сопоставления и очереди задач.
+     */
+    private function cleanup_old_modules() {
+        global $wpdb;
+        foreach ([
+            'zau_external_import_map',
+            'zau_remote_legacy_people',
+            'zau_remote_legacy_records',
+            'zau_remote_profile_repair_log',
+            'zau_legacy_migration',
+        ] as $table) {
+            $wpdb->query("DROP TABLE IF EXISTS {$wpdb->prefix}{$table}");
+        }
+        foreach ([
+            'zau_universal_import_db_version',
+            'zau_remote_bridge_settings',
+            'zau_remote_bridge_lock_format',
+            'zau_remote_bridge_db_version',
+            'zau_remote_smart_dedup_db_version',
+            'zau_remote_profile_repair_db_version',
+            'zau_legacy_migration_db_version',
+        ] as $option) {
+            delete_option($option);
+        }
+    }
+
+    public function admin_menu() {
+        add_submenu_page(
+            'zau-certificates',
+            'Перенос со старого сайта',
+            'Перенос со старого сайта',
+            ZAU_Certificate_PDF_Generator::CAP_MANAGE,
+            'zau-legacy-import',
+            [$this, 'page']
+        );
+    }
+
+    public function admin_assets($hook) {
+        if (strpos((string)$hook, 'zau-legacy-import') === false) { return; }
+        wp_enqueue_style('zau-legacy-import', plugins_url('../assets/css/legacy-import.css', __FILE__), [], self::VERSION);
+        wp_enqueue_script('zau-legacy-import', plugins_url('../assets/js/legacy-import.js', __FILE__), ['jquery'], self::VERSION, true);
+        wp_localize_script('zau-legacy-import', 'ZAULegacyImport', [
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce(self::NONCE),
+            'reportUrl' => wp_nonce_url(admin_url('admin-post.php?action=zau_legacy_download_report'), self::NONCE),
+            'accountFields' => $this->account_fields(),
+            'applicationFields' => $this->application_fields(),
+        ]);
+    }
+
+    private function can_manage() {
+        return current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE) || current_user_can('manage_options');
+    }
+
+    private function require_access() {
+        if (!$this->can_manage()) { wp_send_json_error(['message'=>'Недостаточно прав.'], 403); }
+        check_ajax_referer(self::NONCE, 'nonce');
+    }
+
+    private function upload_option_key($scope) { return 'zau_legacy_upload_' . sanitize_key($scope) . '_' . get_current_user_id(); }
+    private function job_option_key($scope) { return 'zau_legacy_job_' . sanitize_key($scope) . '_' . get_current_user_id(); }
+
+    private function account_fields() {
+        return [
+            '' => '— не сопоставлять —',
+            'legacy_user_id' => 'ID пользователя Ultimate Member (обязательно)',
+            'email' => 'Email',
+            'phone' => 'Телефон',
+            'full_name' => 'ФИО одной строкой',
+            'last_name' => 'Фамилия',
+            'first_name' => 'Имя',
+            'middle_name' => 'Отчество',
+            'iin' => 'ИИН',
+            'birth_date' => 'Дата рождения',
+            'address' => 'Адрес проживания',
+            'position' => 'Должность',
+            'department' => 'Подразделение',
+            'organization' => 'Организация / место работы',
+            'organization_bin' => 'БИН организации',
+            'organization_director' => 'Руководитель организации',
+            'organization_address' => 'Адрес организации',
+            'branch_name' => 'Филиал профсоюза',
+            'registration_date' => 'Дата регистрации аккаунта',
+            'member_status' => 'Статус участника',
+        ];
+    }
+
+    private function application_fields() {
+        return [
+            '' => '— сохранить только в архивных данных —',
+            'legacy_entry_id' => 'ID записи заявления (обязательно)',
+            'legacy_user_id' => 'ID пользователя Ultimate Member — владельца заявления (обязательно)',
+            'full_name' => 'ФИО одной строкой',
+            'email' => 'Email',
+            'phone' => 'Телефон',
+            'organization' => 'Организация / место работы',
+            'organization_bin' => 'БИН организации',
+            'branch_name' => 'Филиал профсоюза',
+            'submission_date' => 'Дата подачи заявления',
+            'status' => 'Статус заявления',
+        ];
+    }
+
+    private function auto_target($header, $known) {
+        $h = $this->normalize_label($header);
+        $rules = [
+            'legacy_user_id' => ['user id','id пользователя','старый id пользователя','id юзера','um user id','member id'],
+            'legacy_entry_id' => ['entry id','id записи','id заявки','id заявления','номер записи'],
+            'email' => ['email','e mail','электронная почта','почта'],
+            'phone' => ['телефон','мобильный','номер телефона','phone'],
+            'full_name' => ['фио','ф и о','полное имя','full name'],
+            'last_name' => ['фамилия','last name'],
+            'first_name' => ['имя','first name'],
+            'middle_name' => ['отчество','middle name'],
+            'iin' => ['иин','iin'],
+            'birth_date' => ['дата рождения','день рождения','birth date'],
+            'address' => ['адрес проживания','домашний адрес','адрес участника'],
+            'position' => ['должность','position'],
+            'department' => ['подразделение','отдел','department'],
+            'organization_bin' => ['бин организации','бин предприятия','бин работодателя'],
+            'organization_director' => ['руководитель','директор','фио руководителя'],
+            'organization_address' => ['адрес организации','юридический адрес организации'],
+            'organization' => ['организация','место работы','предприятие','наименование организации'],
+            'branch_name' => ['филиал','область','регион профсоюза','филиал профсоюза'],
+            'registration_date' => ['дата регистрации','registered','user registered'],
+            'submission_date' => ['дата подачи','дата заявления','дата заявки','created at','дата создания'],
+            'status' => ['статус'],
+            'member_status' => ['статус участника','статус членства'],
+        ];
+        foreach ($rules as $target => $variants) {
+            if (!isset($known[$target])) { continue; }
+            foreach ($variants as $variant) {
+                if ($h === $variant || strpos($h, $variant) !== false) { return $target; }
+            }
+        }
+        return '';
+    }
+
+    private function normalize_label($value) {
+        $value = wp_strip_all_tags((string)$value);
+        $value = function_exists('mb_strtolower') ? mb_strtolower($value, 'UTF-8') : strtolower($value);
+        $value = str_replace(['ё','_','-','/','\\','.','(',')','[',']',':'], ['е',' ',' ',' ',' ',' ',' ',' ',' ',' ',' '], $value);
+        return trim(preg_replace('/\s+/u', ' ', $value));
+    }
+
+    private function private_dir() {
+        $dir = WP_CONTENT_DIR . '/zau-private-imports';
+        if (!is_dir($dir)) { wp_mkdir_p($dir); }
+        if (is_dir($dir)) {
+            if (!is_file($dir . '/index.php')) { @file_put_contents($dir . '/index.php', "<?php\nhttp_response_code(403);\nexit;\n"); }
+            if (!is_file($dir . '/.htaccess')) { @file_put_contents($dir . '/.htaccess', "Deny from all\n"); }
+        }
+        return $dir;
+    }
+
+    private function convert_to_utf8($path) {
+        $sample = @file_get_contents($path, false, null, 0, 200000);
+        if ($sample === false || $sample === '') { return; }
+        if (substr($sample, 0, 3) === "\xEF\xBB\xBF") {
+            $all = file_get_contents($path);
+            file_put_contents($path, substr($all, 3));
+            return;
+        }
+        if (!function_exists('mb_detect_encoding')) { return; }
+        $enc = mb_detect_encoding($sample, ['UTF-8','Windows-1251','CP1251','ISO-8859-1'], true);
+        if ($enc && strtoupper($enc) !== 'UTF-8') {
+            $all = file_get_contents($path);
+            $utf = mb_convert_encoding($all, 'UTF-8', $enc);
+            file_put_contents($path, $utf);
+        }
+    }
+
+    private function detect_delimiter($path) {
+        $line = '';
+        $fh = fopen($path, 'rb');
+        if ($fh) { $line = (string)fgets($fh); fclose($fh); }
+        $counts = [','=>substr_count($line, ','), ';'=>substr_count($line, ';'), "\t"=>substr_count($line, "\t"), '|'=>substr_count($line, '|')];
+        arsort($counts);
+        $delimiter = (string)array_key_first($counts);
+        return ($counts[$delimiter] ?? 0) > 0 ? $delimiter : ',';
+    }
+
+    private function row_is_empty($row) {
+        foreach ((array)$row as $value) { if (trim((string)$value) !== '') { return false; } }
+        return true;
+    }
+
+    private function inspect_csv($path, $delimiter) {
+        $fh = fopen($path, 'rb');
+        if (!$fh) { return new WP_Error('csv_open', 'Не удалось открыть CSV.'); }
+        $headers = fgetcsv($fh, 0, $delimiter);
+        if (!is_array($headers) || !$headers) { fclose($fh); return new WP_Error('csv_header', 'В CSV не найдена строка заголовков.'); }
+        $headers = array_map(function($v){ return trim((string)$v); }, $headers);
+        $dataOffset = ftell($fh);
+        $preview = [];
+        $total = 0;
+        while (($row = fgetcsv($fh, 0, $delimiter)) !== false) {
+            if ($this->row_is_empty($row)) { continue; }
+            $total++;
+            if (count($preview) < 5) { $preview[] = array_pad(array_slice($row, 0, count($headers)), count($headers), ''); }
+        }
+        fclose($fh);
+        return ['headers'=>$headers, 'preview'=>$preview, 'total'=>$total, 'data_offset'=>$dataOffset];
+    }
+
+    /** Загрузка и разбор CSV. scope = accounts|applications */
+    public function ajax_upload() {
+        $this->require_access();
+        $scope = sanitize_key((string)($_POST['scope'] ?? ''));
+        if (!in_array($scope, ['accounts','applications'], true)) { wp_send_json_error(['message'=>'Неизвестный тип переноса.'], 400); }
+        if (empty($_FILES['file']) || !is_array($_FILES['file'])) { wp_send_json_error(['message'=>'Выберите CSV-файл.'], 400); }
+        $file = $_FILES['file'];
+        if ((int)($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) { wp_send_json_error(['message'=>'Ошибка загрузки файла. Код: '.(int)$file['error']], 400); }
+        if ((int)($file['size'] ?? 0) < 2 || (int)$file['size'] > 50 * 1024 * 1024) { wp_send_json_error(['message'=>'Размер CSV должен быть от 2 байт до 50 МБ.'], 400); }
+        $name = sanitize_file_name((string)($file['name'] ?? 'import.csv'));
+        $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+        if (!in_array($ext, ['csv','txt'], true)) { wp_send_json_error(['message'=>'Поддерживаются только CSV и TXT. Экспортируйте таблицу как CSV UTF-8.'], 400); }
+        $dir = $this->private_dir();
+        if (!is_dir($dir) || !is_writable($dir)) { wp_send_json_error(['message'=>'Папка приватного импорта недоступна для записи.'], 500); }
+        $token = wp_generate_password(24, false, false);
+        $path = trailingslashit($dir) . 'legacy-' . $scope . '-' . get_current_user_id() . '-' . $token . '.csv';
+        if (!move_uploaded_file($file['tmp_name'], $path)) { wp_send_json_error(['message'=>'Не удалось сохранить загруженный CSV.'], 500); }
+        @chmod($path, 0600);
+        $this->convert_to_utf8($path);
+        $delimiter = $this->detect_delimiter($path);
+        $info = $this->inspect_csv($path, $delimiter);
+        if (is_wp_error($info)) { @unlink($path); wp_send_json_error(['message'=>$info->get_error_message()], 400); }
+        $known = $scope === 'accounts' ? $this->account_fields() : $this->application_fields();
+        $auto = [];
+        foreach ($info['headers'] as $i=>$header) { $auto[(string)$i] = $this->auto_target($header, $known); }
+        $upload = [
+            'scope'=>$scope,
+            'path'=>$path,
+            'original_name'=>$name,
+            'delimiter'=>$delimiter,
+            'headers'=>$info['headers'],
+            'total'=>(int)$info['total'],
+            'data_offset'=>(int)$info['data_offset'],
+            'uploaded_at'=>time(),
+        ];
+        update_option($this->upload_option_key($scope), $upload, false);
+        delete_option($this->job_option_key($scope));
+        wp_send_json_success([
+            'message'=>'Файл прочитан. Сопоставьте колонки.',
+            'headers'=>$info['headers'],
+            'preview'=>$info['preview'],
+            'total'=>(int)$info['total'],
+            'auto_mapping'=>$auto,
+            'file_name'=>$name,
+        ]);
+    }
+
+    public function ajax_start() {
+        $this->require_access();
+        $scope = sanitize_key((string)($_POST['scope'] ?? ''));
+        if (!in_array($scope, ['accounts','applications'], true)) { wp_send_json_error(['message'=>'Неизвестный тип переноса.'], 400); }
+        $upload = (array)get_option($this->upload_option_key($scope), []);
+        if (!$upload || empty($upload['path']) || !is_file($upload['path'])) { wp_send_json_error(['message'=>'Сначала загрузите CSV-файл.'], 400); }
+        $mappingRaw = json_decode((string)wp_unslash($_POST['mapping'] ?? ''), true);
+        if (!is_array($mappingRaw)) { wp_send_json_error(['message'=>'Не получено сопоставление колонок.'], 400); }
+        $known = $scope === 'accounts' ? $this->account_fields() : $this->application_fields();
+        $allowed = array_keys($known);
+        $mapping = [];
+        foreach ($mappingRaw as $index=>$target) {
+            $index = absint($index);
+            $target = sanitize_key((string)$target);
+            if (in_array($target, $allowed, true) && $target !== '') { $mapping[$index] = $target; }
+        }
+        $used = array_values($mapping);
+        if ($scope === 'accounts' && !in_array('legacy_user_id', $used, true)) {
+            wp_send_json_error(['message'=>'Сопоставьте колонку «ID пользователя Ultimate Member» — это обязательный ключ переноса.'], 400);
+        }
+        if ($scope === 'applications' && (!in_array('legacy_entry_id', $used, true) || !in_array('legacy_user_id', $used, true))) {
+            wp_send_json_error(['message'=>'Для заявлений обязательны и «ID записи заявления», и «ID пользователя Ultimate Member» (для привязки к аккаунту).'], 400);
+        }
+        $formId = 0;
+        if ($scope === 'applications') {
+            $formId = absint($_POST['form_id'] ?? 0);
+            global $wpdb;
+            if (!$formId || !$wpdb->get_var($wpdb->prepare("SELECT id FROM {$this->forms_table} WHERE id=%d", $formId))) {
+                wp_send_json_error(['message'=>'Выберите форму заявления, к которой будут привязаны перенесённые записи.'], 400);
+            }
+        }
+        $dryRun = !empty($_POST['dry_run']);
+        $options = [
+            'dry_run'=>$dryRun ? 1 : 0,
+            'overwrite'=>!empty($_POST['overwrite']) ? 1 : 0,
+            'default_status'=>sanitize_text_field((string)($_POST['default_status'] ?? 'Заявление подано')),
+            'form_id'=>$formId,
+            'batch_size'=>max(10, min(200, absint($_POST['batch_size'] ?? 50))),
+        ];
+        $job = [
+            'scope'=>$scope,
+            'file_path'=>$upload['path'],
+            'file_name'=>$upload['original_name'],
+            'delimiter'=>$upload['delimiter'],
+            'headers'=>$upload['headers'],
+            'total'=>(int)$upload['total'],
+            'byte_position'=>(int)$upload['data_offset'],
+            'processed'=>0,
+            'mapping'=>$mapping,
+            'options'=>$options,
+            'stats'=>['created'=>0,'updated'=>0,'existing'=>0,'linked'=>0,'skipped'=>0,'errors'=>0,'would_create'=>0,'would_update'=>0],
+            'report'=>[],
+            'log'=>[],
+            'status'=>'running',
+            'started_at'=>current_time('mysql'),
+            'finished_at'=>'',
+        ];
+        update_option($this->job_option_key($scope), $job, false);
+        wp_send_json_success($this->public_job($job));
+    }
+
+    public function ajax_process() {
+        $this->require_access();
+        $scope = sanitize_key((string)($_POST['scope'] ?? ''));
+        if (!in_array($scope, ['accounts','applications'], true)) { wp_send_json_error(['message'=>'Неизвестный тип переноса.'], 400); }
+        $job = (array)get_option($this->job_option_key($scope), []);
+        if (!$job || empty($job['file_path']) || !is_file($job['file_path'])) { wp_send_json_error(['message'=>'Задание переноса не найдено.'], 404); }
+        if (($job['status'] ?? '') === 'finished') { wp_send_json_success($this->public_job($job)); }
+        $fh = fopen($job['file_path'], 'rb');
+        if (!$fh) { wp_send_json_error(['message'=>'Не удалось повторно открыть CSV.'], 500); }
+        fseek($fh, (int)$job['byte_position']);
+        $limit = (int)$job['options']['batch_size'];
+        $handled = 0;
+        while ($handled < $limit && ($row = fgetcsv($fh, 0, $job['delimiter'])) !== false) {
+            $job['byte_position'] = ftell($fh);
+            if ($this->row_is_empty($row)) { continue; }
+            $job['processed']++;
+            $handled++;
+            $result = $scope === 'accounts' ? $this->process_account_row($row, $job) : $this->process_application_row($row, $job);
+            $this->apply_result($job, $result);
+        }
+        $eof = feof($fh);
+        fclose($fh);
+        if ($eof || (int)$job['processed'] >= (int)$job['total']) {
+            $job['status'] = 'finished';
+            $job['finished_at'] = current_time('mysql');
+            $job['log'][] = 'Перенос завершён: ' . $job['processed'] . ' строк.';
+        }
+        if (count($job['report']) > 2000) { $job['report'] = array_slice($job['report'], -2000); }
+        if (count($job['log']) > 100) { $job['log'] = array_slice($job['log'], -100); }
+        update_option($this->job_option_key($scope), $job, false);
+        wp_send_json_success($this->public_job($job));
+    }
+
+    private function raw_legacy_fields($headers, $row) {
+        $legacy = [];
+        foreach ($headers as $i=>$header) {
+            $value = isset($row[$i]) ? trim((string)$row[$i]) : '';
+            if ($value !== '') { $legacy[(string)$header] = $value; }
+        }
+        return $legacy;
+    }
+
+    private function read_mapped_row($row, $job) {
+        $headers = (array)$job['headers'];
+        $mapping = (array)$job['mapping'];
+        $mapped = [];
+        foreach ($headers as $i=>$header) {
+            $value = isset($row[$i]) ? trim((string)$row[$i]) : '';
+            $target = $mapping[$i] ?? '';
+            if ($target !== '' && $value !== '') { $mapped[$target] = $value; }
+        }
+        return $this->normalize_mapped($mapped);
+    }
+
+    private function normalize_mapped($data) {
+        $out = [];
+        foreach ((array)$data as $key=>$value) {
+            $value = trim(wp_strip_all_tags((string)$value));
+            if ($key === 'email') { $value = sanitize_email($value); }
+            elseif ($key === 'phone') { $value = $this->normalize_phone($value); }
+            elseif (in_array($key, ['iin','organization_bin'], true)) { $value = preg_replace('/\D+/', '', $value); }
+            elseif (in_array($key, ['registration_date','submission_date','birth_date'], true)) { $value = $this->normalize_date($value); }
+            elseif (in_array($key, ['legacy_user_id','legacy_entry_id'], true)) { $value = sanitize_text_field($value); }
+            $out[$key] = $value;
+        }
+        if (empty($out['full_name'])) { $out['full_name'] = trim(implode(' ', array_filter([$out['last_name'] ?? '', $out['first_name'] ?? '', $out['middle_name'] ?? '']))); }
+        if (!empty($out['full_name']) && (empty($out['first_name']) || empty($out['last_name']))) {
+            $parts = preg_split('/\s+/u', trim($out['full_name']));
+            if (count($parts) >= 2) {
+                if (empty($out['last_name'])) { $out['last_name'] = array_shift($parts); }
+                if (empty($out['first_name'])) { $out['first_name'] = array_shift($parts); }
+                if (empty($out['middle_name'])) { $out['middle_name'] = implode(' ', $parts); }
+            }
+        }
+        return $out;
+    }
+
+    private function normalize_phone($value) {
+        $digits = preg_replace('/\D+/', '', (string)$value);
+        if (strlen($digits) === 10) { $digits = '7' . $digits; }
+        if (strlen($digits) === 11 && substr($digits, 0, 1) === '8') { $digits = '7' . substr($digits, 1); }
+        return $digits ? '+' . $digits : '';
+    }
+
+    private function normalize_date($value) {
+        $value = trim((string)$value);
+        if ($value === '') { return ''; }
+        $formats = ['Y-m-d H:i:s','Y-m-d','d.m.Y H:i:s','d.m.Y','d/m/Y','m/d/Y'];
+        foreach ($formats as $format) {
+            $dt = DateTime::createFromFormat($format, $value, wp_timezone());
+            if ($dt instanceof DateTime) { return $dt->format(strpos($format, 'H') !== false ? 'Y-m-d H:i:s' : 'Y-m-d'); }
+        }
+        $ts = strtotime($value);
+        return $ts ? wp_date('Y-m-d', $ts) : $value;
+    }
+
+    private function mysql_date($value) {
+        if (!$value) { return ''; }
+        if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $value)) { return $value; }
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) { return $value . ' 00:00:00'; }
+        $ts = strtotime($value);
+        return $ts ? wp_date('Y-m-d H:i:s', $ts) : '';
+    }
+
+    /** Точный поиск в карте сопоставления по старому ID. Единственный способ найти цель — без угадывания. */
+    private function find_map_row($kind, $legacyId) {
+        global $wpdb;
+        if ($legacyId === '' || $legacyId === null) { return null; }
+        return $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->map_table} WHERE kind=%s AND legacy_id=%s", $kind, (string)$legacyId));
+    }
+
+    private function save_map_row($kind, $legacyId, $fields) {
+        global $wpdb;
+        $now = current_time('mysql');
+        $existing = $this->find_map_row($kind, $legacyId);
+        $data = array_merge(['kind'=>$kind,'legacy_id'=>(string)$legacyId,'updated_at'=>$now], $fields);
+        if ($existing) {
+            $wpdb->update($this->map_table, $data, ['id'=>(int)$existing->id]);
+            return (int)$existing->id;
+        }
+        $data['created_at'] = $now;
+        $wpdb->insert($this->map_table, $data);
+        return (int)$wpdb->insert_id;
+    }
+
+    private function set_meta_fill($userId, $key, $value, $overwrite) {
+        if ($value === '' || $value === null) { return; }
+        $old = get_user_meta($userId, $key, true);
+        if ($overwrite || $old === '' || $old === null) { update_user_meta($userId, $key, $value); }
+    }
+
+    private function unique_login($mapped) {
+        $base = '';
+        if (!empty($mapped['email'])) { $base = sanitize_user(strtok($mapped['email'], '@'), true); }
+        if (!$base && !empty($mapped['phone'])) { $base = 'member_' . preg_replace('/\D+/', '', $mapped['phone']); }
+        if (!$base && !empty($mapped['legacy_user_id'])) { $base = 'legacy_' . sanitize_user($mapped['legacy_user_id'], true); }
+        if (!$base) { $base = 'legacy_member'; }
+        $login = $base; $i = 1;
+        while (username_exists($login)) { $login = $base . '_' . $i++; }
+        return $login;
+    }
+
+    private function create_account_user($mapped) {
+        $display = trim((string)($mapped['full_name'] ?? ''));
+        if (!$display) { $display = $mapped['email'] ?? ($mapped['phone'] ?? ('Участник #' . ($mapped['legacy_user_id'] ?? ''))); }
+        $email = (!empty($mapped['email']) && is_email($mapped['email']) && !email_exists($mapped['email'])) ? strtolower(trim((string)$mapped['email'])) : '';
+        return wp_insert_user([
+            'user_login'=>$this->unique_login($mapped),
+            'user_pass'=>wp_generate_password(32, true, true),
+            'user_email'=>$email,
+            'display_name'=>$display,
+            'first_name'=>$mapped['first_name'] ?? '',
+            'last_name'=>$mapped['last_name'] ?? '',
+            'role'=>'subscriber',
+            'user_registered'=>$this->mysql_date($mapped['registration_date'] ?? '') ?: current_time('mysql'),
+        ]);
+    }
+
+    private function update_account_user($userId, $mapped, $overwrite, $defaultStatus) {
+        $user = get_user_by('id', $userId);
+        if (!$user) { return new WP_Error('user_missing', 'Пользователь не найден.'); }
+        $update = ['ID'=>$userId];
+        foreach (['first_name','last_name'] as $field) {
+            if (!empty($mapped[$field]) && ($overwrite || empty($user->$field))) { $update[$field] = $mapped[$field]; }
+        }
+        if (!empty($mapped['full_name']) && ($overwrite || !$user->display_name || $user->display_name === $user->user_login)) { $update['display_name'] = $mapped['full_name']; }
+        if (!empty($mapped['email']) && is_email($mapped['email'])) {
+            $owner = email_exists($mapped['email']);
+            if ((!$owner || (int)$owner === $userId) && ($overwrite || !$user->user_email)) { $update['user_email'] = $mapped['email']; }
+        }
+        if (count($update) > 1) {
+            $result = wp_update_user($update);
+            if (is_wp_error($result)) { return $result; }
+        }
+        if (!empty($mapped['phone'])) { $this->set_meta_fill($userId, 'zau_phone', $mapped['phone'], $overwrite); }
+        $this->set_meta_fill($userId, 'zau_legacy_user_id', $mapped['legacy_user_id'] ?? '', false);
+        $profileMap = ['iin'=>'iin','birth_date'=>'birth_date','address'=>'address','position'=>'position','department'=>'department','middle_name'=>'middle_name'];
+        foreach ($profileMap as $source=>$target) {
+            if (!empty($mapped[$source])) { $this->set_meta_fill($userId, 'zau_profile_' . $target, $mapped[$source], $overwrite); }
+        }
+        $this->assign_organization($userId, $mapped, $overwrite);
+        $this->assign_branch($userId, $mapped, $overwrite);
+        $existingStatus = get_user_meta($userId, 'zau_member_status', true);
+        if (!$existingStatus || $overwrite) { update_user_meta($userId, 'zau_member_status', $mapped['member_status'] ?: ($defaultStatus ?: 'Заявление подано')); }
+        $this->update_member_card($userId, $mapped, $overwrite);
+        update_user_meta($userId, 'zau_imported_from_legacy_site', 1);
+        update_user_meta($userId, 'zau_legacy_imported_at', current_time('mysql'));
+        return true;
+    }
+
+    private function assign_organization($userId, $mapped, $overwrite) {
+        global $wpdb;
+        $bin = preg_replace('/\D+/', '', (string)($mapped['organization_bin'] ?? ''));
+        $name = trim((string)($mapped['organization'] ?? ''));
+        if (!$bin && !$name) { return; }
+        $org = null;
+        if ($bin) { $org = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->orgs_table} WHERE bin=%s LIMIT 1", $bin)); }
+        if (!$org && $name) { $org = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->orgs_table} WHERE name=%s LIMIT 1", $name)); }
+        if (!$org && $bin) {
+            $wpdb->insert($this->orgs_table, ['bin'=>$bin,'name'=>$name ?: $bin,'director'=>$mapped['organization_director'] ?? '','address'=>$mapped['organization_address'] ?? '','region'=>'','source'=>'legacy_import','updated_at'=>current_time('mysql')]);
+            if ($wpdb->insert_id) { $org = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->orgs_table} WHERE id=%d", $wpdb->insert_id)); }
+        } elseif (!$org && $name) {
+            $wpdb->query($wpdb->prepare("INSERT INTO {$this->orgs_table} (bin,name,director,address,region,source,updated_at) VALUES (NULL,%s,%s,%s,'','legacy_import_name_only',%s)", $name, (string)($mapped['organization_director'] ?? ''), (string)($mapped['organization_address'] ?? ''), current_time('mysql')));
+            if ($wpdb->insert_id) { $org = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->orgs_table} WHERE id=%d", $wpdb->insert_id)); }
+        }
+        if ($org) {
+            $this->set_meta_fill($userId, 'zau_organization_id', (int)$org->id, $overwrite);
+            if (!empty($org->bin)) { $this->set_meta_fill($userId, 'zau_organization_bin', (string)$org->bin, $overwrite); }
+            $this->set_meta_fill($userId, 'zau_organization_name', (string)$org->name, $overwrite);
+        } else {
+            if ($bin) { $this->set_meta_fill($userId, 'zau_organization_bin', $bin, $overwrite); }
+            if ($name) { $this->set_meta_fill($userId, 'zau_organization_name', $name, $overwrite); }
+        }
+    }
+
+    private function assign_branch($userId, $mapped, $overwrite) {
+        global $wpdb;
+        $name = trim((string)($mapped['branch_name'] ?? ''));
+        if ($name === '') { return; }
+        $norm = $this->normalize_label($name);
+        $rows = $wpdb->get_results("SELECT id,name,region FROM {$this->branches_table} WHERE active=1 ORDER BY sort_order ASC,id ASC");
+        $match = null;
+        foreach ((array)$rows as $row) {
+            $rowNorm = $this->normalize_label($row->name);
+            $regionNorm = $this->normalize_label($row->region);
+            if ($norm === $rowNorm || ($regionNorm && $norm === $regionNorm) || strpos($rowNorm, $norm) !== false || ($regionNorm && strpos($norm, $regionNorm) !== false)) { $match = $row; break; }
+        }
+        $this->set_meta_fill($userId, 'zau_profile_branch_name', $name, $overwrite);
+        if ($match) {
+            $this->set_meta_fill($userId, 'zau_profile_branch_id', (int)$match->id, $overwrite);
+            $this->set_meta_fill($userId, 'zau_profile_branch_name', (string)$match->name, $overwrite);
+        }
+    }
+
+    private function update_member_card($userId, $mapped, $overwrite) {
+        $card = json_decode((string)get_user_meta($userId, 'zau_member_card_data', true), true);
+        if (!is_array($card)) { $card = []; }
+        foreach (['iin','birth_date','address','position','department','middle_name'] as $field) {
+            if (!empty($mapped[$field]) && ($overwrite || empty($card[$field]))) { $card[$field] = $mapped[$field]; }
+        }
+        update_user_meta($userId, 'zau_member_card_data', wp_json_encode($card, JSON_UNESCAPED_UNICODE));
+        if (!get_user_meta($userId, 'zau_member_card_review_status', true)) { update_user_meta($userId, 'zau_member_card_review_status', 'pending'); }
+    }
+
+    private function process_account_row($row, $job) {
+        $rowNumber = (int)$job['processed'];
+        $mapped = $this->read_mapped_row($row, $job);
+        $legacyId = (string)($mapped['legacy_user_id'] ?? '');
+        if ($legacyId === '') { return ['kind'=>'error','row'=>$rowNumber,'message'=>'Пустой ID пользователя Ultimate Member — строка пропущена.','mapped'=>$mapped]; }
+        $dry = !empty($job['options']['dry_run']);
+        $overwrite = !empty($job['options']['overwrite']);
+        $existingMap = $this->find_map_row('account', $legacyId);
+        $userId = 0;
+        if ($existingMap && $existingMap->target_user_id && get_user_by('id', (int)$existingMap->target_user_id)) {
+            $userId = (int)$existingMap->target_user_id;
+        } else {
+            global $wpdb;
+            $found = (int)$wpdb->get_var($wpdb->prepare("SELECT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_legacy_user_id' AND meta_value=%s ORDER BY user_id ASC LIMIT 1", $legacyId));
+            if ($found) { $userId = $found; }
+        }
+        if ($dry) {
+            return ['kind'=>$userId ? 'would_update' : 'would_create','row'=>$rowNumber,'message'=>$userId ? 'Найден ранее перенесённый аккаунт, будет обновлён.' : 'Будет создан новый аккаунт.','user_id'=>$userId,'mapped'=>$mapped];
+        }
+        $created = false;
+        if (!$userId) {
+            $newUser = $this->create_account_user($mapped);
+            if (is_wp_error($newUser)) { return ['kind'=>'error','row'=>$rowNumber,'message'=>$newUser->get_error_message(),'mapped'=>$mapped]; }
+            $userId = (int)$newUser;
+            $created = true;
+        }
+        $updated = $this->update_account_user($userId, $mapped, $overwrite || $created, (string)$job['options']['default_status']);
+        if (is_wp_error($updated)) { return ['kind'=>'error','row'=>$rowNumber,'message'=>$updated->get_error_message(),'user_id'=>$userId,'mapped'=>$mapped]; }
+        $this->save_map_row('account', $legacyId, ['target_user_id'=>$userId,'status'=>'imported','message'=>'OK']);
+        return ['kind'=>$created ? 'created' : 'updated','row'=>$rowNumber,'message'=>$created ? 'Аккаунт создан.' : 'Аккаунт обновлён.','user_id'=>$userId,'mapped'=>$mapped];
+    }
+
+    private function ensure_form_id($formId) {
+        global $wpdb;
+        $formId = absint($formId);
+        if ($formId && $wpdb->get_var($wpdb->prepare("SELECT id FROM {$this->forms_table} WHERE id=%d", $formId))) { return $formId; }
+        return 0;
+    }
+
+    private function process_application_row($row, $job) {
+        $rowNumber = (int)$job['processed'];
+        $headers = (array)$job['headers'];
+        $legacyFields = $this->raw_legacy_fields($headers, $row);
+        $mapped = $this->read_mapped_row($row, $job);
+        $entryId = (string)($mapped['legacy_entry_id'] ?? '');
+        $ownerLegacyId = (string)($mapped['legacy_user_id'] ?? '');
+        if ($entryId === '' || $ownerLegacyId === '') { return ['kind'=>'error','row'=>$rowNumber,'message'=>'Пустой ID заявления или ID владельца-аккаунта — строка пропущена.','mapped'=>$mapped]; }
+        $accountMap = $this->find_map_row('account', $ownerLegacyId);
+        $userId = ($accountMap && $accountMap->target_user_id) ? (int)$accountMap->target_user_id : 0;
+        if (!$userId || !get_user_by('id', $userId)) {
+            return ['kind'=>'skipped','row'=>$rowNumber,'message'=>'Аккаунт с ID Ultimate Member «'.$ownerLegacyId.'» ещё не перенесён — сначала перенесите аккаунты.','mapped'=>$mapped];
+        }
+        $dry = !empty($job['options']['dry_run']);
+        $existingMap = $this->find_map_row('application', $entryId);
+        if ($dry) {
+            return ['kind'=>$existingMap ? 'would_update' : 'would_create','row'=>$rowNumber,'message'=>$existingMap ? 'Заявление уже переносилось, будет обновлено.' : 'Будет создана новая заявка.','user_id'=>$userId,'mapped'=>$mapped];
+        }
+        $formId = $this->ensure_form_id($job['options']['form_id']);
+        if (!$formId) { return ['kind'=>'error','row'=>$rowNumber,'message'=>'Форма для заявлений не найдена.','mapped'=>$mapped]; }
+        global $wpdb;
+        $data = $mapped;
+        $data['full_name'] = $mapped['full_name'] ?? '';
+        $data['legacy_source'] = 'legacy_csv_import';
+        $data['legacy_entry_id'] = $entryId;
+        $data['legacy_user_id'] = $ownerLegacyId;
+        $data['legacy_imported_at'] = current_time('mysql');
+        $data['legacy_fields'] = $legacyFields;
+        $createdAt = $this->mysql_date($mapped['submission_date'] ?? '') ?: current_time('mysql');
+        $status = sanitize_key($mapped['status'] ?? 'submitted') ?: 'submitted';
+        if ($existingMap && $existingMap->target_submission_id) {
+            $submissionId = (int)$existingMap->target_submission_id;
+            $ok = $wpdb->update($this->submissions_table, ['status'=>$status,'data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),'updated_at'=>current_time('mysql')], ['id'=>$submissionId]);
+            if ($ok === false) { return ['kind'=>'error','row'=>$rowNumber,'message'=>'Не удалось обновить ранее перенесённую заявку.','mapped'=>$mapped]; }
+            $this->save_map_row('application', $entryId, ['target_user_id'=>$userId,'target_submission_id'=>$submissionId,'status'=>'imported','message'=>'OK']);
+            return ['kind'=>'updated','row'=>$rowNumber,'message'=>'Заявка обновлена.','user_id'=>$userId,'submission_id'=>$submissionId,'mapped'=>$mapped];
+        }
+        $wpdb->insert($this->submissions_table, ['form_id'=>$formId,'user_id'=>$userId,'status'=>$status,'data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),'signature_urls_json'=>'{}','ip'=>'legacy-import','created_at'=>$createdAt,'updated_at'=>current_time('mysql')]);
+        $submissionId = (int)$wpdb->insert_id;
+        if (!$submissionId) { return ['kind'=>'error','row'=>$rowNumber,'message'=>'Не удалось сохранить заявку.','mapped'=>$mapped]; }
+        $this->save_map_row('application', $entryId, ['target_user_id'=>$userId,'target_submission_id'=>$submissionId,'status'=>'imported','message'=>'OK']);
+        return ['kind'=>'created','row'=>$rowNumber,'message'=>'Заявка создана.','user_id'=>$userId,'submission_id'=>$submissionId,'mapped'=>$mapped];
+    }
+
+    private function apply_result(&$job, $result) {
+        $kind = $result['kind'] ?? 'error';
+        switch ($kind) {
+            case 'created': $job['stats']['created']++; break;
+            case 'updated': $job['stats']['updated']++; break;
+            case 'existing': $job['stats']['existing']++; break;
+            case 'skipped': $job['stats']['skipped']++; break;
+            case 'would_create': $job['stats']['would_create']++; break;
+            case 'would_update': $job['stats']['would_update']++; break;
+            default: $job['stats']['errors']++; break;
+        }
+        $job['report'][] = [
+            'row'=>(int)($result['row'] ?? 0),
+            'result'=>$kind,
+            'message'=>(string)($result['message'] ?? ''),
+            'user_id'=>(int)($result['user_id'] ?? 0),
+            'submission_id'=>(int)($result['submission_id'] ?? 0),
+            'legacy_user_id'=>(string)($result['mapped']['legacy_user_id'] ?? ''),
+            'legacy_entry_id'=>(string)($result['mapped']['legacy_entry_id'] ?? ''),
+            'full_name'=>(string)($result['mapped']['full_name'] ?? ''),
+        ];
+        if (in_array($kind, ['error','skipped'], true)) { $job['log'][] = 'Строка ' . ($result['row'] ?? '?') . ': ' . ($result['message'] ?? 'ошибка'); }
+    }
+
+    private function public_job($job) {
+        return [
+            'status'=>$job['status'] ?? 'idle',
+            'processed'=>(int)($job['processed'] ?? 0),
+            'total'=>(int)($job['total'] ?? 0),
+            'stats'=>$job['stats'] ?? [],
+            'log'=>array_slice((array)($job['log'] ?? []), -20),
+            'dry_run'=>!empty($job['options']['dry_run']) ? 1 : 0,
+            'finished_at'=>$job['finished_at'] ?? '',
+        ];
+    }
+
+    public function ajax_reset() {
+        $this->require_access();
+        $scope = sanitize_key((string)($_POST['scope'] ?? ''));
+        if (!in_array($scope, ['accounts','applications'], true)) { wp_send_json_error(['message'=>'Неизвестный тип переноса.'], 400); }
+        $upload = (array)get_option($this->upload_option_key($scope), []);
+        if (!empty($upload['path']) && is_file($upload['path'])) { @unlink($upload['path']); }
+        delete_option($this->upload_option_key($scope));
+        delete_option($this->job_option_key($scope));
+        wp_send_json_success(['message'=>'Загрузка и прогресс сброшены. Перенесённые данные не удалены.']);
+    }
+
+    public function download_report() {
+        if (!$this->can_manage()) { wp_die('Недостаточно прав.', 403); }
+        check_admin_referer(self::NONCE);
+        $scope = sanitize_key((string)($_GET['scope'] ?? 'accounts'));
+        if (!in_array($scope, ['accounts','applications'], true)) { $scope = 'accounts'; }
+        $job = (array)get_option($this->job_option_key($scope), []);
+        $rows = (array)($job['report'] ?? []);
+        nocache_headers();
+        header('Content-Type: text/csv; charset=UTF-8');
+        header('Content-Disposition: attachment; filename="zau-legacy-import-' . $scope . '-' . wp_date('Y-m-d-H-i') . '.csv"');
+        echo "\xEF\xBB\xBF";
+        $out = fopen('php://output', 'w');
+        fputcsv($out, ['Строка','Результат','Сообщение','Новый User ID','Новая заявка ID','ID Ultimate Member','ID записи заявления','ФИО'], ';');
+        foreach ($rows as $row) {
+            fputcsv($out, [$row['row'],$row['result'],$row['message'],$row['user_id'],$row['submission_id'],$row['legacy_user_id'],$row['legacy_entry_id'],$row['full_name']], ';');
+        }
+        fclose($out);
+        exit;
+    }
+
+    /* ---------------------------------------------------------------------
+     * Привязка PDF по уникальному ID в конце имени файла.
+     * Личная карточка — ID пользователя Ultimate Member; заявление — ID записи формы.
+     * ------------------------------------------------------------------- */
+
+    private function pdf_settings() {
+        return wp_parse_args((array)get_option('zau_legacy_pdf_settings', []), [
+            'folder' => 'zau-legacy-pdfs',
+            'card_pattern' => '',
+            'card_regex' => '(\\d+)\\D*$',
+            'card_template_id' => 0,
+            'application_pattern' => '',
+            'application_regex' => '(\\d+)\\D*$',
+            'application_template_id' => 0,
+        ]);
+    }
+
+    private function pdf_folder_path($settings) {
+        $uploads = wp_upload_dir();
+        $folder = trim((string)($settings['folder'] ?? ''), '/\\ ');
+        $folder = $folder !== '' ? $folder : 'zau-legacy-pdfs';
+        return trailingslashit($uploads['basedir']) . $folder;
+    }
+
+    private function extract_legacy_id($filename, $regex) {
+        if ($regex === '') { return ''; }
+        $delimited = '#' . str_replace('#', '\\#', $regex) . '#u';
+        if (@preg_match($delimited, $filename, $m) && isset($m[1]) && $m[1] !== '') { return sanitize_text_field($m[1]); }
+        return '';
+    }
+
+    private function matches_pattern($filename, $pattern) {
+        $pattern = trim((string)$pattern);
+        if ($pattern === '') { return true; }
+        if (function_exists('mb_stripos')) { return mb_stripos($filename, $pattern) !== false; }
+        return stripos($filename, $pattern) !== false;
+    }
+
+    /** Классифицирует файл по правилам «личная карточка» / «заявление» и достаёт ID. Первое совпадение побеждает. */
+    private function classify_pdf($filename, $settings) {
+        if ($this->matches_pattern($filename, $settings['card_pattern'])) {
+            $id = $this->extract_legacy_id($filename, $settings['card_regex']);
+            if ($id !== '') { return ['role'=>'card','legacy_id'=>$id]; }
+        }
+        if ($this->matches_pattern($filename, $settings['application_pattern'])) {
+            $id = $this->extract_legacy_id($filename, $settings['application_regex']);
+            if ($id !== '') { return ['role'=>'application','legacy_id'=>$id]; }
+        }
+        return null;
+    }
+
+    public function ajax_scan_pdfs() {
+        $this->require_access();
+        $settings = [
+            'folder' => sanitize_text_field((string)($_POST['folder'] ?? 'zau-legacy-pdfs')),
+            'card_pattern' => sanitize_text_field((string)($_POST['card_pattern'] ?? '')),
+            'card_regex' => (string)wp_unslash($_POST['card_regex'] ?? '(\\d+)\\D*$'),
+            'card_template_id' => absint($_POST['card_template_id'] ?? 0),
+            'application_pattern' => sanitize_text_field((string)($_POST['application_pattern'] ?? '')),
+            'application_regex' => (string)wp_unslash($_POST['application_regex'] ?? '(\\d+)\\D*$'),
+            'application_template_id' => absint($_POST['application_template_id'] ?? 0),
+        ];
+        update_option('zau_legacy_pdf_settings', $settings, false);
+        $dir = $this->pdf_folder_path($settings);
+        if (!is_dir($dir)) { wp_send_json_error(['message'=>'Папка «' . $dir . '» не найдена. Скопируйте PDF по FTP/SFTP и повторите.'], 404); }
+        $files = glob(trailingslashit($dir) . '*.pdf');
+        if (!is_array($files)) { $files = []; }
+        natsort($files);
+        $rows = [];
+        $counts = ['card'=>0,'application'=>0,'unmatched'=>0,'unresolved'=>0];
+        foreach ($files as $path) {
+            $filename = basename($path);
+            $info = $this->classify_pdf($filename, $settings);
+            if (!$info) { $counts['unmatched']++; $rows[] = ['file'=>$filename,'role'=>'','legacy_id'=>'','resolved'=>0]; continue; }
+            $counts[$info['role']]++;
+            $map = $this->find_map_row($info['role'] === 'card' ? 'account' : 'application', $info['legacy_id']);
+            $resolved = $map && (int)($info['role'] === 'card' ? $map->target_user_id : $map->target_submission_id) > 0;
+            if (!$resolved) { $counts['unresolved']++; }
+            $rows[] = ['file'=>$filename,'role'=>$info['role'],'legacy_id'=>$info['legacy_id'],'resolved'=>$resolved ? 1 : 0];
+        }
+        wp_send_json_success(['rows'=>array_slice($rows, 0, 500), 'total'=>count($files), 'counts'=>$counts, 'folder'=>$dir]);
+    }
+
+    public function ajax_attach_pdfs() {
+        $this->require_access();
+        $settings = $this->pdf_settings();
+        $dir = $this->pdf_folder_path($settings);
+        if (!is_dir($dir)) { wp_send_json_error(['message'=>'Папка с PDF не найдена.'], 404); }
+        $processedDir = trailingslashit($dir) . 'обработано';
+        wp_mkdir_p($processedDir);
+        $files = glob(trailingslashit($dir) . '*.pdf');
+        if (!is_array($files)) { $files = []; }
+        natsort($files);
+        $batchSize = 20;
+        $batch = array_slice($files, 0, $batchSize);
+        $result = ['attached'=>0,'unmatched'=>0,'unresolved'=>0,'errors'=>0,'log'=>[]];
+        foreach ($batch as $path) {
+            $filename = basename($path);
+            $info = $this->classify_pdf($filename, $settings);
+            if (!$info) { $result['unmatched']++; $result['log'][] = $filename . ': имя файла не подошло ни под одно правило.'; continue; }
+            $outcome = $this->attach_one_pdf($path, $filename, $info, $settings);
+            if ($outcome === true) {
+                $result['attached']++;
+                @rename($path, trailingslashit($processedDir) . $filename);
+            } elseif ($outcome === 'unresolved') {
+                $result['unresolved']++;
+                $result['log'][] = $filename . ': не найдена запись с ' . ($info['role'] === 'card' ? 'ID Ultimate Member' : 'ID заявления') . ' «' . $info['legacy_id'] . '» — сначала перенесите ' . ($info['role'] === 'card' ? 'аккаунты' : 'заявления') . '.';
+            } else {
+                $result['errors']++;
+                $result['log'][] = $filename . ': ' . (string)$outcome;
+            }
+        }
+        $remaining = max(0, count($files) - count($batch));
+        wp_send_json_success(array_merge($result, ['remaining'=>$remaining]));
+    }
+
+    private function attach_one_pdf($path, $filename, $info, $settings) {
+        global $wpdb;
+        $kind = $info['role'] === 'card' ? 'account' : 'application';
+        $map = $this->find_map_row($kind, $info['legacy_id']);
+        if (!$map || !$map->target_user_id) { return 'unresolved'; }
+        $userId = (int)$map->target_user_id;
+        $submissionId = $info['role'] === 'application' ? (int)$map->target_submission_id : 0;
+        if ($info['role'] === 'application' && !$submissionId) { return 'unresolved'; }
+        $templateId = absint($info['role'] === 'card' ? $settings['card_template_id'] : $settings['application_template_id']);
+        if (!$templateId) { return 'не выбран шаблон PDF для этого типа документа в настройках привязки.'; }
+        $tpl = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->templates_table} WHERE id=%d", $templateId));
+        if (!$tpl) { return 'выбранный шаблон PDF больше не существует.'; }
+        $bytes = @file_get_contents($path);
+        if ($bytes === false || strlen($bytes) < 100) { return 'не удалось прочитать файл.'; }
+
+        $mapKind = $info['role'] === 'card' ? 'pdf_account' : 'pdf_application';
+        $existingDocMap = $this->find_map_row($mapKind, $info['legacy_id']);
+        $existingDoc = ($existingDocMap && $existingDocMap->target_document_id) ? $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->docs_table} WHERE id=%d", (int)$existingDocMap->target_document_id)) : null;
+
+        $user = get_user_by('id', $userId);
+        $fullName = $user ? $user->display_name : '';
+        $organization = (string)get_user_meta($userId, 'zau_organization_name', true);
+        if ($submissionId) {
+            $submission = $wpdb->get_row($wpdb->prepare("SELECT data_json FROM {$this->submissions_table} WHERE id=%d", $submissionId));
+            $subData = $submission ? json_decode((string)$submission->data_json, true) : null;
+            if (is_array($subData)) {
+                if (!empty($subData['full_name'])) { $fullName = $subData['full_name']; }
+                if (!empty($subData['organization'])) { $organization = $subData['organization']; }
+            }
+        }
+
+        $uploads = wp_upload_dir();
+        if (!empty($uploads['error'])) { return (string)$uploads['error']; }
+        $sub = 'zau-certificates/legacy';
+        $destDir = trailingslashit($uploads['basedir']) . $sub;
+        if (!wp_mkdir_p($destDir)) { return 'не удалось создать папку для документов.'; }
+
+        $now = current_time('mysql');
+        if ($existingDoc) {
+            $documentId = (int)$existingDoc->id;
+            $revision = max(1, (int)$existingDoc->file_revision + 1);
+            $documentNo = (string)$existingDoc->document_no;
+            $token = (string)$existingDoc->verify_token;
+        } else {
+            $token = bin2hex(random_bytes(24));
+            $row = ['template_id'=>$templateId,'user_id'=>$userId,'created_by'=>get_current_user_id(),'source_submission_id'=>$submissionId,'full_name'=>sanitize_text_field($fullName),'document_title'=>$tpl->name,'organization'=>sanitize_text_field($organization),'issue_date'=>wp_date('d.m.Y'),'document_no'=>'PENDING-'.$token,'member_status'=>(string)get_user_meta($userId,'zau_member_status',true),'signature_url'=>'','signature2_url'=>'','stamp_url'=>'','data_json'=>wp_json_encode(['legacy_source_file'=>$filename,'legacy_id'=>$info['legacy_id']], JSON_UNESCAPED_UNICODE),'orientation'=>$tpl->orientation,'verify_token'=>$token,'record_status'=>'draft','created_at'=>$now,'updated_at'=>$now];
+            if (!$wpdb->insert($this->docs_table, $row)) { return 'не удалось создать запись документа.'; }
+            $documentId = (int)$wpdb->insert_id;
+            $documentNo = class_exists('ZAU_Certificate_PDF_Generator') ? ZAU_Certificate_PDF_Generator::instance()->format_document_number($tpl, $documentId) : ('DOC-' . $documentId);
+            $revision = 1;
+        }
+
+        $safe = sanitize_file_name($documentNo . '-' . $documentId . '-r' . $revision);
+        $destPath = trailingslashit($destDir) . $safe . '.pdf';
+        if (file_put_contents($destPath, $bytes, LOCK_EX) === false) { return 'не удалось сохранить PDF.'; }
+        $pdfUrl = trailingslashit($uploads['baseurl']) . $sub . '/' . $safe . '.pdf';
+
+        $wpdb->update($this->docs_table, [
+            'document_no'=>$documentNo,
+            'pdf_url'=>$pdfUrl,
+            'file_revision'=>$revision,
+            'record_status'=>'active',
+            'updated_at'=>$now,
+        ], ['id'=>$documentId]);
+
+        $this->save_map_row($mapKind, $info['legacy_id'], ['target_user_id'=>$userId,'target_submission_id'=>$submissionId,'target_document_id'=>$documentId,'status'=>'imported','message'=>$filename]);
+        return true;
+    }
+
+    public function page() {
+        if (!$this->can_manage()) { wp_die('Недостаточно прав.'); }
+        global $wpdb;
+        $forms = $wpdb->get_results("SELECT id,name FROM {$this->forms_table} ORDER BY name ASC");
+        $templates = $wpdb->get_results("SELECT id,name FROM {$this->templates_table} ORDER BY name ASC");
+        $pdf = $this->pdf_settings();
+        ?>
+        <div class="wrap zau-legacy-wrap">
+            <h1>Перенос со старого сайта</h1>
+            <div class="notice notice-warning inline"><p><strong>Перед переносом сделайте резервную копию базы данных.</strong> Сопоставление ведётся только по точным старым ID (Ultimate Member и ID записи заявления) — без угадывания по ФИО, email или телефону, поэтому перенос безопасно повторять.</p></div>
+
+            <section class="zau-ui-card">
+                <h2>Как это работает</h2>
+                <ol>
+                    <li>Выгрузите со старого сайта пользователей Ultimate Member в CSV (обязательно с колонкой ID пользователя) и перенесите их первым шагом.</li>
+                    <li>Выгрузите записи формы заявления в CSV (обязательно с ID записи и ID пользователя-владельца) и перенесите их вторым шагом — они автоматически привяжутся к уже перенесённым аккаунтам по точному ID.</li>
+                    <li>Скопируйте PDF заявлений и личных карточек по FTP/SFTP в указанную папку загрузок и привяжите их по уникальному ID в конце имени файла третьим шагом.</li>
+                </ol>
+            </section>
+
+            <section class="zau-ui-card" data-zau-scope="accounts">
+                <h2>Шаг 1. Аккаунты (Ultimate Member)</h2>
+                <form class="zau-legacy-upload-form" data-scope="accounts" enctype="multipart/form-data">
+                    <input type="file" name="file" accept=".csv,.txt,text/csv,text/plain" required>
+                    <button type="submit" class="button button-primary">Загрузить CSV аккаунтов</button>
+                </form>
+                <div data-zau-mapping hidden>
+                    <p data-zau-file-summary></p>
+                    <div class="zau-ui-table-wrap"><table class="widefat striped" data-zau-mapping-table><thead><tr><th>Колонка CSV</th><th>Пример</th><th>Поле нового кабинета</th></tr></thead><tbody></tbody></table></div>
+                    <div class="zau-ui-options">
+                        <label><input type="checkbox" name="overwrite" value="1"> Заменять уже заполненные поля новыми значениями</label>
+                    </div>
+                    <div class="zau-ui-grid">
+                        <label>Статус по умолчанию
+                            <select name="default_status">
+                                <?php foreach (['Заявление подано','На рассмотрении','Состоит в профсоюзе','Регистрация не завершена'] as $status): ?>
+                                    <option <?php selected($status, 'Заявление подано'); ?>><?php echo esc_html($status); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </label>
+                        <label>Строк в одной партии<input type="number" name="batch_size" min="10" max="200" step="10" value="50"></label>
+                    </div>
+                    <div class="zau-ui-actions">
+                        <button type="button" class="button button-secondary button-hero" data-zau-start="dry">Только проверить</button>
+                        <button type="button" class="button button-primary button-hero" data-zau-start="import">Перенести аккаунты</button>
+                        <button type="button" class="button" data-zau-reset>Сбросить загрузку</button>
+                    </div>
+                </div>
+                <div class="zau-ui-progress-wrap" data-zau-progress hidden>
+                    <div class="zau-ui-progress"><span data-zau-progress-bar></span></div>
+                    <p data-zau-progress-text></p>
+                    <div class="zau-ui-stats" data-zau-stats></div>
+                    <pre data-zau-log></pre>
+                    <p><a class="button" data-zau-report="accounts" href="#">Скачать отчёт CSV</a></p>
+                </div>
+            </section>
+
+            <section class="zau-ui-card" data-zau-scope="applications">
+                <h2>Шаг 2. Заявления</h2>
+                <p class="description">Каждая строка обязательно содержит ID записи заявления и ID пользователя Ultimate Member — владельца. Если аккаунт с таким ID ещё не перенесён, строка будет пропущена и попадёт в отчёт для ручной проверки.</p>
+                <p>
+                    <label>Форма, к которой привязать перенесённые заявления
+                        <select data-zau-form-id>
+                            <option value="">— выберите форму —</option>
+                            <?php foreach ((array)$forms as $form): ?>
+                                <option value="<?php echo (int)$form->id; ?>"><?php echo esc_html($form->name); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                </p>
+                <form class="zau-legacy-upload-form" data-scope="applications" enctype="multipart/form-data">
+                    <input type="file" name="file" accept=".csv,.txt,text/csv,text/plain" required>
+                    <button type="submit" class="button button-primary">Загрузить CSV заявлений</button>
+                </form>
+                <div data-zau-mapping hidden>
+                    <p data-zau-file-summary></p>
+                    <div class="zau-ui-table-wrap"><table class="widefat striped" data-zau-mapping-table><thead><tr><th>Колонка CSV</th><th>Пример</th><th>Поле нового кабинета</th></tr></thead><tbody></tbody></table></div>
+                    <div class="zau-ui-grid">
+                        <label>Строк в одной партии<input type="number" name="batch_size" min="10" max="200" step="10" value="50"></label>
+                    </div>
+                    <div class="zau-ui-actions">
+                        <button type="button" class="button button-secondary button-hero" data-zau-start="dry">Только проверить</button>
+                        <button type="button" class="button button-primary button-hero" data-zau-start="import">Перенести заявления</button>
+                        <button type="button" class="button" data-zau-reset>Сбросить загрузку</button>
+                    </div>
+                </div>
+                <div class="zau-ui-progress-wrap" data-zau-progress hidden>
+                    <div class="zau-ui-progress"><span data-zau-progress-bar></span></div>
+                    <p data-zau-progress-text></p>
+                    <div class="zau-ui-stats" data-zau-stats></div>
+                    <pre data-zau-log></pre>
+                    <p><a class="button" data-zau-report="applications" href="#">Скачать отчёт CSV</a></p>
+                </div>
+            </section>
+
+            <section class="zau-ui-card" data-zau-pdf>
+                <h2>Шаг 3. Привязка PDF по уникальному ID в имени файла</h2>
+                <p class="description">Скопируйте PDF по FTP/SFTP в указанную папку внутри <code>wp-content/uploads/</code>. Для личной карточки ID в имени файла — это ID пользователя Ultimate Member, для заявления — ID записи заявления (тот же ID, что использовался при переносе на шагах 1–2).</p>
+                <div class="zau-ui-grid">
+                    <label>Папка внутри uploads/<input type="text" data-zau-pdf-folder value="<?php echo esc_attr($pdf['folder']); ?>"></label>
+                </div>
+                <h3>Личная карточка</h3>
+                <div class="zau-ui-grid">
+                    <label>Имя файла содержит (необязательно)<input type="text" data-zau-card-pattern value="<?php echo esc_attr($pdf['card_pattern']); ?>" placeholder="напр. карточка"></label>
+                    <label>Регулярное выражение для ID<input type="text" data-zau-card-regex value="<?php echo esc_attr($pdf['card_regex']); ?>"></label>
+                    <label>Шаблон PDF в новом кабинете
+                        <select data-zau-card-template>
+                            <option value="0">— выберите шаблон —</option>
+                            <?php foreach ((array)$templates as $tpl): ?>
+                                <option value="<?php echo (int)$tpl->id; ?>" <?php selected((int)$pdf['card_template_id'], (int)$tpl->id); ?>><?php echo esc_html($tpl->name); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                </div>
+                <h3>Заявление</h3>
+                <div class="zau-ui-grid">
+                    <label>Имя файла содержит (необязательно)<input type="text" data-zau-application-pattern value="<?php echo esc_attr($pdf['application_pattern']); ?>" placeholder="напр. заявление"></label>
+                    <label>Регулярное выражение для ID<input type="text" data-zau-application-regex value="<?php echo esc_attr($pdf['application_regex']); ?>"></label>
+                    <label>Шаблон PDF в новом кабинете
+                        <select data-zau-application-template>
+                            <option value="0">— выберите шаблон —</option>
+                            <?php foreach ((array)$templates as $tpl): ?>
+                                <option value="<?php echo (int)$tpl->id; ?>" <?php selected((int)$pdf['application_template_id'], (int)$tpl->id); ?>><?php echo esc_html($tpl->name); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                </div>
+                <div class="zau-ui-actions">
+                    <button type="button" class="button button-secondary button-hero" data-zau-pdf-scan>Просканировать папку</button>
+                    <button type="button" class="button button-primary button-hero" data-zau-pdf-attach hidden>Привязать найденные PDF</button>
+                </div>
+                <div data-zau-pdf-result></div>
+            </section>
+        </div>
+        <?php
+    }
+}
+
+ZAU_Legacy_Import::instance();

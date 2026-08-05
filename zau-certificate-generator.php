@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Профсоюз — регистрация, документы и QR
  * Description: Единый реестр профсоюза с AQNIET Blue UX: регистрация, статусы, филиалы единым текстом, защищённая личная карточка, скрытый wp-admin для участников, акции и скидки, документы/PDF/QR, кабинеты организаций и Elementor.
- * Version: 2.18.2
+ * Version: 2.19.0
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -12,8 +12,8 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Certificate_PDF_Generator {
-    const VERSION = '2.18.2';
-    const DB_VERSION = '2.18.2';
+    const VERSION = '2.19.0';
+    const DB_VERSION = '2.19.0';
     const OPT_DB_VERSION = 'zau_cert_db_version';
     const OPT_SETTINGS = 'zau_cert_settings';
     const CAP_MANAGE = 'zau_manage_certificates';
@@ -66,7 +66,7 @@ final class ZAU_Certificate_PDF_Generator {
         $self->ensure_verify_page();
         update_option(self::OPT_DB_VERSION, self::DB_VERSION, false);
         if (class_exists('ZAU_Union_Module')) { ZAU_Union_Module::instance()->maybe_upgrade(); }
-        if (class_exists('ZAU_Legacy_Migration')) { ZAU_Legacy_Migration::instance()->maybe_upgrade(); }
+        if (class_exists('ZAU_Legacy_Import')) { ZAU_Legacy_Import::instance()->maybe_upgrade(); }
         if (class_exists('ZAU_Bulk_Regeneration')) { ZAU_Bulk_Regeneration::instance()->install_tables(); update_option(ZAU_Bulk_Regeneration::OPT_DB_VERSION, ZAU_Bulk_Regeneration::DB_VERSION, false); }
         flush_rewrite_rules();
     }
@@ -1282,13 +1282,9 @@ final class ZAU_Certificate_PDF_Generator {
 }
 
 require_once __DIR__ . '/includes/class-zau-union-module.php';
-require_once __DIR__ . '/includes/class-zau-legacy-migration.php';
 require_once __DIR__ . '/includes/class-zau-bulk-regeneration.php';
 ZAU_Bulk_Regeneration::instance();
-require_once __DIR__ . '/includes/class-zau-universal-import.php';
-require_once __DIR__ . '/includes/class-zau-remote-smart-dedup.php';
-require_once __DIR__ . '/includes/class-zau-remote-bridge-import.php';
-require_once __DIR__ . '/includes/class-zau-remote-profile-repair.php';
+require_once __DIR__ . '/includes/class-zau-legacy-import.php';
 require_once __DIR__ . '/includes/class-zau-elementor.php';
 ZAU_Union_Elementor::init();
 
