@@ -1,0 +1,5 @@
+QRCode for JavaScript
+Copyright (c) 2009 Kazuhiko Arase
+Licensed under the MIT License.
+The QR encoder bundled in assets/js/qrcode.min.js is based on the QRCode for JavaScript implementation.
+The words “QR Code” are a registered trademark of DENSO WAVE INCORPORATED.
