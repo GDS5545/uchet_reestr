@@ -148,8 +148,9 @@ final class ZAU_Bulk_Regeneration {
                     <label>Организация
                         <input type="search" name="organization" placeholder="Часть названия организации">
                     </label>
-                    <label>Текущий шаблон
-                        <select name="template_id"><option value="0">Все шаблоны</option><?php foreach($templates as $tpl):?><option value="<?php echo (int)$tpl->id; ?>"><?php echo esc_html($tpl->name); ?></option><?php endforeach;?></select>
+                    <label>Текущий шаблон — можно выбрать несколько (Ctrl/Cmd + клик), если сломано или исправлено сразу несколько шаблонов
+                        <select name="template_id[]" multiple size="5"><?php foreach($templates as $tpl):?><option value="<?php echo (int)$tpl->id; ?>"><?php echo esc_html($tpl->name); ?></option><?php endforeach;?></select>
+                        <small>Ничего не выбрано — документы любого шаблона.</small>
                     </label>
                     <label>Статус записи
                         <select name="record_status"><option value="">Все статусы</option><option value="active">Действующие</option><option value="draft">Черновики</option><option value="revoked">Отозванные</option></select>
@@ -231,7 +232,7 @@ final class ZAU_Bulk_Regeneration {
         $filters = [
             'search'=>sanitize_text_field(wp_unslash($source['search'] ?? '')),
             'organization'=>sanitize_text_field(wp_unslash($source['organization'] ?? '')),
-            'template_id'=>absint($source['template_id'] ?? 0),
+            'template_id'=>$this->parse_ids($source['template_id'] ?? ''),
             'record_status'=>sanitize_key($source['record_status'] ?? ''),
             'file_state'=>sanitize_key($source['file_state'] ?? 'all'),
             'source'=>sanitize_key($source['source'] ?? 'all'),
@@ -288,7 +289,11 @@ final class ZAU_Bulk_Regeneration {
         if ($filters['organization'] !== '') {
             $sql.=' AND d.organization LIKE %s'; $args[]='%'.$wpdb->esc_like($filters['organization']).'%';
         }
-        if ($filters['template_id']) { $sql.=' AND d.template_id=%d'; $args[]=$filters['template_id']; }
+        if (!empty($filters['template_id'])) {
+            $placeholders = implode(',', array_fill(0, count($filters['template_id']), '%d'));
+            $sql.=" AND d.template_id IN ($placeholders)";
+            array_push($args, ...$filters['template_id']);
+        }
         if ($filters['record_status']) { $sql.=' AND d.record_status=%s'; $args[]=$filters['record_status']; }
         if ($filters['file_state']==='missing') { $sql.=" AND (d.pdf_url IS NULL OR d.pdf_url='')"; }
         elseif ($filters['file_state']==='exists') { $sql.=" AND d.pdf_url IS NOT NULL AND d.pdf_url<>''"; }

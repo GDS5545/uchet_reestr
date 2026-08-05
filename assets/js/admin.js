@@ -572,7 +572,14 @@
         const sleep = ms => new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
         const formPayload = () => {
             const fd = new FormData(form); const payload = {};
-            for (const [key, value] of fd.entries()) payload[key] = value;
+            for (const [key, value] of fd.entries()) {
+                if (key.endsWith('[]')) {
+                    const base = key.slice(0, -2);
+                    payload[base] = payload[base] ? payload[base] + ',' + value : String(value);
+                } else {
+                    payload[key] = value;
+                }
+            }
             form.querySelectorAll('input[type="checkbox"]').forEach(input => { payload[input.name] = input.checked ? 1 : 0; });
             return payload;
         };
