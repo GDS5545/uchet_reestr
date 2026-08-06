@@ -2166,6 +2166,37 @@ final class ZAU_Union_Module {
         $saved=get_user_meta($user->ID,'zau_profile_'.$key,true); return $saved!==''?$saved:$default;
     }
 
+    /** Только последняя заявка по каждой форме — старые повторные подачи (редакции) не показываются. */
+    private function latest_submissions_for_user($uid) {
+        global $wpdb;
+        return $wpdb->get_results($wpdb->prepare(
+            "SELECT s.*, f.name form_name FROM {$this->submissions_table} s
+             INNER JOIN (SELECT form_id, MAX(id) max_id FROM {$this->submissions_table} WHERE user_id=%d GROUP BY form_id) latest
+               ON latest.form_id=s.form_id AND latest.max_id=s.id
+             LEFT JOIN {$this->forms_table} f ON f.id=s.form_id
+             WHERE s.user_id=%d ORDER BY s.id DESC",
+            $uid, $uid
+        ));
+    }
+
+    /** Из списка документов, уже отсортированного по id DESC, оставляет только самый новый на каждый шаблон. */
+    private function dedupe_documents_by_template($docs) {
+        $seen = []; $out = [];
+        foreach ((array)$docs as $doc) {
+            $key = !empty($doc->template_id) ? (int)$doc->template_id : ('doc-' . (int)$doc->id);
+            if (isset($seen[$key])) { continue; }
+            $seen[$key] = true;
+            $out[] = $doc;
+        }
+        return $out;
+    }
+
+    private function latest_documents_for_user($uid) {
+        global $wpdb;
+        $docs = $wpdb->get_results($wpdb->prepare("SELECT d.*,t.name template_name FROM {$this->docs_table} d LEFT JOIN {$this->templates_table} t ON t.id=d.template_id WHERE d.user_id=%d ORDER BY d.id DESC", $uid));
+        return $this->dedupe_documents_by_template($docs);
+    }
+
     public function cabinet_shortcode($atts=[]) {
         if(!is_user_logged_in())return $this->auth_shortcode($atts);
         if(!defined('DONOTCACHEPAGE')){ define('DONOTCACHEPAGE', true); }
@@ -2184,8 +2215,8 @@ final class ZAU_Union_Module {
         $user=wp_get_current_user();
         $status=get_user_meta($uid,'zau_member_status',true)?:'Заявление ещё не рассмотрено';
         $phone=get_user_meta($uid,'zau_phone',true);
-        $submissions=$wpdb->get_results($wpdb->prepare("SELECT s.*,f.name form_name FROM {$this->submissions_table} s LEFT JOIN {$this->forms_table} f ON f.id=s.form_id WHERE s.user_id=%d ORDER BY s.id DESC",$uid));
-        $docs=$wpdb->get_results($wpdb->prepare("SELECT d.*,t.name template_name FROM {$this->docs_table} d LEFT JOIN {$this->templates_table} t ON t.id=d.template_id WHERE d.user_id=%d ORDER BY d.id DESC",$uid));
+        $submissions=$this->latest_submissions_for_user($uid);
+        $docs=$this->latest_documents_for_user($uid);
         foreach((array)$docs as $index=>$doc){$docs[$index]=$this->normalize_document_for_display($doc,false);}
         $docsBySubmission=[];
         foreach((array)$docs as $doc){$docsBySubmission[(int)$doc->source_submission_id][]=$doc;}
@@ -2449,14 +2480,14 @@ final class ZAU_Union_Module {
             ?>
             <nav class="zau-cabinet-nav" aria-label="Разделы личного кабинета"><?php foreach($items as $item): if(!isset($labels[$item]))continue; if($item==='members'&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_ORG_MANAGE)&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE)&&!current_user_can('manage_options'))continue;?><a href="#zau-<?php echo esc_attr($item);?>"><?php echo esc_html($labels[$item]);?></a><?php endforeach;?></nav>
         <?php elseif ($section === 'stats'):
-            $docCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->docs_table} WHERE user_id=%d",$uid));
-            $submissionCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->submissions_table} WHERE user_id=%d",$uid));
+            $docCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT NULLIF(template_id,0)) + SUM(template_id=0) FROM {$this->docs_table} WHERE user_id=%d",$uid));
+            $submissionCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT form_id) FROM {$this->submissions_table} WHERE user_id=%d",$uid));
             $orgId=$this->member_org_id($uid); $organization=$orgId?$wpdb->get_row($wpdb->prepare("SELECT name,bin FROM {$this->orgs_table} WHERE id=%d",$orgId)):null;
             $lastLogin=$wpdb->get_var($wpdb->prepare("SELECT created_at FROM {$this->logs_table} WHERE user_id=%d AND action IN ('otp_login','pin_login','password_login','pin_reset_login') ORDER BY id DESC LIMIT 1",$uid));
             ?>
             <div class="zau-cabinet-stats"><div><span>Документов</span><strong><?php echo $docCount;?></strong></div><div><span>Заявлений</span><strong><?php echo $submissionCount;?></strong></div><div><span>Организация</span><strong><?php echo esc_html($organization?$organization->name:'Не назначена');?></strong><?php if($organization):?><small>БИН <?php echo esc_html($organization->bin);?></small><?php endif;?></div><div><span>Последний вход</span><strong><?php echo esc_html($lastLogin?:'Нет данных');?></strong></div></div>
         <?php elseif ($section === 'documents'):
-            $docs=$wpdb->get_results($wpdb->prepare("SELECT d.*,t.name template_name FROM {$this->docs_table} d LEFT JOIN {$this->templates_table} t ON t.id=d.template_id WHERE d.user_id=%d ORDER BY d.id DESC",$uid));
+            $docs=$this->latest_documents_for_user($uid);
             foreach((array)$docs as $index=>$doc){$docs[$index]=$this->normalize_document_for_display($doc,false);}
             $certSettings=wp_parse_args((array)get_option(ZAU_Certificate_PDF_Generator::OPT_SETTINGS,[]),['owner_pdf_view'=>1,'cabinet_document_mode'=>'both']);
             $documentMode=in_array($certSettings['cabinet_document_mode'],['popup','tab','both'],true)?$certSettings['cabinet_document_mode']:'both'; $canView=!empty($certSettings['owner_pdf_view']);
@@ -2468,7 +2499,7 @@ final class ZAU_Union_Module {
             <?php endforeach;?></div></section>
             <div class="zau-document-modal" data-zau-document-modal hidden><div class="zau-document-modal-backdrop" data-zau-modal-close></div><div class="zau-document-modal-dialog" role="dialog" aria-modal="true"><div class="zau-document-modal-head"><strong data-zau-modal-title>Предпросмотр документа</strong><button type="button" data-zau-modal-close aria-label="Закрыть">×</button></div><div class="zau-document-modal-body"><div class="zau-preview-loading" data-zau-preview-loading>Загружаем документ…</div><img data-zau-modal-image alt="Предпросмотр документа" hidden><iframe data-zau-modal-pdf title="Предпросмотр PDF" hidden></iframe></div></div></div><div data-zau-cabinet-render-holder aria-hidden="true"></div>
         <?php elseif ($section === 'submissions'):
-            $submissions=$wpdb->get_results($wpdb->prepare("SELECT s.*,f.name form_name FROM {$this->submissions_table} s LEFT JOIN {$this->forms_table} f ON f.id=s.form_id WHERE s.user_id=%d ORDER BY s.id DESC",$uid));
+            $submissions=$this->latest_submissions_for_user($uid);
             $docs=$wpdb->get_results($wpdb->prepare("SELECT source_submission_id,pdf_url FROM {$this->docs_table} WHERE user_id=%d",$uid));$docsBySubmission=[];foreach($docs as $doc){$docsBySubmission[(int)$doc->source_submission_id][]=$doc;}$autoAssigned=false;
             ?>
             <section id="zau-submissions" class="zau-cabinet-section"><?php if($showHeading):?><div class="zau-section-head"><div><h3><?php echo esc_html($heading);?></h3><?php if($subtitle):?><p><?php echo esc_html($subtitle);?></p><?php endif;?></div></div><?php endif;?><div class="zau-cabinet-generation" data-zau-cabinet-generation hidden><span data-zau-cabinet-progress></span><div data-zau-cabinet-result></div></div><?php if(!$submissions):?><div class="zau-empty-state">Отправленных форм пока нет.</div><?php endif;?><div class="zau-submission-list">
@@ -3450,7 +3481,7 @@ $xref
             $org_id = $this->member_org_id($user->ID);
             $org = $org_map[$org_id] ?? null;
             $docs = [];
-            foreach ((array)($docs_map[$user->ID] ?? []) as $doc) {
+            foreach ($this->dedupe_documents_by_template($docs_map[$user->ID] ?? []) as $doc) {
                 $can_access = $controller->user_can_access_document($doc, true);
                 $docs[] = [
                     'id'=>(int)$doc->id,
@@ -3659,7 +3690,7 @@ $xref
         <?php foreach($users as $member):if(!$this->can_manage_member($uid,$member->ID)&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE)&&!current_user_can('manage_options'))continue;
             $orgId=$this->member_org_id($member->ID);$org=$orgId?$wpdb->get_row($wpdb->prepare("SELECT name,bin FROM {$this->orgs_table} WHERE id=%d",$orgId)):null;$branch=$this->get_branch($this->member_branch_id($member->ID));
             $phone=get_user_meta($member->ID,'zau_phone',true);$status=get_user_meta($member->ID,'zau_member_status',true)?:'Регистрация не завершена';$approval=$this->membership_approval_status($member->ID);$cardStatus=get_user_meta($member->ID,'zau_member_card_review_status',true)?:'draft';
-            $submissionCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->submissions_table} WHERE user_id=%d",$member->ID));$docCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->docs_table} WHERE user_id=%d",$member->ID));
+            $submissionCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT form_id) FROM {$this->submissions_table} WHERE user_id=%d",$member->ID));$docCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT NULLIF(template_id,0)) + SUM(template_id=0) FROM {$this->docs_table} WHERE user_id=%d",$member->ID));
             $searchSource=$member->display_name.' '.$member->user_email.' '.$phone.' '.($org->name??'').' '.($branch->name??'');$searchText=function_exists('mb_strtolower')?mb_strtolower($searchSource,'UTF-8'):strtolower($searchSource);
             $cardUrl=add_query_arg(['zau_tab'=>'card','member_id'=>$member->ID],$cabinetUrl);
         ?>
