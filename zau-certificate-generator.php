@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Профсоюз — регистрация, документы и QR
  * Description: Единый реестр профсоюза с AQNIET Blue UX: регистрация, статусы, филиалы единым текстом, защищённая личная карточка, скрытый wp-admin для участников, акции и скидки, документы/PDF/QR, кабинеты организаций и Elementor.
- * Version: 2.24.0
+ * Version: 2.24.1
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -12,8 +12,8 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Certificate_PDF_Generator {
-    const VERSION = '2.24.0';
-    const DB_VERSION = '2.24.0';
+    const VERSION = '2.24.1';
+    const DB_VERSION = '2.24.1';
     const OPT_DB_VERSION = 'zau_cert_db_version';
     const OPT_SETTINGS = 'zau_cert_settings';
     const CAP_MANAGE = 'zau_manage_certificates';
@@ -407,7 +407,10 @@ final class ZAU_Certificate_PDF_Generator {
                         <p class="description">Редактор всегда сохраняет точное соотношение сторон страницы. Рекомендуемые размеры: книжная — 1754×2480 px; альбомная — 2480×1754 px. Если пропорции загруженной подложки отличаются, используйте режим «Вместить целиком» либо подготовьте изображение точного размера.</p>
                     </div>
                     <div class="zau-control-column">
-                        <div class="zau-field-list" id="zau-field-list"></div>
+                        <div class="zau-field-list-column">
+                            <input type="search" id="zau-field-search" class="zau-field-search" placeholder="Поиск поля, например: филиал, БИК, реквизиты…">
+                            <div class="zau-field-list" id="zau-field-list"></div>
+                        </div>
                         <div class="zau-field-panel" id="zau-field-panel"><h3>Параметры поля</h3><p>Выберите поле слева или на подложке.</p></div>
                     </div>
                 </div>

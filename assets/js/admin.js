@@ -39,6 +39,7 @@
         const stageFields = document.getElementById('zau-stage-fields');
         const bg = document.getElementById('zau-stage-bg');
         const fieldList = document.getElementById('zau-field-list');
+        const fieldSearch = document.getElementById('zau-field-search');
         const fieldPanel = document.getElementById('zau-field-panel');
         const hidden = document.getElementById('zau-fields-json');
         const orientation = document.getElementById('zau-orientation');
@@ -154,7 +155,10 @@
 
         function renderFieldList() {
             fieldList.innerHTML = '';
-            Object.keys(defs).forEach(key => {
+            const query = (fieldSearch?.value || '').trim().toLowerCase();
+            const keys = Object.keys(defs).filter(key => !query || key.toLowerCase().includes(query) || String(defs[key] || '').toLowerCase().includes(query));
+            if (!keys.length) { fieldList.innerHTML = '<p class="zau-field-list-empty">Ничего не найдено.</p>'; return; }
+            keys.forEach(key => {
                 const f = ensureField(key);
                 const button = document.createElement('button');
                 button.type = 'button';
@@ -165,6 +169,7 @@
                 fieldList.appendChild(button);
             });
         }
+        fieldSearch?.addEventListener('input', renderFieldList);
 
         function overlayFontSize(f) {
             const d = dimensions();

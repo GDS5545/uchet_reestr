@@ -40,3 +40,10 @@
 .zau-template-save-status.is-success{color:#157347}
 .zau-template-save-status.is-error{color:#b32d2e}
 #zau-template-save-top{margin-right:4px}
+
+/* 2.24: searchable field list */
+.zau-field-list-column{display:flex;flex-direction:column;gap:8px;min-height:0;height:100%}
+.zau-field-search{width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid #dcdcde;border-radius:8px;font-size:13px}
+.zau-field-list-column .zau-field-list{flex:1;min-height:0}
+.zau-field-list-empty{padding:14px 8px;color:#667085;font-size:13px}
+@media(max-width:782px){.zau-field-list-column{display:block}}
