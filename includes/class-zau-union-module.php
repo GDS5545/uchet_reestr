@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.19.0';
+    const VERSION = '2.19.1';
     const DB_VERSION = '2.19.0';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
@@ -3106,16 +3106,21 @@ final class ZAU_Union_Module {
         return $doc?$this->document_job($doc,$tpl,$data):null;
     }
 
-    /** Список активных форм, у которых есть хотя бы один привязанный шаблон документа —
-     * для выбора в UI массового пересоздания при поиске заявок без документа. */
+    /** Список ВСЕХ форм (не только активных — при переносе со старого сайта заявки часто
+     * привязывают к форме, которая уже не отмечена «активной» для приёма новых регистраций,
+     * но данные в ней есть и их нужно видеть), у которых есть хотя бы один привязанный шаблон
+     * документа — для выбора в UI массового пересоздания при поиске заявок без документа. */
     public function forms_with_templates() {
         global $wpdb;
-        $forms = $wpdb->get_results("SELECT * FROM {$this->forms_table} WHERE active=1 ORDER BY id ASC");
+        $forms = $wpdb->get_results("SELECT * FROM {$this->forms_table} ORDER BY id ASC");
         $out = [];
         foreach ((array)$forms as $form) {
             $ids = $this->resolve_form_template_ids($form);
             if (!$ids) { continue; }
-            $out[] = ['id'=>(int)$form->id,'name'=>$form->name,'template_count'=>count($ids)];
+            $submissionCount = (int)$wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$this->submissions_table} WHERE form_id=%d", (int)$form->id
+            ));
+            $out[] = ['id'=>(int)$form->id,'name'=>$form->name,'active'=>(int)$form->active,'template_count'=>count($ids),'submission_count'=>$submissionCount];
         }
         return $out;
     }

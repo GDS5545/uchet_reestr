@@ -594,9 +594,14 @@
             backfillStatus.textContent = 'Ищем формы с привязанными шаблонами…';
             try {
                 const formsData = await ajaxTimeout('zau_cert_bulk_backfill_forms', {}, 20000);
-                const forms = formsData.forms || [];
+                const forms = (formsData.forms || []).filter(f => Number(f.submission_count || 0) > 0);
+                const formsSummary = (formsData.forms || []).map(f => `«${f.name}»${f.active ? '' : ' (неактивна)'}: ${f.submission_count} заявок`).join('; ');
+                if (!(formsData.forms || []).length) {
+                    backfillStatus.textContent = 'Нет ни одной формы с привязанными шаблонами документов.';
+                    return;
+                }
                 if (!forms.length) {
-                    backfillStatus.textContent = 'Нет активных форм с привязанными шаблонами документов.';
+                    backfillStatus.textContent = `Формы с шаблонами есть, но заявок в них 0. ${formsSummary}`;
                     return;
                 }
                 let totalChecked = 0, totalCreated = 0;
@@ -620,7 +625,7 @@
                         hasMore = !!res.has_more;
                     }
                 }
-                backfillStatus.textContent = `Готово. Проверено заявок: ${totalChecked}. Создано новых документов (черновиков без PDF): ${totalCreated}. Теперь их можно выбрать в шаге 1 фильтром «Состояние файла → Только без PDF».`;
+                backfillStatus.textContent = `Готово. Проверено заявок: ${totalChecked}. Создано новых документов (черновиков без PDF): ${totalCreated}. Формы: ${formsSummary}. Теперь их можно выбрать в шаге 1 фильтром «Состояние файла → Только без PDF».`;
             } catch (err) {
                 backfillStatus.textContent = 'Ошибка: ' + (err.message || 'не удалось выполнить проверку.') + ' Нажмите кнопку ещё раз — уже созданные документы не задублируются.';
             } finally {
