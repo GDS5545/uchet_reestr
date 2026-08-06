@@ -2179,18 +2179,14 @@ final class ZAU_Union_Module {
         ));
     }
 
-    /** Из списка документов, уже отсортированного по id DESC, оставляет только самый новый на каждое
-     * видимое название документа (document_title) — то, что человек реально видит как "вид документа".
-     * Группировка по template_id ненадёжна: один и тот же вид документа (например, после переноса со
-     * старого сайта) может оказаться привязан к разным записям в таблице шаблонов, хотя выглядит и
-     * называется одинаково — по названию такие документы всё равно схлопываются в один. */
+    /** Из списка документов, уже отсортированного по id DESC, оставляет только самый новый документ
+     * на каждую пару "пользователь + шаблон документа". */
     private function dedupe_documents_by_template($docs) {
         $seen = []; $out = [];
         foreach ((array)$docs as $doc) {
-            $title = trim((string)($doc->document_title ?? ''));
-            if ($title !== '') { $key = 'title-' . (function_exists('mb_strtolower') ? mb_strtolower($title, 'UTF-8') : strtolower($title)); }
-            elseif (!empty($doc->template_id)) { $key = 'tpl-' . (int)$doc->template_id; }
-            else { $key = 'doc-' . (int)$doc->id; }
+            $userId = (int)($doc->user_id ?? 0);
+            $templatePart = !empty($doc->template_id) ? (int)$doc->template_id : ('doc-' . (int)$doc->id);
+            $key = $userId . '-' . $templatePart;
             if (isset($seen[$key])) { continue; }
             $seen[$key] = true;
             $out[] = $doc;
@@ -2487,7 +2483,7 @@ final class ZAU_Union_Module {
             ?>
             <nav class="zau-cabinet-nav" aria-label="Разделы личного кабинета"><?php foreach($items as $item): if(!isset($labels[$item]))continue; if($item==='members'&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_ORG_MANAGE)&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE)&&!current_user_can('manage_options'))continue;?><a href="#zau-<?php echo esc_attr($item);?>"><?php echo esc_html($labels[$item]);?></a><?php endforeach;?></nav>
         <?php elseif ($section === 'stats'):
-            $docCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT COALESCE(NULLIF(TRIM(document_title),''),CONCAT('d',id))) FROM {$this->docs_table} WHERE user_id=%d",$uid));
+            $docCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT NULLIF(template_id,0)) + SUM(template_id=0) FROM {$this->docs_table} WHERE user_id=%d",$uid));
             $submissionCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT form_id) FROM {$this->submissions_table} WHERE user_id=%d",$uid));
             $orgId=$this->member_org_id($uid); $organization=$orgId?$wpdb->get_row($wpdb->prepare("SELECT name,bin FROM {$this->orgs_table} WHERE id=%d",$orgId)):null;
             $lastLogin=$wpdb->get_var($wpdb->prepare("SELECT created_at FROM {$this->logs_table} WHERE user_id=%d AND action IN ('otp_login','pin_login','password_login','pin_reset_login') ORDER BY id DESC LIMIT 1",$uid));
@@ -3697,7 +3693,7 @@ $xref
         <?php foreach($users as $member):if(!$this->can_manage_member($uid,$member->ID)&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE)&&!current_user_can('manage_options'))continue;
             $orgId=$this->member_org_id($member->ID);$org=$orgId?$wpdb->get_row($wpdb->prepare("SELECT name,bin FROM {$this->orgs_table} WHERE id=%d",$orgId)):null;$branch=$this->get_branch($this->member_branch_id($member->ID));
             $phone=get_user_meta($member->ID,'zau_phone',true);$status=get_user_meta($member->ID,'zau_member_status',true)?:'Регистрация не завершена';$approval=$this->membership_approval_status($member->ID);$cardStatus=get_user_meta($member->ID,'zau_member_card_review_status',true)?:'draft';
-            $submissionCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT form_id) FROM {$this->submissions_table} WHERE user_id=%d",$member->ID));$docCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT COALESCE(NULLIF(TRIM(document_title),''),CONCAT('d',id))) FROM {$this->docs_table} WHERE user_id=%d",$member->ID));
+            $submissionCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT form_id) FROM {$this->submissions_table} WHERE user_id=%d",$member->ID));$docCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT NULLIF(template_id,0)) + SUM(template_id=0) FROM {$this->docs_table} WHERE user_id=%d",$member->ID));
             $searchSource=$member->display_name.' '.$member->user_email.' '.$phone.' '.($org->name??'').' '.($branch->name??'');$searchText=function_exists('mb_strtolower')?mb_strtolower($searchSource,'UTF-8'):strtolower($searchSource);
             $cardUrl=add_query_arg(['zau_tab'=>'card','member_id'=>$member->ID],$cabinetUrl);
         ?>
