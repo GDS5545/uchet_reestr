@@ -40,6 +40,11 @@
         const bg = document.getElementById('zau-stage-bg');
         const fieldList = document.getElementById('zau-field-list');
         const fieldSearch = document.getElementById('zau-field-search');
+        const bulkBar = document.getElementById('zau-field-bulk-bar');
+        const bulkCount = document.getElementById('zau-field-bulk-count');
+        const bulkAddBtn = document.getElementById('zau-field-bulk-add');
+        const bulkClearBtn = document.getElementById('zau-field-bulk-clear');
+        const bulkSelected = new Set();
         const fieldPanel = document.getElementById('zau-field-panel');
         const hidden = document.getElementById('zau-fields-json');
         const orientation = document.getElementById('zau-orientation');
@@ -153,23 +158,58 @@
             requestAnimationFrame(renderOverlays);
         }
 
+        function updateBulkBar() {
+            if (!bulkBar) return;
+            const count = bulkSelected.size;
+            bulkBar.hidden = count === 0;
+            if (bulkCount) bulkCount.textContent = count === 1 ? 'Выбрано полей: 1' : 'Выбрано полей: ' + count;
+        }
+
         function renderFieldList() {
             fieldList.innerHTML = '';
             const query = (fieldSearch?.value || '').trim().toLowerCase();
             const keys = Object.keys(defs).filter(key => !query || key.toLowerCase().includes(query) || String(defs[key] || '').toLowerCase().includes(query));
-            if (!keys.length) { fieldList.innerHTML = '<p class="zau-field-list-empty">Ничего не найдено.</p>'; return; }
+            if (!keys.length) { fieldList.innerHTML = '<p class="zau-field-list-empty">Ничего не найдено.</p>'; updateBulkBar(); return; }
             keys.forEach(key => {
                 const f = ensureField(key);
                 const button = document.createElement('button');
                 button.type = 'button';
                 button.className = 'zau-field-list-item' + (selectedKey === key ? ' is-active' : '') + (f.enabled ? '' : ' is-disabled');
                 button.dataset.key = key;
-                button.innerHTML = '<span>' + esc(defs[key]) + '</span><small>' + (f.enabled ? 'включено' : 'выключено') + '</small>';
+                button.innerHTML = '<label class="zau-field-check" title="Отметить для добавления списком"><input type="checkbox"' + (bulkSelected.has(key) ? ' checked' : '') + '></label><span class="zau-field-list-item-text"><span>' + esc(defs[key]) + '</span><small>' + (f.enabled ? 'включено' : 'выключено') + '</small></span>';
+                const checkbox = button.querySelector('input[type="checkbox"]');
+                checkbox.addEventListener('click', ev => {
+                    ev.stopPropagation();
+                    if (checkbox.checked) bulkSelected.add(key); else bulkSelected.delete(key);
+                    updateBulkBar();
+                });
                 button.addEventListener('click', () => { selectedKey = key; renderFieldList(); renderPanel(); renderOverlays(); });
                 fieldList.appendChild(button);
             });
+            updateBulkBar();
         }
         fieldSearch?.addEventListener('input', renderFieldList);
+
+        function bulkAddSelected() {
+            if (!bulkSelected.size) return;
+            let y = 10;
+            Object.keys(defs).forEach(k => { const f = fields[k]; if (f && Number(f.enabled)) y = Math.max(y, Number(f.y) + 7); });
+            let lastKey = selectedKey;
+            bulkSelected.forEach(key => {
+                const f = ensureField(key);
+                if (!Number(f.enabled)) {
+                    f.enabled = 1;
+                    f.y = Math.min(94, y);
+                    y += 7;
+                }
+                lastKey = key;
+            });
+            selectedKey = lastKey;
+            bulkSelected.clear();
+            sync(); markDirty(); renderFieldList(); renderPanel(); renderOverlays();
+        }
+        bulkAddBtn?.addEventListener('click', bulkAddSelected);
+        bulkClearBtn?.addEventListener('click', () => { bulkSelected.clear(); renderFieldList(); });
 
         function overlayFontSize(f) {
             const d = dimensions();

@@ -47,3 +47,10 @@
 .zau-field-list-column .zau-field-list{flex:1;min-height:0}
 .zau-field-list-empty{padding:14px 8px;color:#667085;font-size:13px}
 @media(max-width:782px){.zau-field-list-column{display:block}}
+
+/* 2.25: bulk-add several fields to the template in one action */
+.zau-field-bulk-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;background:#eaf3ff;border:1px solid #b9d7f7;border-radius:8px;font-size:12px;font-weight:600;color:#0a4a8f}
+.zau-field-bulk-bar .button-small{height:auto;padding:3px 10px;line-height:1.8}
+.zau-field-list-item{display:flex;align-items:flex-start;gap:8px}
+.zau-field-check{display:inline-flex;align-items:center;padding-top:2px}
+.zau-field-list-item-text{display:flex;flex-direction:column;gap:2px;min-width:0}
