@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Профсоюз — регистрация, документы и QR
  * Description: Единый реестр профсоюза с AQNIET Blue UX: регистрация, статусы, филиалы единым текстом, защищённая личная карточка, скрытый wp-admin для участников, акции и скидки, документы/PDF/QR, кабинеты организаций и Elementor.
- * Version: 2.24.3
+ * Version: 2.24.4
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -12,8 +12,8 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Certificate_PDF_Generator {
-    const VERSION = '2.24.3';
-    const DB_VERSION = '2.24.3';
+    const VERSION = '2.24.4';
+    const DB_VERSION = '2.24.4';
     const OPT_DB_VERSION = 'zau_cert_db_version';
     const OPT_SETTINGS = 'zau_cert_settings';
     const CAP_MANAGE = 'zau_manage_certificates';
@@ -599,7 +599,7 @@ final class ZAU_Certificate_PDF_Generator {
                     <label>Дата<input type="text" name="issue_date" value="<?php echo esc_attr(wp_date('d.m.Y')); ?>"></label>
                     <label>Номер документа<input type="text" name="document_no" placeholder="Оставьте пустым для автоматического номера"></label>
                     <label>Статус / членство<input type="text" name="member_status" placeholder="Например: Состоит в профсоюзе"></label>
-                    <label>Привязать к пользователю WordPress<input type="number" min="0" name="user_id" value="0"><span class="description">ID пользователя, 0 — без привязки.</span></label>
+                    <label>Привязать к пользователю WordPress<div class="zau-media-field"><input type="number" min="0" name="user_id" id="zau-create-user-id" value="0"><button type="button" class="button" id="zau-create-user-fetch">Подставить данные</button></div><span class="description" id="zau-create-user-status">ID пользователя, 0 — без привязки. «Подставить данные» заполняет ФИО/организацию и добавляет реквизиты филиала, организации и профсоюза (если пользователь регистрировался через форму) во все системные поля шаблона.</span></label>
                     <label>Подпись участника<div class="zau-media-field"><input type="url" name="signature_url" placeholder="URL PNG/JPG подписи"><button type="button" class="button zau-select-document-image">Выбрать</button></div></label>
                     <label>Вторая подпись<div class="zau-media-field"><input type="url" name="signature2_url" placeholder="URL PNG/JPG подписи"><button type="button" class="button zau-select-document-image">Выбрать</button></div></label>
                     <label>Печать / штамп<div class="zau-media-field"><input type="url" name="stamp_url" placeholder="URL PNG/JPG печати"><button type="button" class="button zau-select-document-image">Выбрать</button></div></label>

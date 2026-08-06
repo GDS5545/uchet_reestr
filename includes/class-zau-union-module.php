@@ -109,6 +109,7 @@ final class ZAU_Union_Module {
         add_action('wp_ajax_zau_union_reveal_sensitive', [$this, 'ajax_reveal_sensitive']);
         add_action('wp_ajax_nopriv_zau_union_get_branch', [$this, 'ajax_get_branch']);
         add_action('wp_ajax_zau_union_get_branch', [$this, 'ajax_get_branch']);
+        add_action('wp_ajax_zau_union_document_data_for_user', [$this, 'ajax_document_data_for_user']);
         add_action('wp_ajax_zau_union_export_org_registry_pdf', [$this, 'ajax_export_org_registry_pdf']);
         add_action('wp_logout', [$this, 'log_logout'], 10, 1);
         add_action('zau_cert_template_saved', [$this, 'auto_link_saved_template'], 10, 2);
@@ -1370,6 +1371,21 @@ final class ZAU_Union_Module {
         $row = $this->get_branch(absint($_POST['branch_id'] ?? 0));
         if (!$row || empty($row->active)) { wp_send_json_error(['message'=>'Филиал не найден или отключён.'], 404); }
         wp_send_json_success(['branch'=>$this->branch_data($row)]);
+    }
+
+    /** Данные пользователя (профиль, филиал, организация, реквизиты профсоюза), которые
+     * при регистрации автоматически попадают в документ, но на странице «Создать документ»
+     * иначе недоступны — там форма содержит только базовый набор полей. */
+    public function document_data_for_user($user_id) {
+        return $this->hydrate_document_data([], absint($user_id));
+    }
+
+    public function ajax_document_data_for_user() {
+        check_ajax_referer(ZAU_Certificate_PDF_Generator::NONCE, 'nonce');
+        if (!current_user_can(ZAU_Certificate_PDF_Generator::CAP_CREATE)) { wp_send_json_error(['message'=>'Нет доступа.'], 403); }
+        $userId = absint($_POST['user_id'] ?? 0);
+        if (!$userId || !get_user_by('id', $userId)) { wp_send_json_error(['message'=>'Пользователь с таким ID не найден.'], 404); }
+        wp_send_json_success(['data'=>$this->document_data_for_user($userId)]);
     }
 
     public function page_branches() {

@@ -469,6 +469,11 @@
         const progress = document.getElementById('zau-create-progress');
         const result = document.getElementById('zau-create-result');
         const holder = document.getElementById('zau-render-holder');
+        const userIdInput = document.getElementById('zau-create-user-id');
+        const userFetchBtn = document.getElementById('zau-create-user-fetch');
+        const userStatus = document.getElementById('zau-create-user-status');
+        const userStatusDefault = userStatus ? userStatus.textContent : '';
+        let prefillData = {};
 
         form.querySelectorAll('.zau-select-document-image').forEach(button => button.addEventListener('click', () => {
             const input = button.parentElement.querySelector('input[type="url"]');
@@ -484,11 +489,37 @@
         }
         select.addEventListener('change', showSummary);
 
+        userFetchBtn?.addEventListener('click', async () => {
+            const uid = parseInt(userIdInput?.value, 10) || 0;
+            if (!uid) { if (userStatus) userStatus.textContent = 'Укажите ID пользователя перед подстановкой.'; return; }
+            userFetchBtn.disabled = true;
+            if (userStatus) userStatus.textContent = 'Загружаем данные пользователя…';
+            try {
+                const res = await ajax('zau_union_document_data_for_user', {user_id: uid});
+                prefillData = res.data || {};
+                const fullNameInput = form.querySelector('[name="full_name"]');
+                if (fullNameInput && !fullNameInput.value && prefillData.full_name) fullNameInput.value = prefillData.full_name;
+                const orgInput = form.querySelector('[name="organization"]');
+                if (orgInput && !orgInput.value && prefillData.organization) orgInput.value = prefillData.organization;
+                const statusInput = form.querySelector('[name="member_status"]');
+                if (statusInput && !statusInput.value && prefillData.member_status) statusInput.value = prefillData.member_status;
+                if (userStatus) userStatus.textContent = 'Данные подставлены' + (prefillData.branch_name ? ' · филиал: ' + prefillData.branch_name : '') + '. Реквизиты филиала/организации/профсоюза доступны системным полям шаблона.';
+            } catch (err) {
+                prefillData = {};
+                if (userStatus) userStatus.textContent = err.message || 'Не удалось загрузить данные пользователя.';
+            } finally {
+                userFetchBtn.disabled = false;
+            }
+        });
+        userIdInput?.addEventListener('input', () => { prefillData = {}; if (userStatus) userStatus.textContent = userStatusDefault; });
+
         form.addEventListener('submit', async ev => {
             ev.preventDefault(); result.innerHTML = ''; progress.textContent = App.strings?.generating || 'Формируется документ…';
             const button = form.querySelector('button[type="submit"]'); button.disabled = true;
             try {
-                const values = Object.fromEntries(new FormData(form).entries());
+                const formValues = Object.fromEntries(new FormData(form).entries());
+                const values = Object.assign({}, prefillData);
+                Object.keys(formValues).forEach(k => { if (formValues[k] !== '') values[k] = formValues[k]; });
                 const prepared = await ajax('zau_cert_prepare_document', values);
                 values.document_no = prepared.document_no;
                 values.verify_url = prepared.verify_url;
