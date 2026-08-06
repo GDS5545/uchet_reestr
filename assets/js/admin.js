@@ -569,13 +569,31 @@
         let running = false;
         let delayMs = 150;
 
+        const ajaxTimeout = async (action, payload, timeoutMs) => {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                const body = new URLSearchParams(); body.set('action', action); body.set('nonce', App.nonce || '');
+                Object.entries(payload || {}).forEach(([k, v]) => body.set(k, v == null ? '' : String(v)));
+                const response = await fetch(App.ajaxUrl, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'}, body: body.toString(), credentials:'same-origin', signal: controller.signal});
+                const json = await response.json().catch(() => null);
+                if (!response.ok || !json || !json.success) throw new Error(json?.data?.message || 'Ошибка сервера: ' + response.status);
+                return json.data;
+            } catch (err) {
+                if (err.name === 'AbortError') throw new Error('Сервер не ответил за ' + Math.round(timeoutMs / 1000) + ' секунд — запрос завис.');
+                throw err;
+            } finally {
+                clearTimeout(timer);
+            }
+        };
+
         const backfillButton = root.querySelector('[data-zau-bulk-backfill-run]');
         const backfillStatus = root.querySelector('[data-zau-bulk-backfill-status]');
         backfillButton?.addEventListener('click', async () => {
             backfillButton.disabled = true;
             backfillStatus.textContent = 'Ищем формы с привязанными шаблонами…';
             try {
-                const formsData = await ajax('zau_cert_bulk_backfill_forms', {});
+                const formsData = await ajaxTimeout('zau_cert_bulk_backfill_forms', {}, 20000);
                 const forms = formsData.forms || [];
                 if (!forms.length) {
                     backfillStatus.textContent = 'Нет активных форм с привязанными шаблонами документов.';
@@ -586,7 +604,16 @@
                     let afterId = 0, hasMore = true;
                     while (hasMore) {
                         backfillStatus.textContent = `Форма «${f.name}»: проверено ${totalChecked}, создано документов ${totalCreated}…`;
-                        const res = await ajax('zau_cert_bulk_backfill_docs', {form_id: f.id, after_id: afterId});
+                        let res, attempt = 0;
+                        while (true) {
+                            try { res = await ajaxTimeout('zau_cert_bulk_backfill_docs', {form_id: f.id, after_id: afterId}, 25000); break; }
+                            catch (err) {
+                                attempt++;
+                                if (attempt >= 3) throw err;
+                                backfillStatus.textContent = `Форма «${f.name}»: сервер не ответил вовремя, повторяем попытку ${attempt + 1}/3…`;
+                                await sleep(2000 * attempt);
+                            }
+                        }
                         totalChecked += Number(res.checked || 0);
                         totalCreated += Number(res.created || 0);
                         afterId = Number(res.next_after_id || afterId);
@@ -595,7 +622,7 @@
                 }
                 backfillStatus.textContent = `Готово. Проверено заявок: ${totalChecked}. Создано новых документов (черновиков без PDF): ${totalCreated}. Теперь их можно выбрать в шаге 1 фильтром «Состояние файла → Только без PDF».`;
             } catch (err) {
-                backfillStatus.textContent = 'Ошибка: ' + (err.message || 'не удалось выполнить проверку.');
+                backfillStatus.textContent = 'Ошибка: ' + (err.message || 'не удалось выполнить проверку.') + ' Нажмите кнопку ещё раз — уже созданные документы не задублируются.';
             } finally {
                 backfillButton.disabled = false;
             }

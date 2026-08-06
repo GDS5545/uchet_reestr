@@ -2,8 +2,8 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.18.2';
-    const DB_VERSION = '2.18.2';
+    const VERSION = '2.19.0';
+    const DB_VERSION = '2.19.0';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
     const OPT_SETTINGS = 'zau_union_settings';
@@ -179,7 +179,8 @@ final class ZAU_Union_Module {
             PRIMARY KEY (id),
             KEY form_id (form_id),
             KEY user_id (user_id),
-            KEY status (status)
+            KEY status (status),
+            KEY form_user_id (form_id,user_id,id)
         ) $charset;");
 
         dbDelta("CREATE TABLE {$this->orgs_table} (
@@ -278,7 +279,8 @@ final class ZAU_Union_Module {
             KEY document_no (document_no),
             KEY user_id (user_id),
             KEY source_submission_id (source_submission_id),
-            KEY record_status (record_status)
+            KEY record_status (record_status),
+            KEY user_template (user_id,template_id)
         ) $charset;");
     }
 
@@ -3123,10 +3125,10 @@ final class ZAU_Union_Module {
      * для каждого привязанного к форме шаблона, если документа этого шаблона у пользователя
      * ещё нет. Дальше такие черновики подхватывает обычное массовое пересоздание PDF —
      * фильтром «Состояние файла → без PDF». Курсор — ID последней просмотренной заявки. */
-    public function backfill_missing_documents_from_submissions($formId, $afterId = 0, $perPage = 150) {
+    public function backfill_missing_documents_from_submissions($formId, $afterId = 0, $perPage = 60) {
         global $wpdb;
         $formId = absint($formId);
-        $perPage = max(1, min(500, absint($perPage) ?: 150));
+        $perPage = max(1, min(200, absint($perPage) ?: 60));
         $afterId = max(0, absint($afterId));
         $form = $this->get_form($formId);
         if (!$form) { return ['checked'=>0,'created'=>0,'next_after_id'=>$afterId,'has_more'=>false,'error'=>'Форма не найдена.']; }
@@ -3139,8 +3141,10 @@ final class ZAU_Union_Module {
              ORDER BY s.id ASC LIMIT %d",
             $formId, $afterId, $perPage
         ));
-        $checked = 0; $created = 0; $lastId = $afterId;
+        $checked = 0; $created = 0; $lastId = $afterId; $stoppedEarly = false;
+        $deadline = microtime(true) + 12;
         foreach ((array)$rows as $submission) {
+            if (microtime(true) > $deadline) { $stoppedEarly = true; break; }
             $checked++;
             $lastId = (int)$submission->id;
             $userId = (int)$submission->user_id;
@@ -3158,7 +3162,7 @@ final class ZAU_Union_Module {
                 if ($job) { $created++; }
             }
         }
-        return ['checked'=>$checked,'created'=>$created,'next_after_id'=>$lastId,'has_more'=>count($rows)===$perPage];
+        return ['checked'=>$checked,'created'=>$created,'next_after_id'=>$lastId,'has_more'=>$stoppedEarly || count($rows)===$perPage];
     }
 
     private function document_job($row,$tpl,$data=[]) {
