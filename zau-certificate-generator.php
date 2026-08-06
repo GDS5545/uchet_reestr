@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Профсоюз — регистрация, документы и QR
  * Description: Единый реестр профсоюза с AQNIET Blue UX: регистрация, статусы, филиалы единым текстом, защищённая личная карточка, скрытый wp-admin для участников, акции и скидки, документы/PDF/QR, кабинеты организаций и Elementor.
- * Version: 2.24.2
+ * Version: 2.24.3
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -12,8 +12,8 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Certificate_PDF_Generator {
-    const VERSION = '2.24.2';
-    const DB_VERSION = '2.24.2';
+    const VERSION = '2.24.3';
+    const DB_VERSION = '2.24.3';
     const OPT_DB_VERSION = 'zau_cert_db_version';
     const OPT_SETTINGS = 'zau_cert_settings';
     const CAP_MANAGE = 'zau_manage_certificates';
@@ -1063,6 +1063,7 @@ final class ZAU_Certificate_PDF_Generator {
             'signature2_url'=>$this->normalize_upload_asset_url($signature2_url),
             'stamp_url'=>$this->normalize_upload_asset_url($stamp_url),
             'verify_url'=>$this->verify_url($row->verify_token),
+            'union_requisites'=>class_exists('ZAU_Union_Module') ? ZAU_Union_Module::instance()->union_requisites_text() : ($values['union_requisites'] ?? ''),
         ]);
         wp_send_json_success([
             'id'=>(int)$row->id,

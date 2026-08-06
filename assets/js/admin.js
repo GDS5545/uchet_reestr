@@ -19,6 +19,7 @@
         signature2_url: 'Вторая подпись',
         stamp_url: 'Печать / штамп',
         verify_url: 'https://site.kz/proverka-dokumenta/?zau_verify=...',
+        union_requisites: 'ОО «Название организации»\nРНН – ...\nИИК – ...\nБИК – ...\nБИН – ...\nБанк ...\nАдрес: ...\ne-mail: ...',
         qr: 'QR'
     };
 

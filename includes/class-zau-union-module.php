@@ -70,6 +70,7 @@ final class ZAU_Union_Module {
         add_action('admin_post_zau_union_save_member_access', [$this, 'save_member_access']);
         add_action('admin_post_zau_union_bulk_member_status', [$this, 'bulk_member_status_action']);
         add_action('admin_post_zau_union_repair_exit_documents', [$this, 'repair_exit_documents_action']);
+        add_action('admin_post_zau_union_save_requisites', [$this, 'save_union_requisites']);
         add_action('admin_post_zau_union_save_branch', [$this, 'save_branch']);
         add_action('admin_post_zau_union_delete_branch', [$this, 'delete_branch']);
         add_action('admin_post_zau_union_import_branches_text', [$this, 'import_branches_text']);
@@ -1125,6 +1126,7 @@ final class ZAU_Union_Module {
             $data['card__'.$safeKey]=$value;
             if((!array_key_exists($safeKey,$data)||$data[$safeKey]==='')&&$value!=='')$data[$safeKey]=$value;
         }
+        $data['union_requisites'] = $this->union_head_requisites();
         return $data;
     }
 
@@ -1140,6 +1142,7 @@ final class ZAU_Union_Module {
             'organization_status_code'=>'Код статуса организации', 'organization_type'=>'Тип организации',
             'organization_type_code'=>'Код типа организации', 'organization_registration_date'=>'Дата регистрации организации',
             'organization_oked'=>'Код ОКЭД', 'organization_oked_name'=>'Наименование ОКЭД', 'organization_kato'=>'КАТО',
+            'union_requisites'=>'[Профсоюз] Реквизиты головной организации единым текстом',
             'branch'=>'Филиал', 'branch_id'=>'ID филиала', 'branch_name'=>'Название филиала',
             'branch_code'=>'Код филиала', 'branch_region'=>'Регион филиала',
             'branch_union_bin'=>'БИН филиала Профсоюза', 'branch_iban'=>'ИИК / IBAN филиала',
@@ -1282,6 +1285,24 @@ final class ZAU_Union_Module {
         return implode("\n", array_values(array_unique(array_filter($parts))));
     }
 
+    private function union_head_requisites() {
+        $default = "ОО «Казахстанский отраслевой профессиональный союз работников здравоохранения и общественного обслуживания «AQNİET»»\nРНН – 600500028323\nИИК – KZ728560000000063590\nБИК – KCJBKZKX\nБИН – 911140000213\nБанк Центр Кредит\nАдрес: ул. Күлтегін, дом 11/1, н.п. 4, г. Астана, 010000\ne-mail: prof@zdravunion.kz, 25-39-94";
+        $value = trim((string)get_option('zau_union_head_requisites', ''));
+        return $value !== '' ? $value : $default;
+    }
+
+    public function union_requisites_text() {
+        return $this->union_head_requisites();
+    }
+
+    public function save_union_requisites() {
+        $this->require_cap(ZAU_Certificate_PDF_Generator::CAP_MANAGE);
+        check_admin_referer(self::NONCE);
+        update_option('zau_union_head_requisites', sanitize_textarea_field(wp_unslash($_POST['head_requisites'] ?? '')), false);
+        wp_safe_redirect(admin_url('admin.php?page=zau-union-branches&zau_notice='.rawurlencode('Реквизиты профсоюза сохранены.')));
+        exit;
+    }
+
     private function backfill_branch_text_blocks() {
         global $wpdb;
         $rows = $this->branch_rows(false);
@@ -1359,6 +1380,20 @@ final class ZAU_Union_Module {
         ?>
         <div class="wrap zau-union-admin">
             <div class="zau-union-head"><div><h1>Филиалы и реквизиты</h1><p>При выборе филиала в форме все данные автоматически подставляются в заявку и становятся доступными в PDF-шаблоне.</p></div></div>
+            <form class="zau-union-card" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                <?php wp_nonce_field(self::NONCE); ?><input type="hidden" name="action" value="zau_union_save_requisites">
+                <h2>Реквизиты головной организации (профсоюза)</h2>
+                <p class="description">Один общий текст — название, РНН/БИН, ИИК, БИК, банк, адрес, email и телефон головной организации. Не привязан к филиалу и одинаков во всех документах. В редакторе шаблона используйте поле <code>union_requisites</code> — оно добавляется на документ одним блоком.</p>
+                <label><textarea name="head_requisites" rows="8" class="large-text" placeholder="ОО «Название организации»
+РНН – ...
+ИИК – ...
+БИК – ...
+БИН – ...
+Банк ...
+Адрес: ...
+e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisites()); ?></textarea></label>
+                <?php submit_button('Сохранить реквизиты', 'primary', 'submit', false); ?>
+            </form>
             <form class="zau-union-card zau-branch-text-import" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <?php wp_nonce_field(self::NONCE); ?><input type="hidden" name="action" value="zau_union_import_branches_text">
                 <h2>Массовая загрузка филиалов текстом</h2>
