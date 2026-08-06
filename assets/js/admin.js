@@ -569,6 +569,38 @@
         let running = false;
         let delayMs = 150;
 
+        const backfillButton = root.querySelector('[data-zau-bulk-backfill-run]');
+        const backfillStatus = root.querySelector('[data-zau-bulk-backfill-status]');
+        backfillButton?.addEventListener('click', async () => {
+            backfillButton.disabled = true;
+            backfillStatus.textContent = 'Ищем формы с привязанными шаблонами…';
+            try {
+                const formsData = await ajax('zau_cert_bulk_backfill_forms', {});
+                const forms = formsData.forms || [];
+                if (!forms.length) {
+                    backfillStatus.textContent = 'Нет активных форм с привязанными шаблонами документов.';
+                    return;
+                }
+                let totalChecked = 0, totalCreated = 0;
+                for (const f of forms) {
+                    let afterId = 0, hasMore = true;
+                    while (hasMore) {
+                        backfillStatus.textContent = `Форма «${f.name}»: проверено ${totalChecked}, создано документов ${totalCreated}…`;
+                        const res = await ajax('zau_cert_bulk_backfill_docs', {form_id: f.id, after_id: afterId});
+                        totalChecked += Number(res.checked || 0);
+                        totalCreated += Number(res.created || 0);
+                        afterId = Number(res.next_after_id || afterId);
+                        hasMore = !!res.has_more;
+                    }
+                }
+                backfillStatus.textContent = `Готово. Проверено заявок: ${totalChecked}. Создано новых документов (черновиков без PDF): ${totalCreated}. Теперь их можно выбрать в шаге 1 фильтром «Состояние файла → Только без PDF».`;
+            } catch (err) {
+                backfillStatus.textContent = 'Ошибка: ' + (err.message || 'не удалось выполнить проверку.');
+            } finally {
+                backfillButton.disabled = false;
+            }
+        });
+
         const sleep = ms => new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
         const formPayload = () => {
             const fd = new FormData(form); const payload = {};

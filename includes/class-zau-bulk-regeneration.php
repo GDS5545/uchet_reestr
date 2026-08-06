@@ -7,7 +7,7 @@ if (!defined('ABSPATH')) { exit; }
  * while job state is stored in WordPress so an interrupted run can resume.
  */
 final class ZAU_Bulk_Regeneration {
-    const VERSION = '2.11.0';
+    const VERSION = '2.12.0';
     const DB_VERSION = '1.0.0';
     const OPT_DB_VERSION = 'zau_bulk_regeneration_db_version';
     const NONCE = 'zau_cert_nonce';
@@ -38,6 +38,8 @@ final class ZAU_Bulk_Regeneration {
         add_action('wp_ajax_zau_cert_bulk_mark_item', [$this, 'ajax_mark_item']);
         add_action('wp_ajax_zau_cert_bulk_job_status', [$this, 'ajax_job_status']);
         add_action('wp_ajax_zau_cert_bulk_control', [$this, 'ajax_control']);
+        add_action('wp_ajax_zau_cert_bulk_backfill_forms', [$this, 'ajax_backfill_forms']);
+        add_action('wp_ajax_zau_cert_bulk_backfill_docs', [$this, 'ajax_backfill_docs']);
         add_action('admin_post_zau_cert_bulk_report', [$this, 'download_report']);
     }
 
@@ -138,6 +140,20 @@ final class ZAU_Bulk_Regeneration {
             </div>
 
             <div class="notice notice-info inline"><p><strong>Перед массовым запуском:</strong> пересоздайте сначала 1–3 документа вручную, проверьте поля, подписи, фон, QR и префикс. Старый файл можно сохранять в архиве до успешной проверки нового.</p></div>
+
+            <div class="zau-card zau-bulk-backfill" data-zau-bulk-backfill>
+                <h2>Шаг 0. Создать документы для заявок без документа</h2>
+                <p>Ниже, в шаге 1, массовое пересоздание видит только уже существующие документы. Оно не создаёт новые —
+                поэтому участники, которых только что перенесли (или ещё не перенесли данные PDF) со старого сайта,
+                и у которых по форме заявки нет документа нужного шаблона, туда не попадают. Эта кнопка находит все
+                такие заявки (обычная регистрация на сайте и перенесённые со старого сайта — учитывается только
+                самая свежая заявка по каждому пользователю), берёт из них текущие данные и создаёт черновик
+                документа без PDF для каждого недостающего шаблона формы. Ничего не удаляет и не трогает уже
+                существующие документы. После этого такие черновики можно выбрать в шаге 1 фильтром «Состояние файла →
+                Только без PDF» и обычным запуском массового пересоздания отрисовать и сохранить сами PDF.</p>
+                <button type="button" class="button button-secondary" data-zau-bulk-backfill-run>Проверить и создать недостающие документы</button>
+                <p data-zau-bulk-backfill-status></p>
+            </div>
 
             <form id="zau-bulk-regenerate-form" class="zau-card zau-bulk-form">
                 <h2>1. Выберите документы</h2>
@@ -476,6 +492,22 @@ final class ZAU_Bulk_Regeneration {
         } else {wp_send_json_error(['message'=>'Неизвестная команда.'],400);}
         $this->refresh_job_counts($job_id);
         wp_send_json_success(['status'=>$this->get_job($job_id)->status]);
+    }
+
+    public function ajax_backfill_forms() {
+        $this->require_ajax();
+        if (!class_exists('ZAU_Union_Module')) { wp_send_json_error(['message'=>'Модуль профсоюза недоступен.'], 500); }
+        wp_send_json_success(['forms'=>ZAU_Union_Module::instance()->forms_with_templates()]);
+    }
+
+    public function ajax_backfill_docs() {
+        $this->require_ajax();
+        if (!class_exists('ZAU_Union_Module')) { wp_send_json_error(['message'=>'Модуль профсоюза недоступен.'], 500); }
+        $formId = absint($_POST['form_id'] ?? 0);
+        $afterId = absint($_POST['after_id'] ?? 0);
+        if (!$formId) { wp_send_json_error(['message'=>'Не указана форма.'], 400); }
+        $result = ZAU_Union_Module::instance()->backfill_missing_documents_from_submissions($formId, $afterId, 150);
+        wp_send_json_success($result);
     }
 
     public function download_report() {

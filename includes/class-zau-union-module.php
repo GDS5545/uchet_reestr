@@ -3080,27 +3080,85 @@ final class ZAU_Union_Module {
         $up=wp_upload_dir(); if(!empty($up['error']))return new WP_Error('upload',$up['error']); $sub='zau-signatures/'.wp_date('Y/m'); $dir=trailingslashit($up['basedir']).$sub; if(!wp_mkdir_p($dir))return new WP_Error('upload','Не удалось создать папку подписей.'); $name='signature-'.$submissionId.'-'.$this->sanitize_field_key($key).'-'.wp_generate_password(6,false,false).'.png'; if(file_put_contents(trailingslashit($dir).$name,$png,LOCK_EX)===false)return new WP_Error('upload','Не удалось сохранить подпись.'); return trailingslashit($up['baseurl']).$sub.'/'.$name;
     }
 
-    private function prepare_public_document($templateId,$submissionId,$data) {
+    private function prepare_public_document($templateId,$submissionId,$data,$userId=null) {
         global $wpdb;
         $templateId=absint($templateId); $submissionId=absint($submissionId);
+        $userId=$userId!==null?absint($userId):get_current_user_id();
         $tpl=$wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->templates_table} WHERE id=%d",$templateId));
         if(!$tpl)return null;
         $existing=$wpdb->get_row($wpdb->prepare(
             "SELECT * FROM {$this->docs_table} WHERE source_submission_id=%d AND template_id=%d AND user_id=%d ORDER BY id DESC LIMIT 1",
-            $submissionId,$templateId,get_current_user_id()
+            $submissionId,$templateId,$userId
         ));
         if($existing){
             if(!empty($existing->pdf_url))return null;
             return $this->document_job($existing,$tpl,$data);
         }
         $token=bin2hex(random_bytes(24)); $now=current_time('mysql'); $signature=$data['signature_url']??($data['signature']??'');
-        $row=['template_id'=>$templateId,'user_id'=>get_current_user_id(),'created_by'=>get_current_user_id(),'source_submission_id'=>$submissionId,'full_name'=>sanitize_text_field($data['full_name']??''),'document_title'=>$tpl->name,'organization'=>sanitize_text_field($data['organization']??''),'issue_date'=>sanitize_text_field($data['issue_date']??wp_date('d.m.Y')),'document_no'=>'PENDING-'.$token,'member_status'=>sanitize_text_field($data['member_status']??'Заявление подано'),'extra1'=>sanitize_textarea_field($data['extra1']??''),'extra2'=>sanitize_textarea_field($data['extra2']??''),'extra3'=>sanitize_textarea_field($data['extra3']??''),'extra4'=>sanitize_textarea_field($data['extra4']??''),'signature_url'=>esc_url_raw($signature),'signature2_url'=>'','stamp_url'=>'','data_json'=>wp_json_encode($data,JSON_UNESCAPED_UNICODE),'orientation'=>$tpl->orientation,'verify_token'=>$token,'record_status'=>'draft','created_at'=>$now,'updated_at'=>$now];
+        $row=['template_id'=>$templateId,'user_id'=>$userId,'created_by'=>$userId,'source_submission_id'=>$submissionId,'full_name'=>sanitize_text_field($data['full_name']??''),'document_title'=>$tpl->name,'organization'=>sanitize_text_field($data['organization']??''),'issue_date'=>sanitize_text_field($data['issue_date']??wp_date('d.m.Y')),'document_no'=>'PENDING-'.$token,'member_status'=>sanitize_text_field($data['member_status']??'Заявление подано'),'extra1'=>sanitize_textarea_field($data['extra1']??''),'extra2'=>sanitize_textarea_field($data['extra2']??''),'extra3'=>sanitize_textarea_field($data['extra3']??''),'extra4'=>sanitize_textarea_field($data['extra4']??''),'signature_url'=>esc_url_raw($signature),'signature2_url'=>'','stamp_url'=>'','data_json'=>wp_json_encode($data,JSON_UNESCAPED_UNICODE),'orientation'=>$tpl->orientation,'verify_token'=>$token,'record_status'=>'draft','created_at'=>$now,'updated_at'=>$now];
         if(!$wpdb->insert($this->docs_table,$row))return null;
         $documentId=(int)$wpdb->insert_id;
         $number=class_exists('ZAU_Certificate_PDF_Generator')?ZAU_Certificate_PDF_Generator::instance()->format_document_number($tpl,$documentId):$this->next_document_number($tpl);
         $wpdb->update($this->docs_table,['document_no'=>$number],['id'=>$documentId]);
         $doc=$wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->docs_table} WHERE id=%d",$documentId));
         return $doc?$this->document_job($doc,$tpl,$data):null;
+    }
+
+    /** Список активных форм, у которых есть хотя бы один привязанный шаблон документа —
+     * для выбора в UI массового пересоздания при поиске заявок без документа. */
+    public function forms_with_templates() {
+        global $wpdb;
+        $forms = $wpdb->get_results("SELECT * FROM {$this->forms_table} WHERE active=1 ORDER BY id ASC");
+        $out = [];
+        foreach ((array)$forms as $form) {
+            $ids = $this->resolve_form_template_ids($form);
+            if (!$ids) { continue; }
+            $out[] = ['id'=>(int)$form->id,'name'=>$form->name,'template_count'=>count($ids)];
+        }
+        return $out;
+    }
+
+    /** Для заявки (в т.ч. перенесённой со старого сайта по CSV/API) находит самую свежую
+     * запись на каждого пользователя по данной форме и создаёт черновик документа (без PDF)
+     * для каждого привязанного к форме шаблона, если документа этого шаблона у пользователя
+     * ещё нет. Дальше такие черновики подхватывает обычное массовое пересоздание PDF —
+     * фильтром «Состояние файла → без PDF». Курсор — ID последней просмотренной заявки. */
+    public function backfill_missing_documents_from_submissions($formId, $afterId = 0, $perPage = 150) {
+        global $wpdb;
+        $formId = absint($formId);
+        $perPage = max(1, min(500, absint($perPage) ?: 150));
+        $afterId = max(0, absint($afterId));
+        $form = $this->get_form($formId);
+        if (!$form) { return ['checked'=>0,'created'=>0,'next_after_id'=>$afterId,'has_more'=>false,'error'=>'Форма не найдена.']; }
+        $templateIds = $this->resolve_form_template_ids($form);
+        if (!$templateIds) { return ['checked'=>0,'created'=>0,'next_after_id'=>$afterId,'has_more'=>false,'error'=>'']; }
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT s.* FROM {$this->submissions_table} s
+             INNER JOIN (SELECT user_id, MAX(id) max_id FROM {$this->submissions_table} WHERE form_id=%d AND user_id>0 AND id>%d GROUP BY user_id) latest
+               ON latest.user_id=s.user_id AND latest.max_id=s.id
+             ORDER BY s.id ASC LIMIT %d",
+            $formId, $afterId, $perPage
+        ));
+        $checked = 0; $created = 0; $lastId = $afterId;
+        foreach ((array)$rows as $submission) {
+            $checked++;
+            $lastId = (int)$submission->id;
+            $userId = (int)$submission->user_id;
+            $user = get_user_by('id', $userId);
+            if (!$user) { continue; }
+            $data = json_decode((string)$submission->data_json, true) ?: [];
+            $data = $this->hydrate_document_data($data, $userId);
+            foreach ($templateIds as $templateId) {
+                $exists = (int)$wpdb->get_var($wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$this->docs_table} WHERE user_id=%d AND template_id=%d",
+                    $userId, $templateId
+                ));
+                if ($exists) { continue; }
+                $job = $this->prepare_public_document($templateId, (int)$submission->id, $data, $userId);
+                if ($job) { $created++; }
+            }
+        }
+        return ['checked'=>$checked,'created'=>$created,'next_after_id'=>$lastId,'has_more'=>count($rows)===$perPage];
     }
 
     private function document_job($row,$tpl,$data=[]) {
