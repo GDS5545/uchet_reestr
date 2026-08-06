@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU — мост экспорта старого кабинета
  * Description: Устанавливается на СТАРЫЙ сайт (uchet.zdravunion.kz). Открывает защищённый API, который читает пользователей Ultimate Member и записи WPForms и отдаёт их новому сайту ZAU Профсоюз по подписанным запросам. Ничего не удаляет и не изменяет на старом сайте.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: ZAU
  * Requires at least: 5.5
  * Requires PHP: 7.4
@@ -12,7 +12,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Legacy_Bridge_Companion {
-    const VERSION = '1.0.0';
+    const VERSION = '1.1.0';
     const OPT_SETTINGS = 'zau_legacy_bridge_companion_settings';
     const NONCE = 'zau_legacy_bridge_companion_nonce';
     const NS = 'zau-legacy-bridge/v1';
@@ -212,14 +212,23 @@ final class ZAU_Legacy_Bridge_Companion {
         return '';
     }
 
+    /** cursor = ID последнего отданного пользователя (не смещение). Так каждая страница читается
+     * по первичному ключу за одинаковое время независимо от того, как далеко продвинулся перенос —
+     * OFFSET на большой таблице пользователей на этом месте раньше становился всё медленнее и в
+     * какой-то момент упирался в лимит времени выполнения на стороне старого сайта. */
     public function route_users(WP_REST_Request $request) {
+        global $wpdb;
         $cursor = max(0, (int)$request->get_param('cursor'));
         $perPage = max(1, min(200, (int)($request->get_param('per_page') ?: 100)));
         $s = $this->settings();
-        $users = get_users(['number'=>$perPage, 'offset'=>$cursor, 'orderby'=>'ID', 'order'=>'ASC', 'fields'=>'all']);
+        $ids = $wpdb->get_col($wpdb->prepare("SELECT ID FROM {$wpdb->users} WHERE ID > %d ORDER BY ID ASC LIMIT %d", $cursor, $perPage));
         $total = (int)count_users()['total_users'];
         $out = [];
-        foreach ($users as $user) {
+        $lastId = $cursor;
+        foreach ($ids as $id) {
+            $user = get_userdata((int)$id);
+            if (!$user) { continue; }
+            $lastId = (int)$id;
             $row = [
                 'legacy_user_id' => (string)$user->ID,
                 'user_login' => $user->user_login,
@@ -237,8 +246,8 @@ final class ZAU_Legacy_Bridge_Companion {
         }
         return rest_ensure_response([
             'users' => $out,
-            'next_cursor' => $cursor + $perPage,
-            'has_more' => ($cursor + $perPage) < $total,
+            'next_cursor' => $lastId,
+            'has_more' => count($ids) === $perPage,
             'total' => $total,
         ]);
     }
@@ -254,17 +263,27 @@ final class ZAU_Legacy_Bridge_Companion {
         return '';
     }
 
+    /** cursor = entry_id последней отданной записи (не смещение) — та же причина, что и в route_users:
+     * читаем прямо по первичному ключу таблицы wpforms_entries, а не через OFFSET, который на больших
+     * формах со временем замедляется вплоть до обрыва запроса по таймауту. */
     public function route_entries(WP_REST_Request $request) {
         if (!function_exists('wpforms')) { return rest_ensure_response(['entries'=>[], 'next_cursor'=>0, 'has_more'=>false, 'total'=>0]); }
+        global $wpdb;
         $formId = absint($request->get_param('form_id'));
         if (!$formId) { return new WP_Error('zau_bridge_form', 'Не указан form_id.', ['status'=>400]); }
         $cursor = max(0, (int)$request->get_param('cursor'));
         $perPage = max(1, min(200, (int)($request->get_param('per_page') ?: 50)));
         $signatureFieldId = $this->find_signature_field_id($formId);
-        $entries = wpforms()->entry->get_entries(['form_id'=>$formId, 'number'=>$perPage, 'offset'=>$cursor, 'orderby'=>'entry_id', 'order'=>'ASC']);
-        $total = (int)wpforms()->entry->get_entries(['form_id'=>$formId], true);
+        $entriesTable = $wpdb->prefix . 'wpforms_entries';
+        $entries = $wpdb->get_results($wpdb->prepare(
+            "SELECT entry_id,user_id,status,date,fields FROM {$entriesTable} WHERE form_id=%d AND entry_id>%d ORDER BY entry_id ASC LIMIT %d",
+            $formId, $cursor, $perPage
+        ));
+        $total = $this->count_entries($formId);
         $out = [];
+        $lastId = $cursor;
         foreach ((array)$entries as $entry) {
+            $lastId = (int)$entry->entry_id;
             $fields = function_exists('wpforms_decode') ? wpforms_decode($entry->fields) : json_decode($entry->fields, true);
             $flat = [];
             $signatureUrl = '';
@@ -285,8 +304,8 @@ final class ZAU_Legacy_Bridge_Companion {
         }
         return rest_ensure_response([
             'entries' => $out,
-            'next_cursor' => $cursor + $perPage,
-            'has_more' => ($cursor + $perPage) < $total,
+            'next_cursor' => $lastId,
+            'has_more' => count($entries) === $perPage,
             'total' => $total,
         ]);
     }
