@@ -2,8 +2,8 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.19.1';
-    const DB_VERSION = '2.19.0';
+    const VERSION = '2.20.0';
+    const DB_VERSION = '2.20.0';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
     const OPT_SETTINGS = 'zau_union_settings';
@@ -298,6 +298,7 @@ final class ZAU_Union_Module {
                 ['key'=>'email','label'=>'Email адрес','type'=>'email','required'=>1,'placeholder'=>'name@example.kz','options'=>'','default'=>''],
                 ['key'=>'privacy_consent','label'=>'Согласен(на) с политикой конфиденциальности и обработкой персональных данных','type'=>'checkbox','required'=>1,'placeholder'=>'','options'=>'','default'=>''],
                 ['key'=>'contribution_heading','label'=>'Заявление на безналичную уплату профсоюзного взноса','type'=>'heading','required'=>0,'placeholder'=>'','options'=>'','default'=>''],
+                ['key'=>'self_employed','label'=>'Самозанятый (без организации/ИП)','type'=>'checkbox','required'=>0,'placeholder'=>'','options'=>'','default'=>''],
                 ['key'=>'organization_bin','label'=>'БИН/ИИН организации','type'=>'bin_lookup','required'=>1,'placeholder'=>'12 цифр','options'=>'','default'=>''],
                 ['key'=>'organization','label'=>'Наименование предприятия, организации','type'=>'text','required'=>1,'placeholder'=>'Заполняется после поиска по БИН','options'=>'','default'=>''],
                 ['key'=>'organization_director','label'=>'Ф.И.О. руководителя','type'=>'text','required'=>0,'placeholder'=>'','options'=>'','default'=>''],
@@ -390,6 +391,12 @@ final class ZAU_Union_Module {
                 if ($field['key'] === 'contribution_heading' || $field['type'] === 'signature') { $insertIndex = $index; break; }
             }
             array_splice($fields, $insertIndex, 0, $membership);
+        }
+        if (empty($keys['self_employed'])) {
+            $selfEmployed = [['key'=>'self_employed','label'=>'Самозанятый (без организации/ИП)','type'=>'checkbox','required'=>0,'placeholder'=>'','options'=>'','default'=>'']];
+            $insertIndex = count($fields);
+            foreach ($fields as $index=>$field) { if ($field['key'] === 'organization_bin') { $insertIndex = $index; break; } }
+            array_splice($fields, $insertIndex, 0, $selfEmployed);
         }
         if (empty($keys['branch_requisites'])) {
             $requisites = [[
@@ -761,6 +768,7 @@ final class ZAU_Union_Module {
             'form_page_id'=>0,
             'cabinet_page_id'=>0,
             'org_registry_page_id'=>0,
+            'privacy_page_id'=>0,
             'otp_expiry'=>300,
             'otp_resend'=>60,
             'otp_max_attempts'=>5,
@@ -1833,7 +1841,7 @@ final class ZAU_Union_Module {
         $this->require_cap(ZAU_Certificate_PDF_Generator::CAP_MANAGE); $s=$this->settings();
         ?>
         <div class="wrap zau-union-admin"><h1>Вход, постоянный PIN и API поиска БИН</h1><form method="post" action="<?php echo esc_url(admin_url('admin-post.php'));?>" class="zau-union-card"><?php wp_nonce_field(self::NONCE);?><input type="hidden" name="action" value="zau_union_save_settings">
-        <h2>Страницы</h2><table class="form-table"><tr><th>Форма по умолчанию</th><td><select name="default_form_id"><?php foreach($this->get_forms() as $f):?><option value="<?php echo (int)$f->id;?>" <?php selected($s['default_form_id'],$f->id);?>><?php echo esc_html($f->name);?></option><?php endforeach;?></select></td></tr><tr><th>Страница входа</th><td><?php wp_dropdown_pages(['name'=>'login_page_id','selected'=>(int)$s['login_page_id'],'show_option_none'=>'— выберите —']);?></td></tr><tr><th>Страница формы</th><td><?php wp_dropdown_pages(['name'=>'form_page_id','selected'=>(int)$s['form_page_id'],'show_option_none'=>'— выберите —']);?></td></tr><tr><th>Личный кабинет</th><td><?php wp_dropdown_pages(['name'=>'cabinet_page_id','selected'=>(int)$s['cabinet_page_id'],'show_option_none'=>'— выберите —']);?></td></tr><tr><th>Реестр организации</th><td><?php wp_dropdown_pages(['name'=>'org_registry_page_id','selected'=>(int)$s['org_registry_page_id'],'show_option_none'=>'— выберите —']);?><p class="description">Страница с шорткодом <code>[zau_union_org_registry]</code> для ответственных организаций.</p></td></tr></table>
+        <h2>Страницы</h2><table class="form-table"><tr><th>Форма по умолчанию</th><td><select name="default_form_id"><?php foreach($this->get_forms() as $f):?><option value="<?php echo (int)$f->id;?>" <?php selected($s['default_form_id'],$f->id);?>><?php echo esc_html($f->name);?></option><?php endforeach;?></select></td></tr><tr><th>Страница входа</th><td><?php wp_dropdown_pages(['name'=>'login_page_id','selected'=>(int)$s['login_page_id'],'show_option_none'=>'— выберите —']);?></td></tr><tr><th>Страница формы</th><td><?php wp_dropdown_pages(['name'=>'form_page_id','selected'=>(int)$s['form_page_id'],'show_option_none'=>'— выберите —']);?></td></tr><tr><th>Личный кабинет</th><td><?php wp_dropdown_pages(['name'=>'cabinet_page_id','selected'=>(int)$s['cabinet_page_id'],'show_option_none'=>'— выберите —']);?></td></tr><tr><th>Реестр организации</th><td><?php wp_dropdown_pages(['name'=>'org_registry_page_id','selected'=>(int)$s['org_registry_page_id'],'show_option_none'=>'— выберите —']);?><p class="description">Страница с шорткодом <code>[zau_union_org_registry]</code> для ответственных организаций.</p></td></tr><tr><th>Политика конфиденциальности</th><td><?php wp_dropdown_pages(['name'=>'privacy_page_id','selected'=>(int)$s['privacy_page_id'],'show_option_none'=>'— выберите —']);?><p class="description">Страница с текстом политики конфиденциальности и безопасности. Если выбрана, рядом с галочкой согласия в форме появится ссылка «читать текст», открывающая эту страницу.</p></td></tr></table>
         <h2>Регистрация новых участников</h2><table class="form-table">
         <tr><th>Сценарий регистрации</th><td><select name="registration_mode"><option value="direct" <?php selected($s['registration_mode'],'direct');?>>Сразу показывать форму — без подтверждающего кода</option><option value="otp" <?php selected($s['registration_mode'],'otp');?>>Сначала подтверждать email или телефон одноразовым кодом</option></select><p class="description">В прямом режиме аккаунт создаётся после отправки анкеты, пользователь автоматически входит в личный кабинет. Одноразовый код остаётся доступен только для входа и восстановления, если соответствующие способы включены ниже.</p></td></tr>
         <tr><th>После регистрации</th><td><label><input type="checkbox" name="redirect_after_registration" value="1" <?php checked(!empty($s['redirect_after_registration']));?>> После сохранения заявки и формирования документов сразу открыть личный кабинет</label><p class="description">Переход выполняется только для нового пользователя. Повторная отправка документов из кабинета остаётся на текущей странице.</p></td></tr>
@@ -1892,7 +1900,7 @@ final class ZAU_Union_Module {
     public function save_settings() {
         $this->require_cap(ZAU_Certificate_PDF_Generator::CAP_MANAGE); check_admin_referer(self::NONCE);
         $s=$this->settings();
-        foreach(['default_form_id','login_page_id','form_page_id','cabinet_page_id','org_registry_page_id','otp_expiry','otp_resend','otp_max_attempts'] as $k)$s[$k]=absint($_POST[$k]??0);
+        foreach(['default_form_id','login_page_id','form_page_id','cabinet_page_id','org_registry_page_id','privacy_page_id','otp_expiry','otp_resend','otp_max_attempts'] as $k)$s[$k]=absint($_POST[$k]??0);
         foreach(['auth_otp_email','auth_otp_phone','auth_pin_enabled','auth_password_enabled','auth_show_tabs','auth_show_recovery','pin_device_only','design_mobile_steps','design_mobile_bottom_nav','design_quick_actions','design_document_search','auto_member_status_on_approval','member_card_member_edit','member_card_tab_enabled','hide_admin_for_non_admin','benefits_tab_enabled','redirect_after_registration','redirect_after_login'] as $k)$s[$k]=empty($_POST[$k])?0:1;
         $primary=sanitize_hex_color(wp_unslash($_POST['design_primary']??''));
         $s['design_primary']=$primary?:'#1565C0';
@@ -2150,7 +2158,14 @@ final class ZAU_Union_Module {
         $value=$this->prefill_value($key,$field['default'],$user); $req=$required?' required':''; $star=$required?' <span class="zau-required-mark">*</span>':'';
         echo '<div class="zau-form-field zau-field-'.esc_attr($type).'" data-field-key="'.esc_attr($key).'">';
         if($type==='hidden'){echo '<input type="hidden" name="'.esc_attr($key).'" value="'.esc_attr($value).'">';echo '</div>';return;}
-        if($type==='checkbox'){echo '<label class="zau-checkbox"><input type="checkbox" name="'.esc_attr($key).'" value="1"'.$req.'> <span>'.esc_html($label).$star.'</span></label>';echo '</div>';return;}
+        if($type==='checkbox'){
+            $extraLink='';
+            if($key==='privacy_consent'){
+                $privacyPageId=absint($this->settings()['privacy_page_id']??0);
+                if($privacyPageId){$privacyUrl=get_permalink($privacyPageId);if($privacyUrl)$extraLink=' <a href="'.esc_url($privacyUrl).'" target="_blank" rel="noopener">(читать текст)</a>';}
+            }
+            echo '<label class="zau-checkbox"><input type="checkbox" name="'.esc_attr($key).'" value="1"'.$req.'> <span>'.esc_html($label).$star.$extraLink.'</span></label>';echo '</div>';return;
+        }
         echo '<label>'.esc_html($label).$star;
         if($type==='textarea')echo '<textarea name="'.esc_attr($key).'" placeholder="'.esc_attr($field['placeholder']).'"'.$req.'>'.esc_textarea($value).'</textarea>';
         elseif($type==='select'){echo '<select name="'.esc_attr($key).'"'.$req.'><option value="">— Выберите вариант —</option>';foreach(preg_split('/\r?\n/',(string)$field['options']) as $option){$option=trim($option);if($option==='')continue;$parts=array_map('trim',explode('|',$option,2));$val=$parts[0];$text=$parts[1]??$parts[0];echo '<option value="'.esc_attr($val).'" '.selected($value,$val,false).'>'.esc_html($text).'</option>';}echo '</select>';}
@@ -2946,6 +2961,12 @@ final class ZAU_Union_Module {
         set_transient($key,$count+1,HOUR_IN_SECONDS);
     }
 
+    /** Поля, которые заполняются поиском по БИН (кнопка «Найти» и автоподстановка) — их
+     * не требуем и не трогаем, если участник отметил «Самозанятый». */
+    private function organization_derived_field_keys() {
+        return ['organization_bin','organization','organization_name_ru','organization_name_kz','organization_director','organization_address','organization_address_ru','organization_address_kz','organization_status','organization_status_code','organization_type','organization_type_code','organization_registration_date','organization_oked','organization_oked_name','organization_kato'];
+    }
+
     private function registration_json_error($message,$field='',$code='registration_error',$status=400,$extra=[]) {
         $payload=array_merge(['message'=>(string)$message,'field'=>(string)$field,'code'=>(string)$code],is_array($extra)?$extra:[]);
         wp_send_json_error($payload,(int)$status);
@@ -2969,8 +2990,12 @@ final class ZAU_Union_Module {
         $form=$this->get_form(absint($_POST['form_id']??0));
         if(!$form||!$form->active)$this->registration_json_error('Форма не найдена или отключена. Обновите страницу.','_form','form_not_found',404);
         $fields=$this->decode_form_fields($form->fields_json);$data=[];$signatureData=[];
+        $selfEmployed=!empty($_POST['self_employed']);
+        $orgDerivedKeys=$this->organization_derived_field_keys();
         foreach($fields as $field){
-            $key=$field['key'];$type=$field['type'];if($type==='heading')continue;$raw=wp_unslash($_POST[$key]??'');$rawText=is_scalar($raw)?trim((string)$raw):'';
+            $key=$field['key'];$type=$field['type'];if($type==='heading')continue;
+            if($selfEmployed && in_array($key,$orgDerivedKeys,true)){$data[$key]='';continue;}
+            $raw=wp_unslash($_POST[$key]??'');$rawText=is_scalar($raw)?trim((string)$raw):'';
             if($type==='signature'){
                 $uploadKey='zau_signature_file__'.$key;
                 $signatureData[$key]=(!empty($_FILES[$uploadKey])&&is_array($_FILES[$uploadKey]))?['upload'=>$_FILES[$uploadKey]]:(string)$raw;
@@ -3157,6 +3182,8 @@ final class ZAU_Union_Module {
             if (!$user) { continue; }
             $data = json_decode((string)$submission->data_json, true) ?: [];
             $data = $this->hydrate_document_data($data, $userId);
+            if (empty($data['issue_date']) && !empty($submission->created_at)) { $data['issue_date'] = mysql2date('d.m.Y', $submission->created_at); }
+            if (empty($data['submission_date']) && !empty($data['issue_date'])) { $data['submission_date'] = $data['issue_date']; }
             foreach ($templateIds as $templateId) {
                 $exists = (int)$wpdb->get_var($wpdb->prepare(
                     "SELECT COUNT(*) FROM {$this->docs_table} WHERE user_id=%d AND template_id=%d",

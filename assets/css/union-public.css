@@ -299,6 +299,9 @@
 .zau-form-toast{position:fixed;z-index:2147483000;right:22px;top:22px;width:min(420px,calc(100vw - 28px));display:flex;flex-direction:column;gap:4px;padding:15px 18px;border-radius:15px;background:#fff;color:#172033;box-shadow:0 18px 50px rgba(25,42,70,.25);border-left:6px solid #d93025;opacity:0;transform:translateY(-18px);pointer-events:none;transition:opacity .22s ease,transform .22s ease}
 .zau-form-toast.is-visible{opacity:1;transform:none;pointer-events:auto}.zau-form-toast.is-success{border-left-color:#188038}.zau-form-toast strong{font-size:15px}.zau-form-toast span{font-size:14px;line-height:1.45;color:#44546a}
 @media(max-width:640px){.zau-form-toast{top:auto;right:14px;left:14px;bottom:18px;width:auto}.zau-union-form .zau-form-field.is-invalid,.zau-union-form [data-zau-registration-security].is-invalid{padding:10px}}
+.zau-union-form .zau-form-field.is-disabled{opacity:.5}
+.zau-union-form .zau-form-field.is-disabled input,.zau-union-form .zau-form-field.is-disabled .zau-bin-button{cursor:not-allowed;background:#f1f3f2}
+.zau-checkbox span a{color:#0878b8;font-weight:400;text-decoration:underline}
 
 
 /* 2.14.9 — стартовый выбор входа или регистрации */
