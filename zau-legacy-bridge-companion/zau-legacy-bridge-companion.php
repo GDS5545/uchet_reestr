@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU — мост экспорта старого кабинета
  * Description: Устанавливается на СТАРЫЙ сайт (uchet.zdravunion.kz). Открывает защищённый API, который читает пользователей Ultimate Member и записи WPForms и отдаёт их новому сайту ZAU Профсоюз по подписанным запросам. Ничего не удаляет и не изменяет на старом сайте.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: ZAU
  * Requires at least: 5.5
  * Requires PHP: 7.4
@@ -12,7 +12,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Legacy_Bridge_Companion {
-    const VERSION = '1.1.0';
+    const VERSION = '1.2.0';
     const OPT_SETTINGS = 'zau_legacy_bridge_companion_settings';
     const NONCE = 'zau_legacy_bridge_companion_nonce';
     const NS = 'zau-legacy-bridge/v1';
@@ -215,7 +215,12 @@ final class ZAU_Legacy_Bridge_Companion {
     /** cursor = ID последнего отданного пользователя (не смещение). Так каждая страница читается
      * по первичному ключу за одинаковое время независимо от того, как далеко продвинулся перенос —
      * OFFSET на большой таблице пользователей на этом месте раньше становился всё медленнее и в
-     * какой-то момент упирался в лимит времени выполнения на стороне старого сайта. */
+     * какой-то момент упирался в лимит времени выполнения на стороне старого сайта.
+     * Каждая строка обрабатывается в try/catch: если у одного пользователя битые метаданные и на
+     * нём падает ошибка, страница не обрывается целиком — эта запись просто помечается ошибкой и
+     * пропускается, а перенос продолжается дальше. Также ограничен по времени (не более 15 секунд
+     * на страницу): если сервер медленный, отдаём то, что успели, и корректный next_cursor, вместо
+     * того чтобы упереться в таймаут PHP и вернуть оборванный ответ. */
     public function route_users(WP_REST_Request $request) {
         global $wpdb;
         $cursor = max(0, (int)$request->get_param('cursor'));
@@ -225,29 +230,37 @@ final class ZAU_Legacy_Bridge_Companion {
         $total = (int)count_users()['total_users'];
         $out = [];
         $lastId = $cursor;
+        $deadline = microtime(true) + 15;
+        $stoppedEarly = false;
         foreach ($ids as $id) {
-            $user = get_userdata((int)$id);
-            if (!$user) { continue; }
-            $lastId = (int)$id;
-            $row = [
-                'legacy_user_id' => (string)$user->ID,
-                'user_login' => $user->user_login,
-                'email' => $user->user_email,
-                'full_name' => $user->display_name,
-                'first_name' => $user->first_name,
-                'last_name' => $user->last_name,
-                'registered' => $user->user_registered,
-            ];
-            foreach ($s['field_map'] as $canonical => $raw) {
-                $row[$canonical] = $this->meta_first($user->ID, $this->resolve_field($s['field_map'], $canonical));
+            if (microtime(true) > $deadline) { $stoppedEarly = true; break; }
+            try {
+                $user = get_userdata((int)$id);
+                if (!$user) { $lastId = (int)$id; continue; }
+                $row = [
+                    'legacy_user_id' => (string)$user->ID,
+                    'user_login' => $user->user_login,
+                    'email' => $user->user_email,
+                    'full_name' => $user->display_name,
+                    'first_name' => $user->first_name,
+                    'last_name' => $user->last_name,
+                    'registered' => $user->user_registered,
+                ];
+                foreach ($s['field_map'] as $canonical => $raw) {
+                    $row[$canonical] = $this->meta_first($user->ID, $this->resolve_field($s['field_map'], $canonical));
+                }
+                if (empty($row['phone'])) { $row['phone'] = $this->meta_first($user->ID, ['user_phone','phone_number','mobile_number','phone']); }
+                $out[] = $row;
+            } catch (\Throwable $e) {
+                error_log(sprintf('[zau-legacy-bridge] user #%d skipped: %s', (int)$id, $e->getMessage()));
+                $out[] = ['legacy_user_id' => (string)$id, 'error' => $e->getMessage()];
             }
-            if (empty($row['phone'])) { $row['phone'] = $this->meta_first($user->ID, ['user_phone','phone_number','mobile_number','phone']); }
-            $out[] = $row;
+            $lastId = (int)$id;
         }
         return rest_ensure_response([
             'users' => $out,
             'next_cursor' => $lastId,
-            'has_more' => count($ids) === $perPage,
+            'has_more' => $stoppedEarly || count($ids) === $perPage,
             'total' => $total,
         ]);
     }
@@ -265,7 +278,9 @@ final class ZAU_Legacy_Bridge_Companion {
 
     /** cursor = entry_id последней отданной записи (не смещение) — та же причина, что и в route_users:
      * читаем прямо по первичному ключу таблицы wpforms_entries, а не через OFFSET, который на больших
-     * формах со временем замедляется вплоть до обрыва запроса по таймауту. */
+     * формах со временем замедляется вплоть до обрыва запроса по таймауту. Так же, как и в route_users,
+     * каждая запись обрабатывается в try/catch (битые данные одной заявки не обрывают всю страницу) и
+     * страница ограничена по времени (15 секунд), чтобы всегда вернуть корректный JSON. */
     public function route_entries(WP_REST_Request $request) {
         if (!function_exists('wpforms')) { return rest_ensure_response(['entries'=>[], 'next_cursor'=>0, 'has_more'=>false, 'total'=>0]); }
         global $wpdb;
@@ -282,30 +297,38 @@ final class ZAU_Legacy_Bridge_Companion {
         $total = $this->count_entries($formId);
         $out = [];
         $lastId = $cursor;
+        $deadline = microtime(true) + 15;
+        $stoppedEarly = false;
         foreach ((array)$entries as $entry) {
-            $lastId = (int)$entry->entry_id;
-            $fields = function_exists('wpforms_decode') ? wpforms_decode($entry->fields) : json_decode($entry->fields, true);
-            $flat = [];
-            $signatureUrl = '';
-            foreach ((array)$fields as $fid => $field) {
-                $label = (string)($field['name'] ?? ('field_' . $fid));
-                $value = $field['value'] ?? '';
-                if ((string)$fid === $signatureFieldId && is_string($value) && $value !== '') { $signatureUrl = $value; }
-                $flat[$label] = is_scalar($value) ? (string)$value : wp_json_encode($value, JSON_UNESCAPED_UNICODE);
+            if (microtime(true) > $deadline) { $stoppedEarly = true; break; }
+            try {
+                $fields = function_exists('wpforms_decode') ? wpforms_decode($entry->fields) : json_decode($entry->fields, true);
+                $flat = [];
+                $signatureUrl = '';
+                foreach ((array)$fields as $fid => $field) {
+                    $label = (string)($field['name'] ?? ('field_' . $fid));
+                    $value = $field['value'] ?? '';
+                    if ((string)$fid === $signatureFieldId && is_string($value) && $value !== '') { $signatureUrl = $value; }
+                    $flat[$label] = is_scalar($value) ? (string)$value : wp_json_encode($value, JSON_UNESCAPED_UNICODE);
+                }
+                $out[] = [
+                    'legacy_entry_id' => (string)$entry->entry_id,
+                    'legacy_user_id' => $entry->user_id ? (string)$entry->user_id : '',
+                    'status' => (string)$entry->status,
+                    'date_created' => (string)$entry->date,
+                    'fields' => $flat,
+                    'signature_url' => $signatureUrl,
+                ];
+            } catch (\Throwable $e) {
+                error_log(sprintf('[zau-legacy-bridge] entry #%d skipped: %s', (int)$entry->entry_id, $e->getMessage()));
+                $out[] = ['legacy_entry_id' => (string)$entry->entry_id, 'error' => $e->getMessage()];
             }
-            $out[] = [
-                'legacy_entry_id' => (string)$entry->entry_id,
-                'legacy_user_id' => $entry->user_id ? (string)$entry->user_id : '',
-                'status' => (string)$entry->status,
-                'date_created' => (string)$entry->date,
-                'fields' => $flat,
-                'signature_url' => $signatureUrl,
-            ];
+            $lastId = (int)$entry->entry_id;
         }
         return rest_ensure_response([
             'entries' => $out,
             'next_cursor' => $lastId,
-            'has_more' => count($entries) === $perPage,
+            'has_more' => $stoppedEarly || count($entries) === $perPage,
             'total' => $total,
         ]);
     }

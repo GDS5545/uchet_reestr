@@ -14,8 +14,8 @@ if (!defined('ABSPATH')) { exit; }
  * безошибочно приложить готовый PDF к нужному аккаунту/заявлению.
  */
 final class ZAU_Legacy_Import {
-    const VERSION = '3.2.2';
-    const DB_VERSION = '3.2.2';
+    const VERSION = '3.3.0';
+    const DB_VERSION = '3.3.0';
     const OPT_DB_VERSION = 'zau_legacy_import_db_version';
     const NONCE = 'zau_legacy_import_nonce';
 
@@ -1251,6 +1251,7 @@ final class ZAU_Legacy_Import {
     private function process_bridge_account_row($row, $job) {
         $legacyId = (string)($row['legacy_user_id'] ?? '');
         if ($legacyId === '') { return ['kind'=>'error','row'=>$job['processed'],'message'=>'Старый сайт вернул запись без ID пользователя.']; }
+        if (!empty($row['error'])) { return ['kind'=>'error','row'=>$job['processed'],'message'=>'Старый сайт: пропущен пользователь #'.$legacyId.' ('.$row['error'].').']; }
         $mapped = $this->normalize_mapped([
             'legacy_user_id'=>$legacyId,
             'email'=>$row['email'] ?? '',
@@ -1420,6 +1421,9 @@ final class ZAU_Legacy_Import {
     private function process_bridge_application_row($entry, $formMap, $job) {
         $entryId = (string)($entry['legacy_entry_id'] ?? '');
         $ownerLegacyId = (string)($entry['legacy_user_id'] ?? '');
+        if (!empty($entry['error'])) {
+            return ['kind'=>'error','row'=>$job['processed'],'message'=>'Старый сайт: пропущено заявление #'.$entryId.' ('.$entry['error'].').'];
+        }
         if ($entryId === '' || $ownerLegacyId === '') {
             return ['kind'=>'skipped','row'=>$job['processed'],'message'=>'Запись старого сайта не привязана к аккаунту пользователя (заявление отправлено не под логином) — перенесите её вручную.'];
         }
