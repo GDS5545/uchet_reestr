@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Профсоюз — регистрация, документы и QR
  * Description: Единый реестр профсоюза с AQNIET Blue UX: регистрация, статусы, филиалы единым текстом, защищённая личная карточка, скрытый wp-admin для участников, акции и скидки, документы/PDF/QR, кабинеты организаций и Elementor.
- * Version: 2.24.4
+ * Version: 2.24.5
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -12,8 +12,8 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Certificate_PDF_Generator {
-    const VERSION = '2.24.4';
-    const DB_VERSION = '2.24.4';
+    const VERSION = '2.24.5';
+    const DB_VERSION = '2.24.5';
     const OPT_DB_VERSION = 'zau_cert_db_version';
     const OPT_SETTINGS = 'zau_cert_settings';
     const CAP_MANAGE = 'zau_manage_certificates';
@@ -1044,6 +1044,25 @@ final class ZAU_Certificate_PDF_Generator {
                 }
             }
         }
+
+        // Older/migrated documents (imported, or created before the branch/organization
+        // fields existed) may lack branch_full_details and similar system fields entirely.
+        // Fill any such gaps from the member's own profile — this is the same branch they
+        // picked at registration, saved to their user profile at submission time — without
+        // overwriting a real "at registration" snapshot that is already present above.
+        if ((int)$row->user_id > 0 && class_exists('ZAU_Union_Module')) {
+            $hydrated = ZAU_Union_Module::instance()->document_data_for_user((int)$row->user_id);
+            foreach ($hydrated as $hkey => $hvalue) {
+                if (!is_scalar($hvalue) || $hvalue === '' || $hvalue === null) { continue; }
+                if (!array_key_exists($hkey, $values) || $values[$hkey] === '' || $values[$hkey] === null) {
+                    $values[$hkey] = $hvalue;
+                }
+            }
+        }
+        if (empty($values['branch_full_details']) && !empty($values['branch_snapshot_full_details'])) { $values['branch_full_details'] = $values['branch_snapshot_full_details']; }
+        if (empty($values['branch_identity_details']) && !empty($values['branch_snapshot_identity_details'])) { $values['branch_identity_details'] = $values['branch_snapshot_identity_details']; }
+        if (empty($values['branch_bank_details']) && !empty($values['branch_snapshot_bank_details'])) { $values['branch_bank_details'] = $values['branch_snapshot_bank_details']; }
+        if (empty($values['branch_requisites']) && !empty($values['branch_bank_details'])) { $values['branch_requisites'] = $values['branch_bank_details']; }
 
         $signature_url = $row->signature_url ?: ($values['signature_url'] ?? '');
         $signature2_url = $row->signature2_url ?: ($values['signature2_url'] ?? '');
