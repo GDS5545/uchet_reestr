@@ -178,6 +178,7 @@ final class ZAU_Legacy_Import {
             'organization_director' => 'Руководитель организации',
             'organization_address' => 'Адрес организации',
             'branch_name' => 'Филиал профсоюза',
+            'branch_full_details' => 'Полные данные и реквизиты филиала одним текстом (если на старом сайте это было отдельное поле формы)',
             'registration_date' => 'Дата регистрации аккаунта',
             'member_status' => 'Статус участника',
         ];
@@ -194,6 +195,7 @@ final class ZAU_Legacy_Import {
             'organization' => 'Организация / место работы',
             'organization_bin' => 'БИН организации',
             'branch_name' => 'Филиал профсоюза',
+            'branch_full_details' => 'Полные данные и реквизиты филиала одним текстом (если на старом сайте это было отдельное поле формы)',
             'submission_date' => 'Дата подачи заявления',
             'status' => 'Статус заявления',
             'document_no' => 'Номер документа (сохранить старую нумерацию)',
@@ -228,6 +230,7 @@ final class ZAU_Legacy_Import {
             'organization_director' => ['руководитель','директор','фио руководителя'],
             'organization_address' => ['адрес организации','юридический адрес организации'],
             'organization' => ['организация','место работы','предприятие','наименование организации'],
+            'branch_full_details' => ['реквизиты филиала','полные данные филиала','данные филиала','филиал реквизиты','branch details','branch requisites'],
             'branch_name' => ['филиал','область','регион профсоюза','филиал профсоюза'],
             'registration_date' => ['дата регистрации','registered','user registered'],
             'submission_date' => ['дата подачи','дата заявления','дата заявки','created at','дата создания'],
@@ -652,6 +655,8 @@ final class ZAU_Legacy_Import {
 
     private function assign_branch($userId, $mapped, $overwrite) {
         global $wpdb;
+        $fullDetails = trim((string)($mapped['branch_full_details'] ?? ''));
+        if ($fullDetails !== '') { $this->set_meta_fill($userId, 'zau_profile_branch_full_details', $fullDetails, $overwrite); }
         $name = trim((string)($mapped['branch_name'] ?? ''));
         if ($name === '') { return; }
         $norm = $this->normalize_label($name);
