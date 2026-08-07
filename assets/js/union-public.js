@@ -236,6 +236,7 @@ function initCabinetTabs(scope=document){
   window.addEventListener('popstate',()=>activate(new URL(window.location.href).searchParams.get('zau_tab')||root.dataset.zauActiveTab||'home',false,false));
  });
 }
+function initBenefitModals(){document.querySelectorAll('[data-zau-benefit-modal]').forEach(modal=>{if(modal.dataset.zauBenefitReady==='1')return;modal.dataset.zauBenefitReady='1';const section=modal.closest('.zau-benefits');if(!section)return;const body=modal.querySelector('[data-zau-benefit-modal-body]');const titleEl=modal.querySelector('[data-zau-benefit-modal-title]');let lastFocus=null;const close=()=>{modal.hidden=true;document.documentElement.classList.remove('zau-modal-open');body.innerHTML='';if(lastFocus)lastFocus.focus();};const open=card=>{const tpl=card.querySelector('template.zau-benefit-detail-template');if(!tpl)return;lastFocus=card;titleEl.textContent=card.querySelector('h4')?.textContent||'';body.innerHTML='';body.appendChild(tpl.content.cloneNode(true));modal.hidden=false;document.documentElement.classList.add('zau-modal-open');modal.querySelector('.zau-document-modal-head button')?.focus();};section.addEventListener('click',event=>{if(event.target.closest('a'))return;const card=event.target.closest('[data-zau-benefit-open]');if(!card||!section.contains(card))return;open(card);});section.addEventListener('keydown',event=>{if(event.key!=='Enter'&&event.key!==' ')return;const card=event.target.closest('[data-zau-benefit-open]');if(!card)return;event.preventDefault();open(card);});modal.querySelectorAll('[data-zau-modal-close]').forEach(el=>el.addEventListener('click',close));document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.hidden)close();});});}
 function initAll(scope=document){
  initAuth(scope);
  initCabinetTabs(scope);
@@ -246,6 +247,7 @@ function initAll(scope=document){
  initMemberCards();
  initDocumentModals();
  initOrganizationRegistry();
+ initBenefitModals();
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>initAll(document));else initAll(document);
 window.addEventListener('elementor/frontend/init',()=>{

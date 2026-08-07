@@ -4347,9 +4347,34 @@ $xref
         if(!is_user_logged_in())return $this->auth_shortcode(['return_url'=>home_url(wp_unslash($_SERVER['REQUEST_URI']??'/'))]);
         $userId=get_current_user_id();$benefits=$this->available_benefits($userId);ob_start();?>
         <section class="zau-benefits"><div class="zau-benefits-head"><h3>Акции и скидки</h3><p>Предложения партнёров и Профсоюза, доступные вам.</p></div><?php if(!$benefits):?><div class="zau-empty-state"><strong>Актуальных предложений пока нет</strong><span>Проверьте срок действия и ограничения акции.</span></div><?php echo $this->benefit_admin_diagnostics($userId);?><?php endif;?><div class="zau-benefit-grid">
-        <?php foreach($benefits as $post):$discount=get_post_meta($post->ID,'_zau_benefit_discount',true);$partner=get_post_meta($post->ID,'_zau_benefit_partner',true);$promo=get_post_meta($post->ID,'_zau_benefit_promo',true);$button=get_post_meta($post->ID,'_zau_benefit_button',true)?:'Подробнее';$url=get_post_meta($post->ID,'_zau_benefit_url',true);$to=get_post_meta($post->ID,'_zau_benefit_to',true);$context=$this->benefit_render_context[(int)$post->ID]??['preview'=>false,'reasons'=>[]];?>
-            <article class="zau-benefit-card"><?php if(has_post_thumbnail($post)):?><div class="zau-benefit-image"><?php echo get_the_post_thumbnail($post,'medium_large');?></div><?php endif;?><div class="zau-benefit-content"><?php if(!empty($context['preview'])):?><div class="zau-benefit-admin-preview"><strong>Предпросмотр администратора</strong><span><?php echo esc_html(implode(' ',(array)$context['reasons']));?></span></div><?php endif;?><?php if($discount):?><span class="zau-benefit-badge"><?php echo esc_html($discount);?></span><?php endif;?><h4><?php echo esc_html(get_the_title($post));?></h4><?php if($partner):?><p class="zau-benefit-partner"><?php echo esc_html($partner);?></p><?php endif;?><div class="zau-benefit-description"><?php echo wp_kses_post(apply_filters('the_content',$post->post_content));?></div><?php if($promo):?><div class="zau-benefit-promo">Промокод: <strong><?php echo esc_html($promo);?></strong></div><?php endif;?><?php if($to):?><small>Действует до <?php echo esc_html(mysql2date('d.m.Y',$to));?></small><?php endif;?><?php if($url):?><a class="zau-union-button" href="<?php echo esc_url($url);?>" target="_blank" rel="noopener"><?php echo esc_html($button);?></a><?php endif;?></div></article>
-        <?php endforeach;?></div></section><?php return ob_get_clean();
+        <?php foreach($benefits as $post):$discount=get_post_meta($post->ID,'_zau_benefit_discount',true);$partner=get_post_meta($post->ID,'_zau_benefit_partner',true);$promo=get_post_meta($post->ID,'_zau_benefit_promo',true);$button=get_post_meta($post->ID,'_zau_benefit_button',true)?:'Подробнее';$url=get_post_meta($post->ID,'_zau_benefit_url',true);$to=get_post_meta($post->ID,'_zau_benefit_to',true);$context=$this->benefit_render_context[(int)$post->ID]??['preview'=>false,'reasons'=>[]];$title=get_the_title($post);$teaser=wp_trim_words(wp_strip_all_tags($post->post_content),18,'…');?>
+            <article class="zau-benefit-card" data-zau-benefit-open tabindex="0" role="button" aria-haspopup="dialog" aria-label="<?php echo esc_attr($title);?> — подробнее">
+                <?php if(has_post_thumbnail($post)):?><div class="zau-benefit-image"><?php echo get_the_post_thumbnail($post,'medium_large');?></div><?php endif;?>
+                <div class="zau-benefit-content">
+                    <?php if(!empty($context['preview'])):?><div class="zau-benefit-admin-preview"><strong>Предпросмотр администратора</strong><span><?php echo esc_html(implode(' ',(array)$context['reasons']));?></span></div><?php endif;?>
+                    <div class="zau-benefit-top"><?php if($discount):?><span class="zau-benefit-badge"><?php echo esc_html($discount);?></span><?php endif;?><?php if($to):?><span class="zau-benefit-until">до <?php echo esc_html(mysql2date('d.m.Y',$to));?></span><?php endif;?></div>
+                    <h4><?php echo esc_html($title);?></h4>
+                    <?php if($partner):?><p class="zau-benefit-partner"><?php echo esc_html($partner);?></p><?php endif;?>
+                    <?php if($teaser):?><p class="zau-benefit-teaser"><?php echo esc_html($teaser);?></p><?php endif;?>
+                    <span class="zau-benefit-more">Подробнее →</span>
+                </div>
+                <template class="zau-benefit-detail-template">
+                    <?php if($discount||$partner):?><div class="zau-benefit-detail-head"><?php if($discount):?><span class="zau-benefit-badge"><?php echo esc_html($discount);?></span><?php endif;?><?php if($partner):?><p class="zau-benefit-partner"><?php echo esc_html($partner);?></p><?php endif;?></div><?php endif;?>
+                    <div class="zau-benefit-description"><?php echo wp_kses_post(apply_filters('the_content',$post->post_content));?></div>
+                    <?php if($promo):?><div class="zau-benefit-promo">Промокод: <strong><?php echo esc_html($promo);?></strong></div><?php endif;?>
+                    <?php if($to):?><p class="zau-benefit-expiry">Действует до <?php echo esc_html(mysql2date('d.m.Y',$to));?></p><?php endif;?>
+                    <?php if($url):?><a class="zau-union-button" href="<?php echo esc_url($url);?>" target="_blank" rel="noopener"><?php echo esc_html($button);?></a><?php endif;?>
+                </template>
+            </article>
+        <?php endforeach;?></div>
+        <div class="zau-document-modal zau-benefit-modal" data-zau-benefit-modal hidden>
+            <div class="zau-document-modal-backdrop" data-zau-modal-close></div>
+            <div class="zau-document-modal-dialog" role="dialog" aria-modal="true">
+                <div class="zau-document-modal-head"><strong data-zau-benefit-modal-title></strong><button type="button" data-zau-modal-close aria-label="Закрыть">×</button></div>
+                <div class="zau-document-modal-body zau-benefit-modal-body" data-zau-benefit-modal-body></div>
+            </div>
+        </div>
+        </section><?php return ob_get_clean();
     }
 
     public function page_member_statuses() {
