@@ -107,6 +107,8 @@ final class ZAU_Union_Module {
         add_action('wp_ajax_zau_union_save_member_card', [$this, 'ajax_save_member_card']);
         add_action('wp_ajax_zau_union_review_member_card', [$this, 'ajax_review_member_card']);
         add_action('wp_ajax_zau_union_reveal_sensitive', [$this, 'ajax_reveal_sensitive']);
+        add_action('wp_ajax_zau_union_set_login_pin', [$this, 'ajax_set_login_pin']);
+        add_action('wp_ajax_zau_union_dismiss_pin_prompt', [$this, 'ajax_dismiss_pin_prompt']);
         add_action('wp_ajax_nopriv_zau_union_get_branch', [$this, 'ajax_get_branch']);
         add_action('wp_ajax_zau_union_get_branch', [$this, 'ajax_get_branch']);
         add_action('wp_ajax_zau_union_document_data_for_user', [$this, 'ajax_document_data_for_user']);
@@ -2340,6 +2342,8 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
         if(!$enabledTabs)$enabledTabs=['home','documents','submissions','info','logins'];
         if(!in_array($activeTab,$enabledTabs,true))$activeTab=$enabledTabs[0];
         $formUrl=$designSettings['form_page_id']?get_permalink((int)$designSettings['form_page_id']):home_url('/registraciya-v-profsoyuz/');
+        $pinMode=in_array(($designSettings['pin_setup_mode']??'optional'),['off','optional','required'],true)?$designSettings['pin_setup_mode']:'optional';
+        $showPinPrompt=!empty($designSettings['auth_pin_enabled'])&&$pinMode!=='off'&&!get_user_meta($uid,'zau_login_pin_hash',true)&&!get_user_meta($uid,'zau_pin_prompt_dismissed',true);
         ob_start(); ?>
         <div class="zau-cabinet zau-aqniet-cabinet<?php echo $mobileBottomNav?' has-mobile-bottom-nav':'';?>" data-zau-cabinet data-zau-cabinet-tabs data-zau-active-tab="<?php echo esc_attr($activeTab);?>">
             <header class="zau-cabinet-hero">
@@ -2496,6 +2500,23 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
                     <div class="zau-document-modal-body"><div class="zau-preview-loading" data-zau-preview-loading>Загружаем документ…</div><img data-zau-modal-image alt="Предпросмотр документа" hidden><iframe data-zau-modal-pdf title="Предпросмотр PDF" hidden></iframe></div>
                 </div>
             </div>
+            <?php if($showPinPrompt):?>
+            <div class="zau-document-modal zau-pin-prompt-modal" data-zau-pin-prompt-modal data-pin-min="<?php echo (int)$designSettings['pin_min_length'];?>" data-pin-max="<?php echo (int)$designSettings['pin_max_length'];?>">
+                <div class="zau-document-modal-backdrop" data-zau-pin-prompt-dismiss></div>
+                <div class="zau-document-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="zau-pin-prompt-title">
+                    <div class="zau-document-modal-head"><strong id="zau-pin-prompt-title">Создайте PIN для входа</strong><button type="button" data-zau-pin-prompt-dismiss aria-label="Закрыть">×</button></div>
+                    <div class="zau-document-modal-body zau-pin-prompt-body">
+                        <p>Придумайте постоянный цифровой PIN — с ним не нужно каждый раз получать код по email, чтобы войти в личный кабинет. Забытый PIN можно восстановить через email.</p>
+                        <div class="zau-pin-prompt-form">
+                            <label>Новый PIN<input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="12" data-zau-pin-prompt-value autocomplete="new-password" placeholder="От <?php echo (int)$designSettings['pin_min_length'];?> до <?php echo (int)$designSettings['pin_max_length'];?> цифр"></label>
+                            <label>Повторите PIN<input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="12" data-zau-pin-prompt-confirm autocomplete="new-password"></label>
+                        </div>
+                        <p class="zau-pin-prompt-error" data-zau-pin-prompt-error hidden></p>
+                        <div class="zau-auth-actions"><button type="button" class="zau-union-button zau-auth-submit" data-zau-pin-prompt-save><span>Сохранить PIN</span></button><button type="button" class="zau-link-button" data-zau-pin-prompt-dismiss>Не сейчас</button></div>
+                    </div>
+                </div>
+            </div>
+            <?php endif;?>
             <div data-zau-cabinet-render-holder aria-hidden="true"></div>
         </div>
         <?php return ob_get_clean();
@@ -2814,6 +2835,27 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
         update_user_meta($user->ID,'zau_login_pin_hash',wp_hash_password($pin)); update_user_meta($user->ID,'zau_pin_set_at',current_time('mysql')); delete_user_meta($user->ID,'zau_pin_devices');
         $wpdb->update($this->otp_table,['verified'=>1],['id'=>$row->id]);
         $this->complete_front_login($user,true,'pin_reset_login','Восстановление PIN по email · '.$this->device_summary(),wp_unslash($_POST['return_url']??''));
+    }
+
+    public function ajax_set_login_pin() {
+        check_ajax_referer(self::NONCE,'nonce');
+        if(!is_user_logged_in())wp_send_json_error(['message'=>'Сначала войдите в систему.'],401);
+        $uid=get_current_user_id();
+        $pin=$this->validate_pin_value(wp_unslash($_POST['pin']??'')); if(is_wp_error($pin))wp_send_json_error(['message'=>$pin->get_error_message()],400);
+        $confirm=preg_replace('/\D/','',(string)wp_unslash($_POST['pin_confirm']??'')); if($pin!==$confirm)wp_send_json_error(['message'=>'PIN и подтверждение не совпадают.'],400);
+        update_user_meta($uid,'zau_login_pin_hash',wp_hash_password($pin));
+        update_user_meta($uid,'zau_pin_set_at',current_time('mysql'));
+        delete_user_meta($uid,'zau_pin_devices');
+        delete_user_meta($uid,'zau_pin_prompt_dismissed');
+        $this->set_pin_device_cookie($uid,false);
+        wp_send_json_success(['message'=>'PIN сохранён. Теперь вы можете входить по нему.']);
+    }
+
+    public function ajax_dismiss_pin_prompt() {
+        check_ajax_referer(self::NONCE,'nonce');
+        if(!is_user_logged_in())wp_send_json_error(['message'=>'Сначала войдите в систему.'],401);
+        update_user_meta(get_current_user_id(),'zau_pin_prompt_dismissed',1);
+        wp_send_json_success(['message'=>'ok']);
     }
 
     private function parse_destination($raw) {

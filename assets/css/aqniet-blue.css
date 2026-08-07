@@ -646,6 +646,15 @@
 .zau-benefit-modal-body .zau-benefit-promo{margin:16px 0;padding:11px 14px;border-radius:10px;background:#edf4fd;color:#1565C0;font-weight:700;display:inline-block}
 .zau-benefit-modal-body .zau-benefit-expiry{margin:8px 0 16px;color:#667085;font-size:13px}
 .zau-benefit-modal-body .zau-union-button{margin-top:4px}
+/* Разовое приглашение создать PIN в личном кабинете */
+.zau-pin-prompt-body.zau-pin-prompt-body{text-align:left;padding:22px}
+.zau-pin-prompt-body p{margin:0 0 16px;color:#475467;line-height:1.5}
+.zau-pin-prompt-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:6px}
+.zau-pin-prompt-form label{display:flex;flex-direction:column;gap:6px;font-weight:700;color:#344054}
+.zau-pin-prompt-form input{min-height:46px;border:1px solid #cfdbea;border-radius:12px;padding:10px 12px;background:#fff}
+.zau-pin-prompt-error{margin:10px 0 0;color:#b3261e;font-weight:700;font-size:13px}
+.zau-pin-prompt-body .zau-auth-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:18px}
+@media(max-width:640px){.zau-pin-prompt-form{grid-template-columns:1fr}}
 @media(max-width:900px){.zau-member-card-system{grid-template-columns:repeat(2,minmax(0,1fr))}.zau-benefit-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:640px){.zau-org-member-card{grid-template-columns:auto 1fr!important}.zau-org-member-control{grid-column:1/-1}.zau-org-members-bulk{align-items:stretch}.zau-org-members-bulk>*{width:100%}.zau-member-card{padding:15px;border-radius:16px}.zau-member-card-head{display:block}.zau-member-card-badges{justify-content:flex-start;margin-top:10px}.zau-member-card-system,.zau-member-card-grid,.zau-benefit-grid{grid-template-columns:1fr}.zau-benefit-image,.zau-benefit-image img{height:160px}.zau-member-card-actions .zau-union-button,.zau-membership-decision .zau-union-button{width:100%}}
 
