@@ -274,9 +274,12 @@ abstract class ZAU_Union_Elementor_Widget_Base extends \Elementor\Widget_Base {
         $this->end_controls_section();
 
         $this->start_controls_section('zau_style_secondary_button', ['label' => 'Дополнительные кнопки и ссылки', 'tab' => \Elementor\Controls_Manager::TAB_STYLE]);
+        $this->add_control('zau_secondary_note', ['type'=>\Elementor\Controls_Manager::RAW_HTML,'raw'=>'Сюда относится, например, кнопка «Предпросмотр» в документах и «Личная карточка» в списке участников организации.']);
         $this->add_control('zau_secondary_text', ['label'=>'Цвет текста','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$secondary_buttons=>'color:{{VALUE}}!important;']]);
-        $this->add_control('zau_secondary_bg', ['label'=>'Фон','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$secondary_buttons=>'background-color:{{VALUE}};']]);
-        $this->add_control('zau_secondary_hover', ['label'=>'Фон при наведении','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$secondary_hover=>'background-color:{{VALUE}};']]);
+        $this->add_control('zau_secondary_bg', ['label'=>'Фон','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$secondary_buttons=>'background-color:{{VALUE}}!important;']]);
+        $this->add_control('zau_secondary_border', ['label'=>'Граница','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$secondary_buttons=>'border-color:{{VALUE}}!important;']]);
+        $this->add_control('zau_secondary_hover', ['label'=>'Фон при наведении','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$secondary_hover=>'background-color:{{VALUE}}!important;']]);
+        $this->add_control('zau_secondary_hover_text', ['label'=>'Текст при наведении','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$secondary_hover=>'color:{{VALUE}}!important;']]);
         $this->add_control('zau_link_color', ['label'=>'Цвет текстовых ссылок','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' a:not(.zau-union-button):not(.zau-registry-doc-button), '.$scope.' .zau-link-button'=>'color:{{VALUE}};']]);
         $this->end_controls_section();
 
@@ -301,12 +304,13 @@ abstract class ZAU_Union_Elementor_Widget_Base extends \Elementor\Widget_Base {
         $this->end_controls_section();
 
         $this->start_controls_section('zau_style_table', ['label' => 'Таблица реестра', 'tab' => \Elementor\Controls_Manager::TAB_STYLE]);
-        $this->add_control('zau_table_header_bg', ['label'=>'Фон заголовка','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-org-registry-table th'=>'background:{{VALUE}};']]);
-        $this->add_control('zau_table_header_text', ['label'=>'Текст заголовка','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-org-registry-table th'=>'color:{{VALUE}};']]);
+        $this->add_control('zau_table_header_bg', ['label'=>'Фон заголовка','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-org-registry-table th'=>'background:{{VALUE}}!important;']]);
+        $this->add_control('zau_table_header_text', ['label'=>'Текст заголовка','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-org-registry-table th'=>'color:{{VALUE}}!important;']]);
         $this->add_control('zau_table_row_bg', ['label'=>'Фон строк','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-org-registry-table td'=>'background:{{VALUE}};']]);
         $this->add_control('zau_table_row_alt_bg', ['label'=>'Фон чётных строк','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-org-registry-table tr:nth-child(even) td'=>'background:{{VALUE}};']]);
-        $this->add_control('zau_table_border', ['label'=>'Разделители','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-org-registry-table td, '.$scope.' .zau-org-registry-table-wrap'=>'border-color:{{VALUE}};']]);
+        $this->add_control('zau_table_border', ['label'=>'Разделители','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-org-registry-table td, '.$scope.' .zau-org-registry-table-wrap'=>'border-color:{{VALUE}}!important;']]);
         $this->add_group_control(\Elementor\Group_Control_Typography::get_type(), ['name'=>'zau_table_typography','selector'=>$scope.' .zau-org-registry-table']);
+        $this->add_responsive_control('zau_table_cell_padding', ['label'=>'Отступы в ячейках','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','em'],'selectors'=>[$scope.' .zau-org-registry-table th, '.$scope.' .zau-org-registry-table td'=>'padding:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
         $this->end_controls_section();
 
         $this->start_controls_section('zau_style_status', ['label' => 'Статусы и значки', 'tab' => \Elementor\Controls_Manager::TAB_STYLE]);
@@ -330,6 +334,31 @@ abstract class ZAU_Union_Elementor_Widget_Base extends \Elementor\Widget_Base {
         $this->register_document_card_style_controls($scope);
         $this->register_benefit_card_style_controls($scope);
         $this->register_member_card_style_controls($scope);
+        $this->register_org_members_style_controls($scope);
+    }
+
+    /** Список участников организации/филиала (вкладка «Участники») — карточка каждого
+     * участника, текст в ней и размеры строк раньше не были отдельно доступны в Elementor. */
+    protected function register_org_members_style_controls($scope) {
+        $card = $scope . ' .zau-org-member-card';
+        $this->start_controls_section('zau_style_org_members', ['label' => 'Список участников организации', 'tab' => \Elementor\Controls_Manager::TAB_STYLE]);
+        $this->add_control('zau_org_member_bg', ['label'=>'Фон карточки','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card=>'background:{{VALUE}};']]);
+        $this->add_group_control(\Elementor\Group_Control_Border::get_type(), ['name'=>'zau_org_member_border','selector'=>$card]);
+        $this->add_responsive_control('zau_org_member_radius', ['label'=>'Скругление','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','%'],'selectors'=>[$card=>'border-radius:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+        $this->add_responsive_control('zau_org_member_padding', ['label'=>'Отступы карточки','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','em'],'selectors'=>[$card=>'padding:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+        $this->add_responsive_control('zau_org_member_gap', ['label'=>'Расстояние между карточками','type'=>\Elementor\Controls_Manager::SLIDER,'size_units'=>['px','em'],'range'=>['px'=>['min'=>0,'max'=>40],'em'=>['min'=>0,'max'=>3,'step'=>0.1]],'selectors'=>[$scope.' .zau-org-member-list'=>'gap:{{SIZE}}{{UNIT}};']]);
+        $this->add_control('zau_org_member_name_heading', ['label'=>'ФИО участника','type'=>\Elementor\Controls_Manager::HEADING,'separator'=>'before']);
+        $this->add_control('zau_org_member_name_color', ['label'=>'Цвет','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card.' .zau-org-member-main strong'=>'color:{{VALUE}};']]);
+        $this->add_group_control(\Elementor\Group_Control_Typography::get_type(), ['name'=>'zau_org_member_name_typography','selector'=>$card.' .zau-org-member-main strong']);
+        $this->add_control('zau_org_member_meta_heading', ['label'=>'Контакты и служебные данные','type'=>\Elementor\Controls_Manager::HEADING,'separator'=>'before']);
+        $this->add_control('zau_org_member_meta_color', ['label'=>'Цвет','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card.' .zau-org-member-main span, '.$card.' .zau-org-member-main small'=>'color:{{VALUE}};']]);
+        $this->add_group_control(\Elementor\Group_Control_Typography::get_type(), ['name'=>'zau_org_member_meta_typography','selector'=>$card.' .zau-org-member-main span, '.$card.' .zau-org-member-main small']);
+        $this->add_control('zau_org_member_control_heading', ['label'=>'Выбор статуса и кнопки','type'=>\Elementor\Controls_Manager::HEADING,'separator'=>'before']);
+        $this->add_control('zau_org_member_select_bg', ['label'=>'Фон списка статуса','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card.' .zau-org-member-control select'=>'background-color:{{VALUE}};']]);
+        $this->add_control('zau_org_member_select_text', ['label'=>'Текст списка статуса','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card.' .zau-org-member-control select'=>'color:{{VALUE}};']]);
+        $this->add_responsive_control('zau_org_member_button_padding', ['label'=>'Отступы кнопок','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','em'],'selectors'=>[$card.' .zau-small-button'=>'padding:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+        $this->add_responsive_control('zau_org_member_button_font_size', ['label'=>'Размер текста кнопок','type'=>\Elementor\Controls_Manager::SLIDER,'size_units'=>['px'],'range'=>['px'=>['min'=>10,'max'=>22]],'selectors'=>[$card.' .zau-small-button'=>'font-size:{{SIZE}}{{UNIT}};']]);
+        $this->end_controls_section();
     }
 
     /** Кнопки и карточки выбора экрана «вход/регистрация» — отдельно от кнопок внутри
@@ -355,7 +384,7 @@ abstract class ZAU_Union_Elementor_Widget_Base extends \Elementor\Widget_Base {
         $this->start_controls_tabs('zau_submit_tabs');
         $this->start_controls_tab('zau_submit_normal', ['label' => 'Обычная']);
         $this->add_control('zau_submit_text', ['label'=>'Текст','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$submit=>'color:{{VALUE}}!important;']]);
-        $this->add_control('zau_submit_bg', ['label'=>'Фон','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$submit=>'background-color:{{VALUE}};']]);
+        $this->add_control('zau_submit_bg', ['label'=>'Фон','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$submit=>'background-color:{{VALUE}}!important;']]);
         $this->add_control('zau_submit_border', ['label'=>'Граница','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$submit=>'border-color:{{VALUE}}; border-style:solid;']]);
         $this->end_controls_tab();
         $this->start_controls_tab('zau_submit_hover', ['label' => 'Наведение']);
