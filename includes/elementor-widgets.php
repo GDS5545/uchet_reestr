@@ -325,6 +325,113 @@ abstract class ZAU_Union_Elementor_Widget_Base extends \Elementor\Widget_Base {
         $this->add_responsive_control('zau_modal_width', ['label'=>'Ширина окна','type'=>\Elementor\Controls_Manager::SLIDER,'size_units'=>['px','vw','%'],'range'=>['px'=>['min'=>320,'max'=>1600],'vw'=>['min'=>30,'max'=>100],'%'=>['min'=>30,'max'=>100]],'selectors'=>[$scope.' .zau-document-modal-dialog'=>'width:{{SIZE}}{{UNIT}};']]);
         $this->add_responsive_control('zau_modal_radius', ['label'=>'Скругление окна','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','%'],'selectors'=>[$scope.' .zau-document-modal-dialog'=>'border-radius:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
         $this->end_controls_section();
+
+        $this->register_auth_style_controls($scope);
+        $this->register_document_card_style_controls($scope);
+        $this->register_benefit_card_style_controls($scope);
+        $this->register_member_card_style_controls($scope);
+    }
+
+    /** Кнопки и карточки выбора экрана «вход/регистрация» — отдельно от кнопок внутри
+     * личного кабинета, так как обе живут в одном виджете «Кабинет или вход» и до этого
+     * делили один и тот же стиль «Основные/дополнительные кнопки». */
+    protected function register_auth_style_controls($scope) {
+        $authScope = $scope . ' .zau-auth';
+        $flowTabs = $authScope . ' .zau-auth-flow-tab';
+        $submit = $authScope . ' .zau-auth-submit';
+        $submitHover = $authScope . ' .zau-auth-submit:hover, ' . $authScope . ' .zau-auth-submit:focus';
+        $links = $authScope . ' .zau-link-button, ' . $authScope . ' .zau-password-reset-link, ' . $authScope . ' .zau-auth-back';
+
+        $this->start_controls_section('zau_style_auth', ['label' => 'Экран входа и регистрации (для гостей)', 'tab' => \Elementor\Controls_Manager::TAB_STYLE]);
+        $this->add_control('zau_auth_note', ['type'=>\Elementor\Controls_Manager::RAW_HTML,'raw'=>'Применяется только к экрану для неавторизованных — вход, регистрация, выбор способа входа. Кнопки внутри самого кабинета настраиваются в разделах «Основные кнопки» и «Дополнительные кнопки и ссылки» выше.','content_classes'=>'elementor-descriptor']);
+        $this->add_control('zau_flow_tab_heading', ['label'=>'Карточки «Войти / Зарегистрироваться»','type'=>\Elementor\Controls_Manager::HEADING]);
+        $this->add_control('zau_flow_tab_bg', ['label'=>'Фон','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$flowTabs=>'background:{{VALUE}};']]);
+        $this->add_control('zau_flow_tab_active_bg', ['label'=>'Фон выбранной','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$flowTabs.'.is-active'=>'background:{{VALUE}};']]);
+        $this->add_control('zau_flow_tab_border', ['label'=>'Граница','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$flowTabs=>'border-color:{{VALUE}};']]);
+        $this->add_control('zau_flow_tab_text', ['label'=>'Текст','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$flowTabs=>'color:{{VALUE}};']]);
+        $this->add_control('zau_flow_tab_icon_bg', ['label'=>'Фон значка','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$authScope.' .zau-auth-flow-icon, '.$authScope.' .zau-auth-flow-number'=>'background:{{VALUE}};']]);
+        $this->add_responsive_control('zau_flow_tab_radius', ['label'=>'Скругление','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','%'],'selectors'=>[$flowTabs=>'border-radius:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+        $this->add_control('zau_submit_heading', ['label'=>'Кнопка отправки (Войти / Получить код / Зарегистрироваться)','type'=>\Elementor\Controls_Manager::HEADING,'separator'=>'before']);
+        $this->start_controls_tabs('zau_submit_tabs');
+        $this->start_controls_tab('zau_submit_normal', ['label' => 'Обычная']);
+        $this->add_control('zau_submit_text', ['label'=>'Текст','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$submit=>'color:{{VALUE}}!important;']]);
+        $this->add_control('zau_submit_bg', ['label'=>'Фон','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$submit=>'background-color:{{VALUE}};']]);
+        $this->add_control('zau_submit_border', ['label'=>'Граница','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$submit=>'border-color:{{VALUE}}; border-style:solid;']]);
+        $this->end_controls_tab();
+        $this->start_controls_tab('zau_submit_hover', ['label' => 'Наведение']);
+        $this->add_control('zau_submit_hover_text', ['label'=>'Текст','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$submitHover=>'color:{{VALUE}}!important;']]);
+        $this->add_control('zau_submit_hover_bg', ['label'=>'Фон','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$submitHover=>'background-color:{{VALUE}};']]);
+        $this->end_controls_tab();
+        $this->end_controls_tabs();
+        $this->add_group_control(\Elementor\Group_Control_Typography::get_type(), ['name'=>'zau_submit_typography','selector'=>$submit]);
+        $this->add_responsive_control('zau_submit_radius', ['label'=>'Скругление кнопки','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','%'],'selectors'=>[$submit=>'border-radius:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+        $this->add_control('zau_link_heading', ['label'=>'Ссылки («Не помню PIN», «Восстановить пароль», назад)','type'=>\Elementor\Controls_Manager::HEADING,'separator'=>'before']);
+        $this->add_control('zau_auth_link_color', ['label'=>'Цвет ссылок','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$links=>'color:{{VALUE}};']]);
+        $this->add_control('zau_auth_input_border', ['label'=>'Граница полей ввода','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$authScope.' input, '.$authScope.' select'=>'border-color:{{VALUE}};']]);
+        $this->end_controls_section();
+    }
+
+    /** Карточка документа во вкладке «Мои документы» — раньше делила общий стиль
+     * «Карточки и разделы» с шестью другими, не связанными между собой блоками. */
+    protected function register_document_card_style_controls($scope) {
+        $card = $scope . ' .zau-doc-card';
+        $this->start_controls_section('zau_style_doc_card', ['label' => 'Карточки документов', 'tab' => \Elementor\Controls_Manager::TAB_STYLE]);
+        $this->add_control('zau_doc_card_bg', ['label'=>'Фон','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card=>'background:{{VALUE}};']]);
+        $this->add_group_control(\Elementor\Group_Control_Border::get_type(), ['name'=>'zau_doc_card_border','selector'=>$card]);
+        $this->add_responsive_control('zau_doc_card_radius', ['label'=>'Скругление','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','%'],'selectors'=>[$card=>'border-radius:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+        $this->add_responsive_control('zau_doc_card_padding', ['label'=>'Отступы','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','em'],'selectors'=>[$card=>'padding:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+        $this->add_group_control(\Elementor\Group_Control_Box_Shadow::get_type(), ['name'=>'zau_doc_card_shadow','selector'=>$card]);
+        $this->add_responsive_control('zau_doc_grid_gap', ['label'=>'Расстояние между карточками','type'=>\Elementor\Controls_Manager::SLIDER,'size_units'=>['px','em'],'range'=>['px'=>['min'=>0,'max'=>60],'em'=>['min'=>0,'max'=>5,'step'=>0.1]],'selectors'=>[$scope.' .zau-doc-grid'=>'gap:{{SIZE}}{{UNIT}};']]);
+        $this->add_responsive_control('zau_doc_grid_columns', ['label'=>'Колонок','type'=>\Elementor\Controls_Manager::SELECT,'options'=>['1'=>'1','2'=>'2','3'=>'3','4'=>'4'],'selectors'=>[$scope.' .zau-doc-grid'=>'grid-template-columns:repeat({{VALUE}},minmax(0,1fr));']]);
+        $this->add_control('zau_doc_title_color', ['label'=>'Цвет названия','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card.'>strong'=>'color:{{VALUE}};']]);
+        $this->add_control('zau_doc_dt_color', ['label'=>'Цвет подписей (номер, дата)','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card.' dt'=>'color:{{VALUE}};']]);
+        $this->end_controls_section();
+    }
+
+    /** Карточка акции/скидки во вкладке «Акции и скидки» — отдельно от общих карточек,
+     * плюс всплывающее окно с полными условиями акции. */
+    protected function register_benefit_card_style_controls($scope) {
+        $card = $scope . ' .zau-benefit-card';
+        $modal = $scope . ' .zau-benefit-modal-body';
+        $this->start_controls_section('zau_style_benefit_card', ['label' => 'Карточки акций и скидок', 'tab' => \Elementor\Controls_Manager::TAB_STYLE]);
+        $this->add_control('zau_benefit_card_bg', ['label'=>'Фон карточки','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card=>'background:{{VALUE}};']]);
+        $this->add_group_control(\Elementor\Group_Control_Border::get_type(), ['name'=>'zau_benefit_card_border','selector'=>$card]);
+        $this->add_responsive_control('zau_benefit_card_radius', ['label'=>'Скругление','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','%'],'selectors'=>[$card=>'border-radius:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+        $this->add_group_control(\Elementor\Group_Control_Box_Shadow::get_type(), ['name'=>'zau_benefit_card_shadow','selector'=>$card]);
+        $this->add_control('zau_benefit_badge_bg', ['label'=>'Фон значка скидки','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-benefit-badge'=>'background:{{VALUE}};']]);
+        $this->add_control('zau_benefit_badge_text', ['label'=>'Текст значка скидки','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-benefit-badge'=>'color:{{VALUE}};']]);
+        $this->add_control('zau_benefit_title_color', ['label'=>'Цвет названия','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card.' h4'=>'color:{{VALUE}};']]);
+        $this->add_control('zau_benefit_partner_color', ['label'=>'Цвет партнёра','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-benefit-partner'=>'color:{{VALUE}};']]);
+        $this->add_control('zau_benefit_teaser_color', ['label'=>'Цвет краткого анонса','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-benefit-teaser'=>'color:{{VALUE}};']]);
+        $this->add_control('zau_benefit_more_color', ['label'=>'Цвет «Подробнее»','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-benefit-more'=>'color:{{VALUE}};']]);
+        $this->add_control('zau_benefit_modal_heading', ['label'=>'Всплывающее окно с подробностями','type'=>\Elementor\Controls_Manager::HEADING,'separator'=>'before']);
+        $this->add_control('zau_benefit_description_color', ['label'=>'Цвет описания','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$modal.' .zau-benefit-description'=>'color:{{VALUE}};']]);
+        $this->add_control('zau_benefit_promo_bg', ['label'=>'Фон промокода','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$modal.' .zau-benefit-promo'=>'background:{{VALUE}};']]);
+        $this->add_control('zau_benefit_promo_text', ['label'=>'Текст промокода','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$modal.' .zau-benefit-promo'=>'color:{{VALUE}};']]);
+        $this->end_controls_section();
+    }
+
+    /** Личная карточка участника — контейнер, поля ввода и плитки статистики отдельно
+     * от общих стилей форм/карточек, так как раньше делили их с остальным кабинетом. */
+    protected function register_member_card_style_controls($scope) {
+        $card = $scope . ' .zau-member-card';
+        $fields = $card . ' .zau-member-card-field input, ' . $card . ' .zau-member-card-field textarea, ' . $card . ' .zau-member-card-field select';
+        $this->start_controls_section('zau_style_member_card', ['label' => 'Личная карточка', 'tab' => \Elementor\Controls_Manager::TAB_STYLE]);
+        $this->add_control('zau_member_card_bg', ['label'=>'Фон карточки','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card=>'background:{{VALUE}};']]);
+        $this->add_group_control(\Elementor\Group_Control_Border::get_type(), ['name'=>'zau_member_card_border','selector'=>$card]);
+        $this->add_responsive_control('zau_member_card_radius', ['label'=>'Скругление','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','%'],'selectors'=>[$card=>'border-radius:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+        $this->add_group_control(\Elementor\Group_Control_Box_Shadow::get_type(), ['name'=>'zau_member_card_shadow','selector'=>$card]);
+        $this->add_control('zau_member_field_heading', ['label'=>'Поля карточки','type'=>\Elementor\Controls_Manager::HEADING,'separator'=>'before']);
+        $this->add_control('zau_member_field_label_color', ['label'=>'Цвет подписи поля','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card.' .zau-member-card-field>span'=>'color:{{VALUE}};']]);
+        $this->add_control('zau_member_field_bg', ['label'=>'Фон поля','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$fields=>'background-color:{{VALUE}};']]);
+        $this->add_control('zau_member_field_border', ['label'=>'Граница поля','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$fields=>'border-color:{{VALUE}};']]);
+        $this->add_control('zau_member_field_text', ['label'=>'Текст в поле','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$fields=>'color:{{VALUE}};']]);
+        $this->add_control('zau_member_stat_heading', ['label'=>'Плитки сведений (статус, ID, дата)','type'=>\Elementor\Controls_Manager::HEADING,'separator'=>'before']);
+        $this->add_control('zau_member_stat_bg', ['label'=>'Фон плитки','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card.' .zau-member-card-system>div'=>'background:{{VALUE}};']]);
+        $this->add_control('zau_member_stat_border', ['label'=>'Граница плитки','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card.' .zau-member-card-system>div'=>'border-color:{{VALUE}};']]);
+        $this->add_control('zau_member_stat_label', ['label'=>'Цвет подписи','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card.' .zau-member-card-system small'=>'color:{{VALUE}};']]);
+        $this->add_control('zau_member_stat_value', ['label'=>'Цвет значения','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$card.' .zau-member-card-system strong'=>'color:{{VALUE}};']]);
+        $this->end_controls_section();
     }
 
     /** Список стандартных и собственных вкладок кабинета — общий для виджета «Личный кабинет / раздел»
