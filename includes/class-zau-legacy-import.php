@@ -891,6 +891,19 @@ final class ZAU_Legacy_Import {
         ])));
     }
 
+    // Некоторые поля старого сайта (например "application_no") хранят не сами
+    // данные, а служебную метку вида "RNa0Ll1o8m7WziJA от 10/28/2025 Имя Фамилия" —
+    // случайный код и дата подстановки, за которыми уже идёт настоящее значение.
+    // Отрезаем этот мусорный префикс, чтобы в целевое поле (например ФИО)
+    // не попадал код и дата вместе с именем.
+    private function remap_clean_value($value) {
+        $value = (string)$value;
+        if (preg_match('/^[A-Za-z0-9]{6,40}\s+от\s+\d{1,2}\/\d{1,2}\/\d{4}\s+(.+)$/u', $value, $m)) {
+            return trim($m[1]);
+        }
+        return $value;
+    }
+
     private function remap_is_candidate_key($key) {
         $key = (string)$key;
         if ($key === '') { return false; }
@@ -920,7 +933,7 @@ final class ZAU_Legacy_Import {
                 if (!isset($candidates[$key])) { $candidates[$key] = ['count'=>0,'examples'=>[]]; }
                 $candidates[$key]['count']++;
                 if (count($candidates[$key]['examples']) < 2) {
-                    $example = trim((string)$value);
+                    $example = $this->remap_clean_value(trim((string)$value));
                     if (mb_strlen($example) > 80) { $example = mb_substr($example, 0, 80) . '…'; }
                     $candidates[$key]['examples'][] = $example;
                 }
@@ -1010,7 +1023,7 @@ final class ZAU_Legacy_Import {
             $filled = 0;
             foreach ($job['mapping'] as $rawKey => $target) {
                 if (!array_key_exists($rawKey, $data)) { continue; }
-                $value = trim((string)$data[$rawKey]);
+                $value = $this->remap_clean_value(trim((string)$data[$rawKey]));
                 if ($value === '') { continue; }
                 $current = trim((string)($data[$target] ?? ''));
                 if ($current !== '' && !$overwrite) { continue; }
