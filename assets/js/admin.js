@@ -908,7 +908,8 @@
         ctx.font=style+size+'px "'+(cfg.fontFamily||'Arial')+'"'; ctx.fillStyle=cfg.color||'#111'; ctx.textBaseline='top'; ctx.textAlign=cfg.align||'center';
         const lines=splitText(ctx,value,maxWidth).slice(0,Number(cfg.maxLines||2)); const lh=size*Number(cfg.lineHeight||1.2);
         const tx=cfg.align==='left'?x:(cfg.align==='right'?x+maxWidth:x+maxWidth/2);
-        lines.forEach((line,i)=>ctx.fillText(line,tx,y+i*lh,maxWidth));
+        const top=cfg.vAnchor==='bottom'?y-lines.length*lh:y;
+        lines.forEach((line,i)=>ctx.fillText(line,tx,top+i*lh,maxWidth));
     }
 
     async function drawPlacedImage(ctx, cfg, url, w, h) {
