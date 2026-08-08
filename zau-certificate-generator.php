@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Профсоюз — регистрация, документы и QR
  * Description: Единый реестр профсоюза с AQNIET Blue UX: регистрация, статусы, филиалы единым текстом, защищённая личная карточка, скрытый wp-admin для участников, акции и скидки, документы/PDF/QR, кабинеты организаций и Elementor.
- * Version: 2.24.11
+ * Version: 2.24.12
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -12,8 +12,8 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Certificate_PDF_Generator {
-    const VERSION = '2.24.11';
-    const DB_VERSION = '2.24.11';
+    const VERSION = '2.24.12';
+    const DB_VERSION = '2.24.12';
     const OPT_DB_VERSION = 'zau_cert_db_version';
     const OPT_SETTINGS = 'zau_cert_settings';
     const CAP_MANAGE = 'zau_manage_certificates';
@@ -545,7 +545,7 @@ final class ZAU_Certificate_PDF_Generator {
         $definitions = $this->field_definitions();
         $keys = array_values(array_unique(array_merge(array_keys($defaults), array_keys($definitions), array_keys((array)$input))));
         $out = [];
-        $generic = ['enabled'=>0,'x'=>10,'y'=>10,'width'=>60,'fontSize'=>32,'fontFamily'=>'Arial','color'=>'#111111','align'=>'left','bold'=>0,'italic'=>0,'lineHeight'=>1.2,'maxLines'=>2,'height'=>10,'fit'=>'contain','opacity'=>1];
+        $generic = ['enabled'=>0,'x'=>10,'y'=>10,'width'=>60,'fontSize'=>32,'fontFamily'=>'Arial','color'=>'#111111','align'=>'left','vAnchor'=>'top','bold'=>0,'italic'=>0,'lineHeight'=>1.2,'maxLines'=>2,'height'=>10,'fit'=>'contain','opacity'=>1];
         $types = apply_filters('zau_cert_field_types', ['signature_url'=>'image','signature2_url'=>'image','stamp_url'=>'image']);
 
         foreach ($keys as $raw_key) {
@@ -564,6 +564,7 @@ final class ZAU_Certificate_PDF_Generator {
                 'fontFamily' => in_array(($v['fontFamily'] ?? ''), ['Arial','Georgia','Times New Roman','Verdana','Tahoma'], true) ? $v['fontFamily'] : $def['fontFamily'],
                 'color' => sanitize_hex_color($v['color'] ?? $def['color']) ?: $def['color'],
                 'align' => in_array(($v['align'] ?? ''), ['left','center','right'], true) ? $v['align'] : $def['align'],
+                'vAnchor' => in_array(($v['vAnchor'] ?? ''), ['top','bottom'], true) ? $v['vAnchor'] : ($def['vAnchor'] ?? 'top'),
                 'bold' => empty($v['bold']) ? 0 : 1,
                 'italic' => empty($v['italic']) ? 0 : 1,
                 'lineHeight' => max(0.8, min(2.5, (float)($v['lineHeight'] ?? $def['lineHeight']))),

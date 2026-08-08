@@ -80,7 +80,7 @@
                 fields[key] = {
                     enabled: key === 'qr' ? 1 : 0, x: 10, y: 10, width: key === 'qr' ? 12 : (imageField ? 20 : 60),
                     height: imageField ? 10 : 10, fit: 'contain', opacity: 1,
-                    fontSize: (key === 'qr' || imageField) ? 8 : 42, fontFamily: 'Arial', color: '#111111', align: 'center',
+                    fontSize: (key === 'qr' || imageField) ? 8 : 42, fontFamily: 'Arial', color: '#111111', align: 'center', vAnchor: 'top',
                     bold: 0, italic: 0, lineHeight: 1.2, maxLines: 2
                 };
             }
@@ -218,16 +218,30 @@
             return Math.max(8, Number(f.fontSize || 24) * scale);
         }
 
+        function isBottomAnchored(f, key) {
+            return key !== 'qr' && !isImageKey(key) && f.vAnchor === 'bottom';
+        }
+
+        function applyFieldPosition(el, f, key) {
+            el.style.left = Number(f.x) + '%';
+            if (isBottomAnchored(f, key)) {
+                el.style.top = 'auto';
+                el.style.bottom = (100 - Number(f.y)) + '%';
+            } else {
+                el.style.top = Number(f.y) + '%';
+                el.style.bottom = 'auto';
+            }
+        }
+
         function renderOverlays() {
             stageFields.innerHTML = '';
             Object.keys(defs).forEach(key => {
                 const f = ensureField(key);
                 if (!Number(f.enabled)) return;
                 const el = document.createElement('div');
-                el.className = 'zau-stage-field' + (selectedKey === key ? ' is-selected' : '') + (key === 'qr' ? ' is-qr' : '') + (isImageKey(key) ? ' is-image' : '');
+                el.className = 'zau-stage-field' + (selectedKey === key ? ' is-selected' : '') + (key === 'qr' ? ' is-qr' : '') + (isImageKey(key) ? ' is-image' : '') + (isBottomAnchored(f, key) ? ' is-bottom-anchored' : '');
                 el.dataset.key = key;
-                el.style.left = Number(f.x) + '%';
-                el.style.top = Number(f.y) + '%';
+                applyFieldPosition(el, f, key);
                 el.style.width = Number(f.width) + '%';
                 if (key === 'qr') {
                     el.style.aspectRatio = '1 / 1';
@@ -269,7 +283,7 @@
                     f.x = Math.round(clamp(oldX + dx, 0, 100 - Number(f.width)) * 1000) / 1000;
                     const maxY = key === 'qr' ? 100 - (Number(f.width) * rect.width / rect.height) : (isImageKey(key) ? 100 - Number(f.height || 10) : 97);
                     f.y = Math.round(clamp(oldY + dy, 0, maxY) * 1000) / 1000;
-                    el.style.left = f.x + '%'; el.style.top = f.y + '%'; sync(); markDirty(); updatePanelNumbers();
+                    applyFieldPosition(el, f, key); sync(); markDirty(); updatePanelNumbers();
                 };
                 const up = e => {
                     el.releasePointerCapture(e.pointerId);
@@ -307,6 +321,7 @@
                     <label>Выравнивание<select name="field_align"><option value="left">Слева</option><option value="center">По центру</option><option value="right">Справа</option></select></label>
                     <label>Интервал строк<input type="number" min="0.8" max="2.5" step="0.05" name="field_lineHeight" value="${esc(f.lineHeight)}"></label>
                     <label>Макс. строк<input type="number" min="1" max="10" name="field_maxLines" value="${esc(f.maxLines)}"></label>
+                    <label>Рост текста при переносе<select name="field_vAnchor"><option value="top">Вниз от Y (обычно)</option><option value="bottom">Вверх, низ по Y фиксирован</option></select></label>
                 </div>
                 <div class="zau-check-row"><label><input type="checkbox" name="field_bold" ${Number(f.bold) ? 'checked' : ''}> Жирный</label><label><input type="checkbox" name="field_italic" ${Number(f.italic) ? 'checked' : ''}> Курсив</label></div>`);
 
@@ -320,11 +335,12 @@
                 </div>
                 <div class="zau-nudge-box"><span>Точное перемещение</span><div class="zau-nudge-controls"><button type="button" data-nudge-x="-1" aria-label="Влево">←</button><button type="button" data-nudge-y="-1" aria-label="Вверх">↑</button><button type="button" data-nudge-y="1" aria-label="Вниз">↓</button><button type="button" data-nudge-x="1" aria-label="Вправо">→</button><select data-nudge-step aria-label="Шаг перемещения"><option value="0.01">0,01%</option><option value="0.05">0,05%</option><option value="0.1" selected>0,1%</option><option value="0.5">0,5%</option><option value="1">1%</option></select></div></div>
                 ${detailControls}
-                <p class="description">X и Y — координаты левого верхнего угла поля. Можно вводить точку или запятую. Положение после перетаскивания сохраняется с точностью до 0,001%.</p>`;
+                <p class="description">X и Y — координаты левого верхнего угла поля${(isQr || isImage) ? '' : ' (левого нижнего — если включено «Вверх, низ по Y фиксирован»)'}. Можно вводить точку или запятую. Положение после перетаскивания сохраняется с точностью до 0,001%.</p>`;
 
             const font = fieldPanel.querySelector('[name="field_fontFamily"]'); if (font) font.value = f.fontFamily || 'Arial';
             const align = fieldPanel.querySelector('[name="field_align"]'); if (align) align.value = f.align || 'center';
             const fit = fieldPanel.querySelector('[name="field_fit"]'); if (fit) fit.value = f.fit || 'contain';
+            const vAnchor = fieldPanel.querySelector('[name="field_vAnchor"]'); if (vAnchor) vAnchor.value = f.vAnchor || 'top';
 
             fieldPanel.querySelectorAll('input,select').forEach(input => input.addEventListener('input', () => {
                 const name = input.name.replace('field_', '');

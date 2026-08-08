@@ -54,3 +54,6 @@
 .zau-field-list-item{display:flex;align-items:flex-start;gap:8px}
 .zau-field-check{display:inline-flex;align-items:center;padding-top:2px}
 .zau-field-list-item-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+
+/* Text field growing upward from a fixed bottom edge (vAnchor:bottom) */
+.zau-stage-field.is-bottom-anchored{border-style:solid;border-bottom-width:2px;border-bottom-color:#d63638}
