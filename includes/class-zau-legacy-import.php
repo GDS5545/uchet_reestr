@@ -1019,25 +1019,29 @@ final class ZAU_Legacy_Import {
                 if (!$dryRun) {
                     $wpdb->update($this->submissions_table, ['data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE), 'updated_at'=>current_time('mysql')], ['id'=>$row->id]);
                 }
-                if ($syncDocuments && !empty($data['full_name'])) {
-                    $docs = $wpdb->get_results($wpdb->prepare("SELECT id,full_name,organization FROM {$this->docs_table} WHERE source_submission_id=%d", $row->id));
-                    foreach ($docs as $doc) {
-                        $newName = trim((string)$data['full_name']);
-                        $newOrg = trim((string)($data['organization'] ?? $doc->organization));
-                        if ($newName === '' || ((string)$doc->full_name === $newName && (string)$doc->organization === $newOrg)) { continue; }
-                        $job['report'][] = [
-                            'submission_id'=>(int)$row->id, 'document_id'=>(int)$doc->id,
-                            'old_full_name'=>(string)$doc->full_name, 'new_full_name'=>$newName,
-                            'old_organization'=>(string)$doc->organization, 'new_organization'=>$newOrg,
-                        ];
-                        if (!$dryRun) {
-                            $wpdb->update($this->docs_table, ['full_name'=>$newName, 'organization'=>$newOrg, 'updated_at'=>current_time('mysql')], ['id'=>$doc->id]);
-                        }
-                        $job['stats']['documents_updated']++;
-                    }
-                }
             } else {
                 $job['stats']['unchanged']++;
+            }
+            // Синхронизация документов проверяется всегда, а не только когда сама заявка
+            // поменялась в этом прогоне — иначе повторный запуск (или запуск после того,
+            // как заявка уже была исправлена ранее) никогда не находил бы устаревшее ФИО
+            // в уже созданном документе, потому что "изменений в заявке" в этом проходе нет.
+            if ($syncDocuments && !empty($data['full_name'])) {
+                $docs = $wpdb->get_results($wpdb->prepare("SELECT id,full_name,organization FROM {$this->docs_table} WHERE source_submission_id=%d", $row->id));
+                foreach ($docs as $doc) {
+                    $newName = trim((string)$data['full_name']);
+                    $newOrg = trim((string)($data['organization'] ?? $doc->organization));
+                    if ($newName === '' || ((string)$doc->full_name === $newName && (string)$doc->organization === $newOrg)) { continue; }
+                    $job['report'][] = [
+                        'submission_id'=>(int)$row->id, 'document_id'=>(int)$doc->id,
+                        'old_full_name'=>(string)$doc->full_name, 'new_full_name'=>$newName,
+                        'old_organization'=>(string)$doc->organization, 'new_organization'=>$newOrg,
+                    ];
+                    if (!$dryRun) {
+                        $wpdb->update($this->docs_table, ['full_name'=>$newName, 'organization'=>$newOrg, 'updated_at'=>current_time('mysql')], ['id'=>$doc->id]);
+                    }
+                    $job['stats']['documents_updated']++;
+                }
             }
         }
         if (count($rows) < $batchSize) {
