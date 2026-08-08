@@ -54,6 +54,11 @@ final class ZAU_Legacy_Import {
         add_action('wp_ajax_zau_legacy_scan_pdfs', [$this, 'ajax_scan_pdfs']);
         add_action('wp_ajax_zau_legacy_attach_pdfs', [$this, 'ajax_attach_pdfs']);
         add_action('admin_post_zau_legacy_download_report', [$this, 'download_report']);
+        add_action('wp_ajax_zau_legacy_remap_scan', [$this, 'ajax_remap_scan']);
+        add_action('wp_ajax_zau_legacy_remap_start', [$this, 'ajax_remap_start']);
+        add_action('wp_ajax_zau_legacy_remap_process', [$this, 'ajax_remap_process']);
+        add_action('wp_ajax_zau_legacy_remap_reset', [$this, 'ajax_remap_reset']);
+        add_action('admin_post_zau_legacy_remap_report', [$this, 'download_remap_report']);
 
         add_action('wp_ajax_zau_legacy_bridge_save_settings', [$this, 'ajax_bridge_save_settings']);
         add_action('wp_ajax_zau_legacy_bridge_test', [$this, 'ajax_bridge_test']);
@@ -143,6 +148,7 @@ final class ZAU_Legacy_Import {
             'reportUrl' => wp_nonce_url(admin_url('admin-post.php?action=zau_legacy_download_report'), self::NONCE),
             'accountFields' => $this->account_fields(),
             'applicationFields' => $this->application_fields(),
+            'remapReportUrl' => wp_nonce_url(admin_url('admin-post.php?action=zau_legacy_remap_report'), self::NONCE),
         ]);
     }
 
@@ -859,6 +865,230 @@ final class ZAU_Legacy_Import {
     }
 
     /* ---------------------------------------------------------------------
+     * Восстановление полей у уже загруженных заявок ("сырые" ключи вроде
+     * "от Ф.И.О." вместо full_name — когда данные попали в базу не через
+     * сопоставление колонок этого плагина, а напрямую или другим скриптом).
+     * Работает на уже существующих заявках выбранной формы: находит ключи
+     * data_json, которые не являются распознаваемыми системными полями,
+     * даёт сопоставить их с целевыми полями, и копирует значение в целевой
+     * ключ (не удаляя исходный), не трогая заявки, где целевое поле уже
+     * заполнено (если не включено "перезаписывать").
+     * ------------------------------------------------------------------ */
+
+    private function remap_known_keys() {
+        return array_values(array_unique(array_merge(array_keys($this->application_fields()), [
+            'full_name','first_name','last_name','middle_name','email','phone','iin','birth_date','address',
+            'position','department','organization','organization_bin','organization_director','organization_address',
+            'branch_name','branch_id','submission_date','issue_date','document_no','status','member_status',
+            'extra1','extra2','extra3','extra4','signature_url','signature2_url','stamp_url','signature',
+            'membership_consent','membership_heading','full_name_header','member_name_header',
+        ])));
+    }
+
+    private function remap_is_candidate_key($key) {
+        $key = (string)$key;
+        if ($key === '') { return false; }
+        foreach (['legacy_','branch_','organization_','profile__','card__','submission__','_zau'] as $prefix) {
+            if (strpos($key, $prefix) === 0) { return false; }
+        }
+        return !in_array($key, $this->remap_known_keys(), true);
+    }
+
+    public function ajax_remap_scan() {
+        $this->require_access();
+        global $wpdb;
+        $formId = absint($_POST['form_id'] ?? 0);
+        if (!$formId) { wp_send_json_error(['message'=>'Выберите форму для проверки.'], 400); }
+        $form = $this->get_form_row($formId);
+        if (!$form) { wp_send_json_error(['message'=>'Форма не найдена.'], 404); }
+        $total = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->submissions_table} WHERE form_id=%d", $formId));
+        if (!$total) { wp_send_json_error(['message'=>'У этой формы пока нет заявок.'], 400); }
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT data_json FROM {$this->submissions_table} WHERE form_id=%d ORDER BY id DESC LIMIT 300", $formId));
+        $candidates = [];
+        foreach ($rows as $row) {
+            $data = json_decode((string)$row->data_json, true);
+            if (!is_array($data)) { continue; }
+            foreach ($data as $key => $value) {
+                if (!is_scalar($value) || trim((string)$value) === '') { continue; }
+                if (!$this->remap_is_candidate_key($key)) { continue; }
+                if (!isset($candidates[$key])) { $candidates[$key] = ['count'=>0,'examples'=>[]]; }
+                $candidates[$key]['count']++;
+                if (count($candidates[$key]['examples']) < 2) {
+                    $example = trim((string)$value);
+                    if (mb_strlen($example) > 80) { $example = mb_substr($example, 0, 80) . '…'; }
+                    $candidates[$key]['examples'][] = $example;
+                }
+            }
+        }
+        uasort($candidates, function($a, $b) { return $b['count'] <=> $a['count']; });
+        update_option($this->upload_option_key('remap'), ['form_id'=>$formId, 'scanned_at'=>time()], false);
+        delete_option($this->job_option_key('remap'));
+        wp_send_json_success([
+            'message' => 'Проверено заявок: ' . count($rows) . ' из ' . $total . '. Найдено полей для сопоставления: ' . count($candidates) . '.',
+            'form_id' => $formId,
+            'form_name' => $form->name,
+            'total' => $total,
+            'scanned' => count($rows),
+            'candidates' => $candidates,
+            'targets' => $this->application_fields(),
+        ]);
+    }
+
+    private function get_form_row($formId) {
+        global $wpdb;
+        return $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->forms_table} WHERE id=%d", absint($formId)));
+    }
+
+    public function ajax_remap_start() {
+        $this->require_access();
+        $upload = (array)get_option($this->upload_option_key('remap'), []);
+        $formId = absint($upload['form_id'] ?? 0);
+        if (!$formId) { wp_send_json_error(['message'=>'Сначала проверьте форму — нажмите «Проверить форму».'], 400); }
+        $mappingRaw = json_decode((string)wp_unslash($_POST['mapping'] ?? ''), true);
+        if (!is_array($mappingRaw) || !$mappingRaw) { wp_send_json_error(['message'=>'Отметьте хотя бы одно поле для сопоставления.'], 400); }
+        // legacy_entry_id/legacy_user_id остаются служебными ключами переноса — их случайная
+        // перезапись задним числом сломала бы сопоставление с ID старого сайта при повторном импорте.
+        $allowed = array_values(array_diff(array_keys($this->application_fields()), ['legacy_entry_id','legacy_user_id']));
+        $mapping = [];
+        foreach ($mappingRaw as $rawKey => $target) {
+            $rawKey = sanitize_text_field((string)wp_unslash($rawKey));
+            $target = sanitize_key((string)$target);
+            if ($rawKey !== '' && $target !== '' && in_array($target, $allowed, true)) { $mapping[$rawKey] = $target; }
+        }
+        if (!$mapping) { wp_send_json_error(['message'=>'Не выбрано ни одного целевого поля.'], 400); }
+        global $wpdb;
+        $total = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->submissions_table} WHERE form_id=%d", $formId));
+        $job = [
+            'form_id' => $formId,
+            'mapping' => $mapping,
+            'options' => [
+                'dry_run' => empty($_POST['dry_run']) ? 0 : 1,
+                'overwrite' => empty($_POST['overwrite']) ? 0 : 1,
+                'sync_documents' => empty($_POST['sync_documents']) ? 0 : 1,
+            ],
+            'cursor' => 0,
+            'processed' => 0,
+            'total' => $total,
+            'stats' => ['submissions_updated'=>0,'fields_filled'=>0,'documents_updated'=>0,'unchanged'=>0,'errors'=>0],
+            'report' => [],
+            'log' => [],
+            'status' => 'running',
+            'started_at' => current_time('mysql'),
+            'finished_at' => '',
+        ];
+        update_option($this->job_option_key('remap'), $job, false);
+        wp_send_json_success($this->public_remap_job($job));
+    }
+
+    public function ajax_remap_process() {
+        $this->require_access();
+        global $wpdb;
+        $job = (array)get_option($this->job_option_key('remap'), []);
+        if (!$job || empty($job['form_id'])) { wp_send_json_error(['message'=>'Задание не найдено. Начните заново.'], 404); }
+        if (($job['status'] ?? '') === 'finished') { wp_send_json_success($this->public_remap_job($job)); }
+        $formId = (int)$job['form_id'];
+        $dryRun = !empty($job['options']['dry_run']);
+        $overwrite = !empty($job['options']['overwrite']);
+        $syncDocuments = !empty($job['options']['sync_documents']);
+        $batchSize = 150;
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT id,user_id,data_json FROM {$this->submissions_table} WHERE form_id=%d AND id>%d ORDER BY id ASC LIMIT %d",
+            $formId, (int)$job['cursor'], $batchSize
+        ));
+        foreach ($rows as $row) {
+            $job['cursor'] = (int)$row->id;
+            $job['processed']++;
+            $data = json_decode((string)$row->data_json, true);
+            if (!is_array($data)) { $job['stats']['errors']++; continue; }
+            $changed = false;
+            $filled = 0;
+            foreach ($job['mapping'] as $rawKey => $target) {
+                if (!array_key_exists($rawKey, $data)) { continue; }
+                $value = trim((string)$data[$rawKey]);
+                if ($value === '') { continue; }
+                $current = trim((string)($data[$target] ?? ''));
+                if ($current !== '' && !$overwrite) { continue; }
+                if ($current === $value) { continue; }
+                $data[$target] = $value;
+                $changed = true;
+                $filled++;
+            }
+            if ($changed) {
+                $job['stats']['submissions_updated']++;
+                $job['stats']['fields_filled'] += $filled;
+                if (!$dryRun) {
+                    $wpdb->update($this->submissions_table, ['data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE), 'updated_at'=>current_time('mysql')], ['id'=>$row->id]);
+                }
+                if ($syncDocuments && !empty($data['full_name'])) {
+                    $docs = $wpdb->get_results($wpdb->prepare("SELECT id,full_name,organization FROM {$this->docs_table} WHERE source_submission_id=%d", $row->id));
+                    foreach ($docs as $doc) {
+                        $newName = trim((string)$data['full_name']);
+                        $newOrg = trim((string)($data['organization'] ?? $doc->organization));
+                        if ($newName === '' || ((string)$doc->full_name === $newName && (string)$doc->organization === $newOrg)) { continue; }
+                        $job['report'][] = [
+                            'submission_id'=>(int)$row->id, 'document_id'=>(int)$doc->id,
+                            'old_full_name'=>(string)$doc->full_name, 'new_full_name'=>$newName,
+                            'old_organization'=>(string)$doc->organization, 'new_organization'=>$newOrg,
+                        ];
+                        if (!$dryRun) {
+                            $wpdb->update($this->docs_table, ['full_name'=>$newName, 'organization'=>$newOrg, 'updated_at'=>current_time('mysql')], ['id'=>$doc->id]);
+                        }
+                        $job['stats']['documents_updated']++;
+                    }
+                }
+            } else {
+                $job['stats']['unchanged']++;
+            }
+        }
+        if (count($rows) < $batchSize) {
+            $job['status'] = 'finished';
+            $job['finished_at'] = current_time('mysql');
+            $job['log'][] = 'Готово: обработано ' . $job['processed'] . ' из ' . $job['total'] . '.';
+        }
+        if (count($job['report']) > 3000) { $job['report'] = array_slice($job['report'], -3000); }
+        update_option($this->job_option_key('remap'), $job, false);
+        wp_send_json_success($this->public_remap_job($job));
+    }
+
+    private function public_remap_job($job) {
+        return [
+            'status' => $job['status'] ?? 'idle',
+            'processed' => (int)($job['processed'] ?? 0),
+            'total' => (int)($job['total'] ?? 0),
+            'stats' => $job['stats'] ?? [],
+            'log' => array_slice((array)($job['log'] ?? []), -20),
+            'dry_run' => !empty($job['options']['dry_run']) ? 1 : 0,
+            'finished_at' => $job['finished_at'] ?? '',
+            'report_count' => count((array)($job['report'] ?? [])),
+        ];
+    }
+
+    public function ajax_remap_reset() {
+        $this->require_access();
+        delete_option($this->upload_option_key('remap'));
+        delete_option($this->job_option_key('remap'));
+        wp_send_json_success(['message'=>'Прогресс сброшен. Уже применённые изменения не отменяются.']);
+    }
+
+    public function download_remap_report() {
+        if (!$this->can_manage()) { wp_die('Недостаточно прав.', 403); }
+        check_admin_referer(self::NONCE);
+        $job = (array)get_option($this->job_option_key('remap'), []);
+        $rows = (array)($job['report'] ?? []);
+        nocache_headers();
+        header('Content-Type: text/csv; charset=UTF-8');
+        header('Content-Disposition: attachment; filename="zau-legacy-remap-' . wp_date('Y-m-d-H-i') . '.csv"');
+        echo "\xEF\xBB\xBF";
+        $out = fopen('php://output', 'w');
+        fputcsv($out, ['ID заявки','ID документа','Старое ФИО','Новое ФИО','Старая организация','Новая организация'], ';', '"', '\\');
+        foreach ($rows as $row) {
+            fputcsv($out, [$row['submission_id'],$row['document_id'],$row['old_full_name'],$row['new_full_name'],$row['old_organization'],$row['new_organization']], ';', '"', '\\');
+        }
+        fclose($out);
+        exit;
+    }
+
+    /* ---------------------------------------------------------------------
      * Привязка PDF по уникальному ID в конце имени файла.
      * Личная карточка — ID пользователя Ultimate Member; заявление — ID записи формы.
      * ------------------------------------------------------------------- */
@@ -1527,6 +1757,39 @@ final class ZAU_Legacy_Import {
                     <li><strong>По API (надёжнее и без ручных выгрузок).</strong> На старом сайте устанавливается отдельный плагин-компаньон «ZAU — мост экспорта старого кабинета» (папка <code>zau-legacy-bridge-companion</code> в этом же комплекте). Он отдаёт новому сайту аккаунты Ultimate Member и записи форм напрямую — с реальными подписями и настоящей датой заполнения заявления. Ничего не нужно выгружать и загружать руками, и невозможно перепутать файл с человеком, потому что данные приходят по точному ID, а не по имени файла.</li>
                     <li><strong>Через CSV (если доступа по API нет).</strong> Шаги 1–3 ниже: выгрузите CSV с ID пользователя и ID заявления, загрузите их по очереди, затем привяжите PDF по ID в имени файла.</li>
                 </ol>
+            </section>
+
+            <section class="zau-ui-card" data-zau-remap>
+                <h2>Восстановление полей у уже загруженных заявок</h2>
+                <p class="description">Если заявки этой формы попали в базу не через сопоставление колонок этого плагина (например, напрямую в базу данных), их данные могут лежать под «сырыми» названиями старых полей вместо ФИО, организации, руководителя, филиала и т.д. — из-за этого поля не подставляются в PDF-документ и участник не появляется в реестре организации. Здесь можно сопоставить такие поля задним числом, не перезагружая файл заново. Галочка «Обновить ФИО и организацию в уже созданных документах» исправляет и уже сохранённые записи документов — но сам файл PDF нужно пересоздать отдельно через «Профсоюз → Массовое пересоздание», чтобы он отобразил исправленные данные.</p>
+                <div class="zau-ui-grid">
+                    <label>Форма для проверки<select data-zau-remap-form>
+                        <option value="">— выберите форму —</option>
+                        <?php foreach ($forms as $form): ?><option value="<?php echo (int)$form->id; ?>"><?php echo esc_html($form->name); ?></option><?php endforeach; ?>
+                    </select></label>
+                </div>
+                <div class="zau-ui-actions">
+                    <button type="button" class="button button-primary" data-zau-remap-scan>Проверить форму</button>
+                </div>
+                <p data-zau-remap-message></p>
+                <div data-zau-remap-mapping hidden>
+                    <div class="zau-ui-table-wrap"><table class="widefat striped"><thead><tr><th>Поле в заявке</th><th>Примеры значений</th><th>Заявок с этим полем</th><th>Сопоставить с</th></tr></thead><tbody data-zau-remap-table></tbody></table></div>
+                    <div class="zau-ui-options">
+                        <label><input type="checkbox" data-zau-remap-overwrite> Перезаписывать поле, если оно уже заполнено</label>
+                        <label><input type="checkbox" data-zau-remap-sync checked> Обновить ФИО и организацию в уже созданных документах этих заявок</label>
+                    </div>
+                    <div class="zau-ui-actions">
+                        <button type="button" class="button button-secondary" data-zau-remap-start="dry">Только проверить</button>
+                        <button type="button" class="button button-primary button-hero" data-zau-remap-start="run">Исправить данные</button>
+                    </div>
+                </div>
+                <div class="zau-ui-progress-wrap" data-zau-remap-progress hidden>
+                    <div class="zau-ui-progress"><span data-zau-progress-bar></span></div>
+                    <p data-zau-progress-text></p>
+                    <div class="zau-ui-stats" data-zau-stats></div>
+                    <pre data-zau-log></pre>
+                    <p><a class="button" data-zau-remap-report href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=zau_legacy_remap_report'), self::NONCE)); ?>" target="_blank">Скачать список изменённых документов (CSV)</a></p>
+                </div>
             </section>
 
             <section class="zau-ui-card" data-zau-bridge>

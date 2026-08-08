@@ -122,6 +122,92 @@
         });
     });
 
+    /* ---- Восстановление полей уже загруженных заявок ---- */
+    function remapTargetSelect(rawKey){
+        let html = '<select class="zau-map-target" data-remap-key="'+esc(rawKey)+'"><option value="">— не сопоставлять —</option>';
+        const fields = cfg.applicationFields || {};
+        Object.keys(fields).forEach(function(key){
+            if(!key || key === 'legacy_entry_id' || key === 'legacy_user_id') return;
+            html += '<option value="'+esc(key)+'">'+esc(fields[key])+'</option>';
+        });
+        return html + '</select>';
+    }
+    function renderRemapMapping($section, resp){
+        const $body = $section.find('[data-zau-remap-table]').empty();
+        const candidates = resp.candidates || {};
+        Object.keys(candidates).forEach(function(rawKey){
+            const c = candidates[rawKey] || {};
+            $body.append('<tr><td><strong>'+esc(rawKey)+'</strong></td><td class="zau-example">'+esc((c.examples||[]).join(' · '))+'</td><td>'+(c.count||0)+'</td><td>'+remapTargetSelect(rawKey)+'</td></tr>');
+        });
+        $section.find('[data-zau-remap-mapping]').prop('hidden', Object.keys(candidates).length === 0);
+        if(!Object.keys(candidates).length){ message($section, 'В этой форме не нашлось полей, требующих сопоставления.', 'success'); }
+    }
+    function remapMapping($section){
+        const map = {};
+        $section.find('[data-remap-key]').each(function(){
+            const key = $(this).data('remap-key');
+            const val = $(this).val();
+            if(val) map[key] = val;
+        });
+        return map;
+    }
+    function remapStatLabel(key){
+        const labels = {submissions_updated:'Заявок обновлено',fields_filled:'Полей заполнено',documents_updated:'Документов обновлено',unchanged:'Без изменений',errors:'Ошибки'};
+        return labels[key] || key;
+    }
+    function renderRemapProgress($section, job){
+        const total = Number(job.total||0), done = Number(job.processed||0), pct = total ? Math.min(100, Math.round(done/total*100)) : 0;
+        $section.find('[data-zau-remap-progress]').prop('hidden', false);
+        $section.find('[data-zau-progress-bar]').css('width', pct+'%');
+        $section.find('[data-zau-progress-text]').text(done+' из '+total+' · '+pct+'%'+(job.dry_run?' · режим проверки':''));
+        const stats = job.stats || {};
+        let html=''; Object.keys(stats).forEach(function(k){ if(Number(stats[k])) html += '<span><strong>'+stats[k]+'</strong>'+esc(remapStatLabel(k))+'</span>'; });
+        $section.find('[data-zau-stats]').html(html || '<span>Пока нет изменений</span>');
+        $section.find('[data-zau-log]').text((job.log||[]).join('\n'));
+        if(job.status === 'finished'){
+            message($section, job.dry_run ? 'Проверка завершена. Данные не записывались.' : 'Восстановление завершено.', 'success');
+            return;
+        }
+        setTimeout(function(){ remapProcessBatch($section); }, 250);
+    }
+    function remapProcessBatch($section){
+        ajax({action:'zau_legacy_remap_process'}).done(function(resp){
+            if(!resp || !resp.success){ message($section, resp && resp.data && resp.data.message ? resp.data.message : 'Ошибка обработки партии.', 'error'); return; }
+            renderRemapProgress($section, resp.data);
+        }).fail(function(xhr){ message($section, 'Сервер остановил обработку: HTTP '+xhr.status+'. Нажмите «Исправить данные» повторно — уже обработанные заявки не задублируются.', 'error'); });
+    }
+    $(document).on('click','[data-zau-remap-scan]',function(){
+        const $section = $(this).closest('[data-zau-remap]');
+        const formId = $section.find('[data-zau-remap-form]').val();
+        if(!formId){ message($section, 'Выберите форму для проверки.', 'error'); return; }
+        const $btn = $(this).prop('disabled',true).text('Проверяем…');
+        ajax({action:'zau_legacy_remap_scan', form_id:formId}).done(function(resp){
+            if(!resp || !resp.success){ message($section, resp && resp.data && resp.data.message ? resp.data.message : 'Не удалось проверить форму.', 'error'); return; }
+            message($section, resp.data.message, 'success');
+            renderRemapMapping($section, resp.data);
+        }).fail(function(xhr){ message($section, 'Ошибка проверки: HTTP '+xhr.status, 'error'); }).always(function(){ $btn.prop('disabled',false).text('Проверить форму'); });
+    });
+    $(document).on('click','[data-zau-remap-start]',function(){
+        const $section = $(this).closest('[data-zau-remap]');
+        const dry = $(this).data('zau-remap-start') === 'dry';
+        const map = remapMapping($section);
+        if(!Object.keys(map).length){ message($section, 'Сопоставьте хотя бы одно поле в таблице выше.', 'error'); return; }
+        const data = {
+            action:'zau_legacy_remap_start',
+            mapping: JSON.stringify(map),
+            dry_run: dry?1:0,
+            overwrite: $section.find('[data-zau-remap-overwrite]').is(':checked') ? 1 : 0,
+            sync_documents: $section.find('[data-zau-remap-sync]').is(':checked') ? 1 : 0,
+        };
+        $section.find('[data-zau-remap-start]').prop('disabled',true);
+        ajax(data).done(function(resp){
+            $section.find('[data-zau-remap-start]').prop('disabled',false);
+            if(!resp || !resp.success){ message($section, resp && resp.data && resp.data.message ? resp.data.message : 'Не удалось запустить.', 'error'); return; }
+            $section.find('[data-zau-remap-progress]')[0].scrollIntoView({behavior:'smooth',block:'start'});
+            renderRemapProgress($section, resp.data);
+        }).fail(function(xhr){ $section.find('[data-zau-remap-start]').prop('disabled',false); message($section, 'Ошибка запуска: HTTP '+xhr.status, 'error'); });
+    });
+
     /* ---- PDF привязка по уникальному ID ---- */
     function pdfParams($section){
         return {
