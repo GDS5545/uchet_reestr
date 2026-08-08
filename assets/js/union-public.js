@@ -169,7 +169,109 @@ function initMemberCards(){document.querySelectorAll('[data-zau-member-card]').f
  });}
 
 function initDocumentModals(){document.querySelectorAll('[data-zau-cabinet]').forEach(root=>{const modal=root.querySelector('[data-zau-document-modal]');if(!modal||root.dataset.zauModalReady==='1')return;root.dataset.zauModalReady='1';const image=modal.querySelector('[data-zau-modal-image]');const frame=modal.querySelector('[data-zau-modal-pdf]');const title=modal.querySelector('[data-zau-modal-title]');const loading=modal.querySelector('[data-zau-preview-loading]');let lastFocus=null;const clearMedia=()=>{image?.removeAttribute('src');if(frame){frame.removeAttribute('src');frame.hidden=true;}if(image)image.hidden=true;};const close=()=>{modal.hidden=true;document.documentElement.classList.remove('zau-modal-open');clearMedia();if(lastFocus)lastFocus.focus();};const showPdf=(pdfUrl)=>{if(!frame||!pdfUrl){loading.textContent='Не удалось загрузить предпросмотр.';loading.hidden=false;return;}loading.textContent='Открываем PDF…';frame.onload=()=>{loading.hidden=true;frame.hidden=false;};frame.src=pdfUrl+(pdfUrl.includes('?')?'&':'?')+'_zau_refresh='+Date.now();};root.addEventListener('click',event=>{const button=event.target.closest('[data-zau-document-preview]');if(!button||!root.contains(button))return;lastFocus=button;title.textContent=button.dataset.previewTitle||'Предпросмотр документа';loading.textContent='Загружаем документ…';loading.hidden=false;clearMedia();modal.hidden=false;document.documentElement.classList.add('zau-modal-open');const imageUrl=button.dataset.previewUrl||'';const pdfUrl=button.dataset.previewPdfUrl||'';if(!imageUrl){showPdf(pdfUrl);return;}image.onload=()=>{loading.hidden=true;image.hidden=false;};image.onerror=()=>{image.hidden=true;showPdf(pdfUrl);};image.src=imageUrl+(imageUrl.includes('?')?'&':'?')+'_zau_refresh='+Date.now();});modal.querySelectorAll('[data-zau-modal-close]').forEach(el=>el.addEventListener('click',close));document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.hidden)close();});});}
-function initOrganizationRegistry(){document.querySelectorAll('[data-zau-org-registry]').forEach(root=>{const rows=[...root.querySelectorAll('[data-zau-registry-row]')],filters=[...root.querySelectorAll('[data-filter]')],selectAll=root.querySelector('[data-zau-registry-select-all]'),count=root.querySelector('[data-zau-registry-count]'),message=root.querySelector('[data-zau-registry-message]'),serverForm=root.querySelector('[data-zau-registry-server-form]');const norm=v=>String(v??'').trim().toLowerCase();const digits=v=>String(v??'').replace(/\D/g,'');function visibleRows(){return rows.filter(row=>!row.hidden);}function selectedRows(){return rows.filter(row=>row.querySelector('[data-zau-registry-check]')?.checked);}function chosenRows(){const selected=selectedRows();return selected.length?selected:visibleRows();}function updateCount(){const visible=visibleRows().length,selected=selectedRows().length;if(count)count.textContent=`Показано: ${visible} · Выбрано: ${selected}`;if(selectAll){const checks=visibleRows().map(row=>row.querySelector('[data-zau-registry-check]')).filter(Boolean);selectAll.checked=checks.length>0&&checks.every(c=>c.checked);selectAll.indeterminate=checks.some(c=>c.checked)&&!selectAll.checked;}}function apply(){const values={};filters.forEach(f=>values[f.dataset.filter]=f.value);rows.forEach(row=>{let show=true;if(values.name&& !norm(row.dataset.name).includes(norm(values.name)))show=false;if(values.date_from&&String(row.dataset.date)<values.date_from)show=false;if(values.date_to&&String(row.dataset.date)>values.date_to)show=false;if(values.organization&&String(row.dataset.organization)!==String(values.organization))show=false;if(values.phone&&!digits(row.dataset.phone).includes(digits(values.phone)))show=false;if(values.email&&!norm(row.dataset.email).includes(norm(values.email)))show=false;if(values.document){let docs=[];try{docs=JSON.parse(row.dataset.documents||'[]');}catch(_e){}if(values.document==='__has__'&&!docs.length)show=false;else if(values.document==='__none__'&&docs.length)show=false;else if(!['__has__','__none__'].includes(values.document)&&!docs.includes(values.document))show=false;}row.hidden=!show;});updateCount();}filters.forEach(f=>f.addEventListener('input',apply));root.querySelector('[data-zau-registry-reset]')?.addEventListener('click',()=>{filters.forEach(f=>f.value='');rows.forEach(row=>{row.hidden=false;});updateCount();});rows.forEach(row=>row.querySelector('[data-zau-registry-check]')?.addEventListener('change',updateCount));selectAll?.addEventListener('change',()=>{visibleRows().forEach(row=>{const check=row.querySelector('[data-zau-registry-check]');if(check)check.checked=selectAll.checked;});updateCount();});function submitServer(action){const chosen=chosenRows();if(!chosen.length){if(message)message.textContent='Нет строк для выгрузки.';return;}const ids=chosen.map(row=>row.dataset.userId).join(',');serverForm.querySelector('[name="action"]').value=action;serverForm.querySelector('[name="member_ids"]').value=ids;serverForm.submit();}root.querySelector('[data-zau-registry-excel]')?.addEventListener('click',()=>submitServer('zau_union_export_org_registry_excel'));root.querySelector('[data-zau-registry-zip]')?.addEventListener('click',()=>submitServer('zau_union_download_org_documents_zip'));root.querySelector('[data-zau-registry-pdf]')?.addEventListener('click',async button=>{const chosen=chosenRows();if(!chosen.length){if(message)message.textContent='Нет строк для выгрузки.';return;}const el=button.currentTarget;el.disabled=true;if(message)message.textContent='Формируем страницы PDF…';try{const pages=makeRegistryPdfPages(chosen);const fd=new FormData();fd.set('action',root.dataset.pdfAction||'zau_union_export_org_registry_pdf');fd.set('nonce',App.nonce||'');pages.forEach(page=>fd.append('pages[]',page));const response=await fetch(App.ajaxUrl,{method:'POST',body:fd,credentials:'same-origin'});if(!response.ok){throw new Error((await response.text())||'Ошибка создания PDF.');}const blob=await response.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='reestr-organizacii.pdf';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);if(message)message.textContent=`PDF сформирован. Записей: ${chosen.length}.`;}catch(e){if(message)message.textContent=e.message||'Не удалось сформировать PDF.';}finally{el.disabled=false;}});apply();});}
+function initOrganizationRegistry(){document.querySelectorAll('[data-zau-org-registry]').forEach(root=>{const rows=[...root.querySelectorAll('[data-zau-registry-row]')],filters=[...root.querySelectorAll('[data-filter]')],selectAll=root.querySelector('[data-zau-registry-select-all]'),count=root.querySelector('[data-zau-registry-count]'),message=root.querySelector('[data-zau-registry-message]'),serverForm=root.querySelector('[data-zau-registry-server-form]');const norm=v=>String(v??'').trim().toLowerCase();const digits=v=>String(v??'').replace(/\D/g,'');function visibleRows(){return rows.filter(row=>!row.hidden);}function selectedRows(){return rows.filter(row=>row.querySelector('[data-zau-registry-check]')?.checked);}function chosenRows(){const selected=selectedRows();return selected.length?selected:visibleRows();}function updateCount(){const visible=visibleRows().length,selected=selectedRows().length;if(count)count.textContent=`Показано: ${visible} · Выбрано: ${selected}`;if(selectAll){const checks=visibleRows().map(row=>row.querySelector('[data-zau-registry-check]')).filter(Boolean);selectAll.checked=checks.length>0&&checks.every(c=>c.checked);selectAll.indeterminate=checks.some(c=>c.checked)&&!selectAll.checked;}}function apply(){const values={};filters.forEach(f=>values[f.dataset.filter]=f.value);rows.forEach(row=>{let show=true;if(values.name&& !norm(row.dataset.name).includes(norm(values.name)))show=false;if(values.date_from&&String(row.dataset.date)<values.date_from)show=false;if(values.date_to&&String(row.dataset.date)>values.date_to)show=false;if(values.organization&&String(row.dataset.organization)!==String(values.organization))show=false;if(values.phone&&!digits(row.dataset.phone).includes(digits(values.phone)))show=false;if(values.email&&!norm(row.dataset.email).includes(norm(values.email)))show=false;if(values.document){let docs=[];try{docs=JSON.parse(row.dataset.documents||'[]');}catch(_e){}if(values.document==='__has__'&&!docs.length)show=false;else if(values.document==='__none__'&&docs.length)show=false;else if(!['__has__','__none__'].includes(values.document)&&!docs.includes(values.document))show=false;}row.hidden=!show;});updateCount();}filters.forEach(f=>f.addEventListener('input',apply));root.querySelector('[data-zau-registry-reset]')?.addEventListener('click',()=>{filters.forEach(f=>f.value='');rows.forEach(row=>{row.hidden=false;});updateCount();});rows.forEach(row=>row.querySelector('[data-zau-registry-check]')?.addEventListener('change',updateCount));selectAll?.addEventListener('change',()=>{visibleRows().forEach(row=>{const check=row.querySelector('[data-zau-registry-check]');if(check)check.checked=selectAll.checked;});updateCount();});function submitServer(action){const chosen=chosenRows();if(!chosen.length){if(message)message.textContent='Нет строк для выгрузки.';return;}const ids=chosen.map(row=>row.dataset.userId).join(',');serverForm.querySelector('[name="action"]').value=action;serverForm.querySelector('[name="member_ids"]').value=ids;serverForm.submit();}root.querySelector('[data-zau-registry-excel]')?.addEventListener('click',()=>submitServer('zau_union_export_org_registry_excel'));root.querySelector('[data-zau-registry-zip]')?.addEventListener('click',()=>submitServer('zau_union_download_org_documents_zip'));root.querySelector('[data-zau-registry-pdf]')?.addEventListener('click',async button=>{const chosen=chosenRows();if(!chosen.length){if(message)message.textContent='Нет строк для выгрузки.';return;}const el=button.currentTarget;el.disabled=true;if(message)message.textContent='Формируем страницы PDF…';try{const pages=makeRegistryPdfPages(chosen);const fd=new FormData();fd.set('action',root.dataset.pdfAction||'zau_union_export_org_registry_pdf');fd.set('nonce',App.nonce||'');pages.forEach(page=>fd.append('pages[]',page));const response=await fetch(App.ajaxUrl,{method:'POST',body:fd,credentials:'same-origin'});if(!response.ok){throw new Error((await response.text())||'Ошибка создания PDF.');}const blob=await response.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='reestr-organizacii.pdf';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);if(message)message.textContent=`PDF сформирован. Записей: ${chosen.length}.`;}catch(e){if(message)message.textContent=e.message||'Не удалось сформировать PDF.';}finally{el.disabled=false;}});initRegistryFormatting(root,message);apply();});}
+function initRegistryFormatting(root,message){
+  let style={columns:{},rows:{},cells:{}};
+  try{const parsed=JSON.parse(root.dataset.zauRegistryStyle||'{}');style=Object.assign(style,{columns:parsed.columns||{},rows:parsed.rows||{},cells:parsed.cells||{}});}catch(_e){}
+  const table=root.querySelector('.zau-org-registry-table');
+  const formatBtn=root.querySelector('[data-zau-registry-format]');
+  const clearBtn=root.querySelector('[data-zau-registry-format-clear]');
+  const hint=root.querySelector('[data-zau-registry-format-hint]');
+  if(!table||!formatBtn)return;
+  let popover=null,saveTimer=null;
+  function ruleCss(rule){const css={};if(!rule)return css;if(rule.bg)css.backgroundColor=rule.bg;if(rule.color)css.color=rule.color;if(rule.bold)css.fontWeight='800';return css;}
+  function applyStyles(){
+    table.querySelectorAll('th[data-col]').forEach(th=>{const css=ruleCss(style.columns[th.dataset.col]);th.style.backgroundColor=css.backgroundColor||'';th.style.color=css.color||'';th.style.fontWeight=css.fontWeight||'';});
+    table.querySelectorAll('tbody tr[data-user-id]').forEach(tr=>{
+      const userId=tr.dataset.userId,rowRule=style.rows[userId];
+      tr.querySelectorAll('td[data-col]').forEach(td=>{
+        const col=td.dataset.col,merged=Object.assign({},style.columns[col],rowRule,style.cells[userId+':'+col]),css=ruleCss(merged);
+        td.style.backgroundColor=css.backgroundColor||'';td.style.color=css.color||'';td.style.fontWeight=css.fontWeight||'';
+      });
+    });
+  }
+  function scheduleSave(){
+    clearTimeout(saveTimer);
+    saveTimer=setTimeout(()=>{
+      const fd=new FormData();fd.set('action','zau_union_save_registry_style');fd.set('nonce',App.nonce||'');fd.set('style',JSON.stringify(style));
+      fetch(App.ajaxUrl,{method:'POST',body:fd,credentials:'same-origin'}).then(r=>r.json()).then(res=>{if(message&&res&&res.success===false)message.textContent=res.data?.message||'Не удалось сохранить оформление.';}).catch(()=>{if(message)message.textContent='Не удалось сохранить оформление — проверьте связь.';});
+    },400);
+  }
+  function updateClearVisibility(){const has=Object.keys(style.columns).length||Object.keys(style.rows).length||Object.keys(style.cells).length;if(clearBtn)clearBtn.hidden=!has;}
+  function closePopover(){if(popover){popover.remove();popover=null;}}
+  function openPopover(anchor,scopeOptions,getRule,setRule){
+    closePopover();
+    const current=getRule()||{};
+    popover=document.createElement('div');
+    popover.className='zau-registry-format-popover';
+    const scopeHtml=scopeOptions.length>1?('<div class="zau-registry-format-scope">'+scopeOptions.map((o,i)=>`<label><input type="radio" name="zau-format-scope" value="${o.value}" ${i===0?'checked':''}> ${o.label}</label>`).join('')+'</div>'):'';
+    popover.innerHTML=`${scopeHtml}
+      <label class="zau-registry-format-row"><span>Фон</span><input type="color" data-f-bg value="${current.bg||'#ffffff'}"><button type="button" data-f-bg-clear class="zau-link-button">убрать</button></label>
+      <label class="zau-registry-format-row"><span>Текст</span><input type="color" data-f-color value="${current.color||'#111111'}"><button type="button" data-f-color-clear class="zau-link-button">убрать</button></label>
+      <label class="zau-registry-format-row"><input type="checkbox" data-f-bold ${current.bold?'checked':''}> Жирный текст</label>
+      <div class="zau-registry-format-actions">
+        <button type="button" class="zau-union-button" data-f-apply>Применить</button>
+        <button type="button" class="zau-link-button" data-f-reset>Сбросить</button>
+        <button type="button" class="zau-link-button" data-f-close>Закрыть</button>
+      </div>`;
+    document.body.appendChild(popover);
+    const rect=anchor.getBoundingClientRect();
+    let left=window.scrollX+rect.left;
+    const maxLeft=window.scrollX+document.documentElement.clientWidth-popover.offsetWidth-10;
+    if(left>maxLeft)left=Math.max(10,maxLeft);
+    popover.style.top=(window.scrollY+rect.bottom+6)+'px';
+    popover.style.left=left+'px';
+    const bgInput=popover.querySelector('[data-f-bg]'),colorInput=popover.querySelector('[data-f-color]'),boldInput=popover.querySelector('[data-f-bold]');
+    let bgSet=!!current.bg,colorSet=!!current.color;
+    popover.querySelector('[data-f-bg-clear]')?.addEventListener('click',()=>{bgSet=false;});
+    popover.querySelector('[data-f-color-clear]')?.addEventListener('click',()=>{colorSet=false;});
+    bgInput?.addEventListener('input',()=>{bgSet=true;});
+    colorInput?.addEventListener('input',()=>{colorSet=true;});
+    popover.querySelector('[data-f-close]')?.addEventListener('click',closePopover);
+    function scopeValue(){const checked=popover.querySelector('input[name="zau-format-scope"]:checked');return checked?checked.value:(scopeOptions[0]?scopeOptions[0].value:'cell');}
+    popover.querySelector('[data-f-reset]')?.addEventListener('click',()=>{setRule(scopeValue(),null);applyStyles();scheduleSave();updateClearVisibility();closePopover();});
+    popover.querySelector('[data-f-apply]')?.addEventListener('click',()=>{
+      const rule={};if(bgSet&&bgInput.value)rule.bg=bgInput.value;if(colorSet&&colorInput.value)rule.color=colorInput.value;if(boldInput.checked)rule.bold=1;
+      setRule(scopeValue(),Object.keys(rule).length?rule:null);applyStyles();scheduleSave();updateClearVisibility();closePopover();
+    });
+  }
+  formatBtn.addEventListener('click',()=>{
+    root.classList.toggle('is-format-mode');
+    const active=root.classList.contains('is-format-mode');
+    formatBtn.classList.toggle('is-active',active);
+    if(hint)hint.hidden=!active;
+    if(!active)closePopover();
+  });
+  clearBtn?.addEventListener('click',()=>{
+    if(!window.confirm('Сбросить всё оформление таблицы?'))return;
+    style={columns:{},rows:{},cells:{}};applyStyles();scheduleSave();updateClearVisibility();closePopover();
+  });
+  table.addEventListener('click',e=>{
+    if(!root.classList.contains('is-format-mode'))return;
+    const th=e.target.closest('th[data-col]'),td=e.target.closest('td[data-col]');
+    if(th){
+      const col=th.dataset.col;
+      openPopover(th,[{value:'column',label:'Столбец'}],()=>style.columns[col],(_scope,rule)=>{if(rule)style.columns[col]=rule;else delete style.columns[col];});
+      e.preventDefault();return;
+    }
+    if(td){
+      const tr=td.closest('tr[data-user-id]'),col=td.dataset.col,userId=tr?tr.dataset.userId:'';
+      if(!userId)return;
+      const cellKey=userId+':'+col;
+      openPopover(td,[{value:'cell',label:'Ячейка'},{value:'row',label:'Строка'},{value:'column',label:'Столбец'}],()=>style.cells[cellKey],(scope,rule)=>{
+        if(scope==='row'){if(rule)style.rows[userId]=rule;else delete style.rows[userId];}
+        else if(scope==='column'){if(rule)style.columns[col]=rule;else delete style.columns[col];}
+        else{if(rule)style.cells[cellKey]=rule;else delete style.cells[cellKey];}
+      });
+      e.preventDefault();
+    }
+  });
+  document.addEventListener('click',e=>{
+    if(popover&&!popover.contains(e.target)&&!e.target.closest('th[data-col]')&&!e.target.closest('td[data-col]'))closePopover();
+  });
+  applyStyles();
+  updateClearVisibility();
+}
 function registryCell(row,label){const cell=row.querySelector(`[data-label="${label}"]`);return cell?cell.innerText.replace(/\s+/g,' ').trim():'';}
 function wrapCanvasText(ctx,text,maxWidth,maxLines=3){const words=String(text||'').split(/\s+/).filter(Boolean),lines=[];let line='';for(const word of words){const test=line?line+' '+word:word;if(ctx.measureText(test).width>maxWidth&&line){lines.push(line);line=word;if(lines.length>=maxLines-1)break;}else line=test;}if(line&&lines.length<maxLines)lines.push(line);return lines;}
 function makeRegistryPdfPages(rows){const width=1684,height=1190,margin=48,headerH=138,rowH=88,footerH=42,perPage=Math.max(1,Math.floor((height-headerH-footerH-margin)/rowH)),total=Math.ceil(rows.length/perPage),pages=[];for(let pageIndex=0;pageIndex<total;pageIndex++){const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;const ctx=canvas.getContext('2d',{alpha:false});ctx.fillStyle='#fff';ctx.fillRect(0,0,width,height);ctx.fillStyle='#101828';ctx.font='700 34px Arial';ctx.fillText('Реестр участников организации',margin,50);ctx.font='20px Arial';ctx.fillStyle='#667085';ctx.fillText(`Сформировано: ${new Date().toLocaleString('ru-RU')} · Записей: ${rows.length}`,margin,84);const cols=[{label:'',w:42},{label:'ФИО',w:230},{label:'Дата регистрации',w:150},{label:'Организация',w:390},{label:'Телефон',w:160},{label:'Email',w:250},{label:'Документы',w:350}],tableW=cols.reduce((a,c)=>a+c.w,0),scale=Math.min(1,(width-margin*2)/tableW);let x=margin,y=112;ctx.fillStyle='#EAF2FD';ctx.fillRect(margin,y,tableW*scale,42);ctx.strokeStyle='#B8D2F3';ctx.lineWidth=1;ctx.font='700 17px Arial';ctx.fillStyle='#101828';for(const col of cols){const w=col.w*scale;ctx.strokeRect(x,y,w,42);if(col.label)ctx.fillText(col.label,x+7,y+26);x+=w;}y+=42;const chunk=rows.slice(pageIndex*perPage,(pageIndex+1)*perPage);chunk.forEach((row,index)=>{x=margin;ctx.fillStyle=index%2?'#f8fbf9':'#fff';ctx.fillRect(margin,y,tableW*scale,rowH);const values=['',registryCell(row,'ФИО'),registryCell(row,'Дата регистрации'),registryCell(row,'Организация'),registryCell(row,'Телефон'),registryCell(row,'Email'),registryCell(row,'Документы')];ctx.font='16px Arial';ctx.fillStyle='#344054';cols.forEach((col,colIndex)=>{const w=col.w*scale;ctx.strokeStyle='#D9E2EF';ctx.strokeRect(x,y,w,rowH);if(colIndex){const maxLines=colIndex===6?4:3,lines=wrapCanvasText(ctx,values[colIndex],w-14,maxLines);lines.forEach((line,lineIndex)=>ctx.fillText(line,x+7,y+23+lineIndex*19));}x+=w;});y+=rowH;});ctx.font='16px Arial';ctx.fillStyle='#667085';ctx.fillText(`Страница ${pageIndex+1} из ${total}`,width-margin-150,height-28);pages.push(canvas.toDataURL('image/jpeg',.9));}return pages;}
