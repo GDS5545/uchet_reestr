@@ -521,8 +521,8 @@ final class ZAU_Bulk_Regeneration {
         header('Content-Disposition: attachment; filename="zau-bulk-regeneration-job-'.$job_id.'.csv"');
         echo "\xEF\xBB\xBF";
         $out=fopen('php://output','w');
-        fputcsv($out,['Job','Document ID','ФИО','Организация','Шаблон','Старый номер','Новый номер','Статус','Попыток','Ошибка','Начато','Завершено'],';');
-        foreach($rows as $row){fputcsv($out,[$job_id,$row->document_id,$row->full_name,$row->organization,$row->template_name?:$row->document_title,$row->old_document_no,$row->new_document_no,$this->item_status_label($row->status),$row->attempts,$row->error_text,$row->started_at,$row->completed_at],';');}
+        fputcsv($out,['Job','Document ID','ФИО','Организация','Шаблон','Старый номер','Новый номер','Статус','Попыток','Ошибка','Начато','Завершено'],';','"','\\');
+        foreach($rows as $row){fputcsv($out,[$job_id,$row->document_id,$row->full_name,$row->organization,$row->template_name?:$row->document_title,$row->old_document_no,$row->new_document_no,$this->item_status_label($row->status),$row->attempts,$row->error_text,$row->started_at,$row->completed_at],';','"','\\');}
         fclose($out);exit;
     }
 

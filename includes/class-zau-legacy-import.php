@@ -850,9 +850,9 @@ final class ZAU_Legacy_Import {
         header('Content-Disposition: attachment; filename="zau-legacy-import-' . $scope . '-' . wp_date('Y-m-d-H-i') . '.csv"');
         echo "\xEF\xBB\xBF";
         $out = fopen('php://output', 'w');
-        fputcsv($out, ['Строка','Результат','Сообщение','Новый User ID','Новая заявка ID','ID Ultimate Member','ID записи заявления','ФИО'], ';');
+        fputcsv($out, ['Строка','Результат','Сообщение','Новый User ID','Новая заявка ID','ID Ultimate Member','ID записи заявления','ФИО'], ';', '"', '\\');
         foreach ($rows as $row) {
-            fputcsv($out, [$row['row'],$row['result'],$row['message'],$row['user_id'],$row['submission_id'],$row['legacy_user_id'],$row['legacy_entry_id'],$row['full_name']], ';');
+            fputcsv($out, [$row['row'],$row['result'],$row['message'],$row['user_id'],$row['submission_id'],$row['legacy_user_id'],$row['legacy_entry_id'],$row['full_name']], ';', '"', '\\');
         }
         fclose($out);
         exit;
