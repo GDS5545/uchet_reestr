@@ -140,8 +140,14 @@ final class ZAU_Legacy_Import {
 
     public function admin_assets($hook) {
         if (strpos((string)$hook, 'zau-legacy-import') === false) { return; }
-        wp_enqueue_style('zau-legacy-import', plugins_url('../assets/css/legacy-import.css', __FILE__), [], self::VERSION);
-        wp_enqueue_script('zau-legacy-import', plugins_url('../assets/js/legacy-import.js', __FILE__), ['jquery'], self::VERSION, true);
+        // Файлы меняются чаще, чем эта константа версии плагина-модуля — берём mtime, чтобы
+        // браузер не продолжал отдавать старый JS/CSS из кэша после обновления файлов на сервере.
+        $cssPath = __DIR__ . '/../assets/css/legacy-import.css';
+        $jsPath = __DIR__ . '/../assets/js/legacy-import.js';
+        $cssVersion = self::VERSION . (is_file($cssPath) ? '.' . (string)filemtime($cssPath) : '');
+        $jsVersion = self::VERSION . (is_file($jsPath) ? '.' . (string)filemtime($jsPath) : '');
+        wp_enqueue_style('zau-legacy-import', plugins_url('../assets/css/legacy-import.css', __FILE__), [], $cssVersion);
+        wp_enqueue_script('zau-legacy-import', plugins_url('../assets/js/legacy-import.js', __FILE__), ['jquery'], $jsVersion, true);
         wp_localize_script('zau-legacy-import', 'ZAULegacyImport', [
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce(self::NONCE),

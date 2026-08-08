@@ -878,8 +878,14 @@ final class ZAU_Union_Module {
         $screen=function_exists('get_current_screen')?get_current_screen():null;
         $isBenefit=$screen&&$screen->post_type==='zau_union_benefit';
         if (strpos((string)$hook, 'zau-union') === false && !$isBenefit) { return; }
-        wp_enqueue_style('zau-union-admin', plugins_url('../assets/css/union-admin.css', __FILE__), [], self::VERSION);
-        wp_enqueue_script('zau-union-admin', plugins_url('../assets/js/union-admin.js', __FILE__), ['jquery'], self::VERSION, true);
+        // Файлы меняются чаще, чем эта константа версии плагина-модуля — берём mtime, чтобы
+        // браузер не продолжал отдавать старый JS/CSS из кэша после обновления файлов на сервере.
+        $cssPath = __DIR__ . '/../assets/css/union-admin.css';
+        $jsPath = __DIR__ . '/../assets/js/union-admin.js';
+        $cssVersion = self::VERSION . (is_file($cssPath) ? '.' . (string)filemtime($cssPath) : '');
+        $jsVersion = self::VERSION . (is_file($jsPath) ? '.' . (string)filemtime($jsPath) : '');
+        wp_enqueue_style('zau-union-admin', plugins_url('../assets/css/union-admin.css', __FILE__), [], $cssVersion);
+        wp_enqueue_script('zau-union-admin', plugins_url('../assets/js/union-admin.js', __FILE__), ['jquery'], $jsVersion, true);
         wp_localize_script('zau-union-admin', 'ZAUUnionAdmin', [
             'fieldTypes'=>$this->field_type_options(),
             'nonce'=>wp_create_nonce(self::NONCE),

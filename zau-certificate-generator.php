@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Профсоюз — регистрация, документы и QR
  * Description: Единый реестр профсоюза с AQNIET Blue UX: регистрация, статусы, филиалы единым текстом, защищённая личная карточка, скрытый wp-admin для участников, акции и скидки, документы/PDF/QR, кабинеты организаций и Elementor.
- * Version: 2.24.15
+ * Version: 2.24.16
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -12,7 +12,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Certificate_PDF_Generator {
-    const VERSION = '2.24.15';
+    const VERSION = '2.24.16';
     const DB_VERSION = '2.24.15';
     const OPT_DB_VERSION = 'zau_cert_db_version';
     const OPT_SETTINGS = 'zau_cert_settings';
@@ -231,9 +231,15 @@ final class ZAU_Certificate_PDF_Generator {
     public function admin_assets($hook) {
         if (strpos((string)$hook, 'zau-cert') === false && strpos((string)$hook, 'zau_certificate') === false) { return; }
         wp_enqueue_media();
-        wp_enqueue_style('zau-cert-admin', plugins_url('assets/css/admin.css', __FILE__), [], self::VERSION);
+        // Файлы меняются чаще версии плагина — берём mtime, чтобы браузер не отдавал
+        // старый JS/CSS из кэша после обновления файлов на сервере.
+        $cssPath = __DIR__ . '/assets/css/admin.css';
+        $jsPath = __DIR__ . '/assets/js/admin.js';
+        $cssVersion = self::VERSION . (is_file($cssPath) ? '.' . (string)filemtime($cssPath) : '');
+        $jsVersion = self::VERSION . (is_file($jsPath) ? '.' . (string)filemtime($jsPath) : '');
+        wp_enqueue_style('zau-cert-admin', plugins_url('assets/css/admin.css', __FILE__), [], $cssVersion);
         wp_enqueue_script('zau-qrcode', plugins_url('assets/js/qrcode.min.js', __FILE__), [], '1.0.0', true);
-        wp_enqueue_script('zau-cert-admin', plugins_url('assets/js/admin.js', __FILE__), ['jquery', 'zau-qrcode'], self::VERSION, true);
+        wp_enqueue_script('zau-cert-admin', plugins_url('assets/js/admin.js', __FILE__), ['jquery', 'zau-qrcode'], $jsVersion, true);
 
         $templates = $this->get_templates();
         foreach ($templates as &$tpl) { $tpl->fields = $this->decode_fields($tpl->fields_json, $tpl->orientation); unset($tpl->fields_json); }
