@@ -767,7 +767,8 @@ final class ZAU_Union_Module {
     }
 
     private function settings() {
-        return wp_parse_args((array)get_option(self::OPT_SETTINGS, []), [
+        $stored = (array)get_option(self::OPT_SETTINGS, []);
+        $s = wp_parse_args($stored, [
             'default_form_id'=>0,
             'login_page_id'=>0,
             'form_page_id'=>0,
@@ -822,7 +823,44 @@ final class ZAU_Union_Module {
             'member_card_sensitive_fields'=>'iin,birth_date,address,emergency_contact',
             'sensitive_reveal_seconds'=>30,
             'benefits_tab_enabled'=>1,
+            'design_mobile_nav_style'=>'bottom_icons_text',
+            'nav_tab_icons'=>['home'=>'⌂','documents'=>'▤','submissions'=>'✓','card'=>'🪪','benefits'=>'★','members'=>'♙','registry'=>'☷','info'=>'i','logins'=>'↻'],
+            'nav_tab_short'=>[],
         ]);
+        // До 2.25 «нижняя навигация» была галочкой да/нет. Если новый параметр
+        // ещё не сохранялся явно, переносим прежний выбор в новый список вариантов,
+        // чтобы обновление плагина не меняло уже выбранный вид панели без спроса.
+        if (!isset($stored['design_mobile_nav_style']) && isset($stored['design_mobile_bottom_nav'])) {
+            $s['design_mobile_nav_style'] = empty($stored['design_mobile_bottom_nav']) ? 'top' : 'bottom_icons_text';
+        }
+        return $s;
+    }
+
+    // Единый список встроенных разделов кабинета — используется и при выводе
+    // личного кабинета, и в настройках (иконки/короткие названия), чтобы оба места
+    // не могли разойтись между собой.
+    private function builtin_tab_labels() {
+        return [
+            'home'=>'Главная',
+            'documents'=>'Документы',
+            'submissions'=>'Заявления',
+            'card'=>'Личная карточка',
+            'benefits'=>'Акции и скидки',
+            'members'=>'Участники',
+            'registry'=>'Реестр организации',
+            'info'=>'Материалы',
+            'logins'=>'История входов',
+        ];
+    }
+
+    // Короткое название для узкой мобильной панели, если админ не задал своё —
+    // берём первое слово полного названия (для всех встроенных разделов этого
+    // достаточно: «Личная» вместо «Личная карточка», «Акции» вместо «Акции и скидки»).
+    private function auto_short_label($full) {
+        $full = trim((string)$full);
+        if ($full === '') { return ''; }
+        $firstWord = preg_split('/\s+/u', $full)[0] ?? $full;
+        return function_exists('mb_substr') ? mb_substr($firstWord, 0, 14) : substr($firstWord, 0, 14);
     }
 
     public function filter_admin_bar($show) {
@@ -928,7 +966,7 @@ final class ZAU_Union_Module {
             'pinMaxLength'=>max(max(4, (int)$settings['pin_min_length']), (int)$settings['pin_max_length']),
             'designPrimary'=>sanitize_hex_color($settings['design_primary']??'')?:'#1565C0',
             'designMobileSteps'=>!empty($settings['design_mobile_steps']),
-            'designMobileBottomNav'=>!empty($settings['design_mobile_bottom_nav']),
+            'designMobileNavStyle'=>in_array(($settings['design_mobile_nav_style']??''),['top','bottom_icons_text','bottom_icons_only'],true)?$settings['design_mobile_nav_style']:'bottom_icons_text',
             'designQuickActions'=>!empty($settings['design_quick_actions']),
             'designDocumentSearch'=>!empty($settings['design_document_search']),
         ]);
@@ -1941,9 +1979,28 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
         <table class="form-table">
             <tr><th>Основной цвет</th><td><input type="color" name="design_primary" value="<?php echo esc_attr($s['design_primary']?:'#1565C0');?>"> <code><?php echo esc_html($s['design_primary']?:'#1565C0');?></code><p class="description">Базовый цвет готового интерфейса. В Elementor его можно переопределить отдельно для каждого виджета.</p></td></tr>
             <tr><th>Пошаговая мобильная форма</th><td><label><input type="checkbox" name="design_mobile_steps" value="1" <?php checked(!empty($s['design_mobile_steps']));?>> Разбивать регистрацию на понятные шаги</label></td></tr>
-            <tr><th>Нижняя навигация</th><td><label><input type="checkbox" name="design_mobile_bottom_nav" value="1" <?php checked(!empty($s['design_mobile_bottom_nav']));?>> Закреплять вкладки кабинета внизу телефона</label></td></tr>
+            <tr><th>Панель разделов на телефоне</th><td>
+                <select name="design_mobile_nav_style">
+                    <option value="top" <?php selected($s['design_mobile_nav_style'],'top');?>>Вверху, в одну строку с прокруткой (как на компьютере)</option>
+                    <option value="bottom_icons_text" <?php selected($s['design_mobile_nav_style'],'bottom_icons_text');?>>Внизу экрана, иконка и короткое название</option>
+                    <option value="bottom_icons_only" <?php selected($s['design_mobile_nav_style'],'bottom_icons_only');?>>Внизу экрана, только иконки (компактно)</option>
+                </select>
+                <p class="description">Действует на экранах телефона (уже 700px). На компьютере и планшете панель разделов всегда сверху.</p>
+            </td></tr>
             <tr><th>Быстрые действия</th><td><label><input type="checkbox" name="design_quick_actions" value="1" <?php checked(!empty($s['design_quick_actions']));?>> Показывать карточки быстрых действий на главной</label></td></tr>
             <tr><th>Поиск документов</th><td><label><input type="checkbox" name="design_document_search" value="1" <?php checked(!empty($s['design_document_search']));?>> Показывать поиск и фильтр во вкладке «Документы»</label></td></tr>
+        </table>
+        <h2>Разделы кабинета — иконки и короткие названия</h2>
+        <p class="description">Иконка показывается перед названием раздела всегда. Короткое название используется в узкой панели на телефоне (варианты «иконка и короткое название» выше) — если оставить пустым, оно возьмётся из первого слова полного названия.</p>
+        <table class="form-table widefat" style="max-width:760px">
+            <tr><th style="width:170px">Раздел</th><th>Иконка (эмодзи или dashicons-класс)</th><th>Короткое название</th></tr>
+            <?php foreach ($this->builtin_tab_labels() as $slug=>$label): ?>
+            <tr>
+                <th style="font-weight:400"><?php echo esc_html($label);?></th>
+                <td><input type="text" style="width:100%" name="nav_icon[<?php echo esc_attr($slug);?>]" value="<?php echo esc_attr($s['nav_tab_icons'][$slug] ?? '');?>" placeholder="⌂ или dashicons-admin-home"></td>
+                <td><input type="text" style="width:100%" maxlength="16" name="nav_short[<?php echo esc_attr($slug);?>]" value="<?php echo esc_attr($s['nav_tab_short'][$slug] ?? '');?>" placeholder="<?php echo esc_attr($this->auto_short_label($label));?>"></td>
+            </tr>
+            <?php endforeach; ?>
         </table>
         <h2>DaData — компании Казахстана</h2><p>Встроенная интеграция обращается к DaData с сервера WordPress, поэтому API-ключ не передаётся в браузер посетителя. Поиск работает по полному или частичному БИН; при выборе организации данные автоматически вставляются в поля формы.</p><table class="form-table">
         <tr><th>Использовать DaData</th><td><label><input type="checkbox" name="dadata_enabled" value="1" <?php checked($s['dadata_enabled'],1);?>> Включить поиск организаций Казахстана</label></td></tr>
@@ -1961,9 +2018,19 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
         $this->require_cap(ZAU_Certificate_PDF_Generator::CAP_MANAGE); check_admin_referer(self::NONCE);
         $s=$this->settings();
         foreach(['default_form_id','login_page_id','form_page_id','cabinet_page_id','org_registry_page_id','privacy_page_id','otp_expiry','otp_resend','otp_max_attempts'] as $k)$s[$k]=absint($_POST[$k]??0);
-        foreach(['auth_otp_email','auth_otp_phone','auth_pin_enabled','auth_password_enabled','auth_show_tabs','auth_show_recovery','pin_device_only','design_mobile_steps','design_mobile_bottom_nav','design_quick_actions','design_document_search','auto_member_status_on_approval','member_card_member_edit','member_card_tab_enabled','hide_admin_for_non_admin','benefits_tab_enabled','redirect_after_registration','redirect_after_login'] as $k)$s[$k]=empty($_POST[$k])?0:1;
+        foreach(['auth_otp_email','auth_otp_phone','auth_pin_enabled','auth_password_enabled','auth_show_tabs','auth_show_recovery','pin_device_only','design_mobile_steps','design_quick_actions','design_document_search','auto_member_status_on_approval','member_card_member_edit','member_card_tab_enabled','hide_admin_for_non_admin','benefits_tab_enabled','redirect_after_registration','redirect_after_login'] as $k)$s[$k]=empty($_POST[$k])?0:1;
         $primary=sanitize_hex_color(wp_unslash($_POST['design_primary']??''));
         $s['design_primary']=$primary?:'#1565C0';
+        $s['design_mobile_nav_style']=in_array(($_POST['design_mobile_nav_style']??''),['top','bottom_icons_text','bottom_icons_only'],true)?$_POST['design_mobile_nav_style']:'bottom_icons_text';
+        $navIcons=[]; $navShort=[]; $navIconPost=(array)($_POST['nav_icon']??[]); $navShortPost=(array)($_POST['nav_short']??[]);
+        foreach ($this->builtin_tab_labels() as $slug=>$label) {
+            $icon=sanitize_text_field((string)wp_unslash($navIconPost[$slug]??''));
+            if ($icon!=='') { $navIcons[$slug]=mb_substr($icon,0,40); }
+            $short=sanitize_text_field((string)wp_unslash($navShortPost[$slug]??''));
+            if ($short!=='') { $navShort[$slug]=mb_substr($short,0,16); }
+        }
+        $s['nav_tab_icons']=$navIcons;
+        $s['nav_tab_short']=$navShort;
         $allowedSensitive=[];
         foreach(explode(',',(string)wp_unslash($_POST['member_card_sensitive_fields']??'')) as $sensitiveKey){$sensitiveKey=sanitize_key(trim($sensitiveKey));if($sensitiveKey)$allowedSensitive[]=$sensitiveKey;}
         $s['member_card_sensitive_fields']=implode(',',array_values(array_unique($allowedSensitive)));
@@ -2312,18 +2379,10 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
         foreach($loginHistory as $event){if($this->is_login_action($event->action)){$lastLogin=$event->created_at;break;}}
         $canManageOrg=current_user_can(ZAU_Certificate_PDF_Generator::CAP_ORG_MANAGE)||current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE)||current_user_can('manage_options');
         $customTabs=$this->available_custom_tabs($uid,$canManageOrg);
-        $customTabIcons=[];
-        $tabLabels=[
-            'home'=>'Главная',
-            'documents'=>'Документы',
-            'submissions'=>'Заявления',
-            'card'=>'Личная карточка',
-            'benefits'=>'Акции и скидки',
-            'members'=>'Участники',
-            'registry'=>'Реестр организации',
-            'info'=>'Материалы',
-            'logins'=>'История входов',
-        ];
+        $designSettings=$this->settings();
+        $tabLabels=$this->builtin_tab_labels();
+        $customTabIcons=(array)($designSettings['nav_tab_icons']??[]);
+        $tabShortLabels=(array)($designSettings['nav_tab_short']??[]);
         foreach($customTabs as $slug=>$customTab){$tabLabels[$slug]=$customTab['label'];$customTabIcons[$slug]=$customTab['icon'];}
         $requestedTabs=array_values(array_unique(array_filter(array_map('sanitize_key',explode(',',(string)$atts['tabs'])))));
         if(($atts['custom_tabs']??'yes')!=='no')$requestedTabs=array_values(array_unique(array_merge($requestedTabs,array_keys($customTabs))));
@@ -2340,10 +2399,12 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
         $activeTab=in_array($requestedActive,$enabledTabs,true)?$requestedActive:$enabledTabs[0];
         $currentUrl=remove_query_arg('zau_tab',home_url(wp_unslash($_SERVER['REQUEST_URI']??'/')));
         $autoAssigned=false;
-        $designSettings=$this->settings();
         $showQuickActions=$this->shortcode_switch($atts['quick_actions']??'inherit',!empty($designSettings['design_quick_actions']));
         $showDocumentSearch=$this->shortcode_switch($atts['document_search']??'inherit',!empty($designSettings['design_document_search']));
-        $mobileBottomNav=$this->shortcode_switch($atts['mobile_bottom_nav']??'inherit',!empty($designSettings['design_mobile_bottom_nav']));
+        $navStyle=in_array(($designSettings['design_mobile_nav_style']??''),['top','bottom_icons_text','bottom_icons_only'],true)?$designSettings['design_mobile_nav_style']:'bottom_icons_text';
+        $mobileNavAtt=strtolower(trim((string)($atts['mobile_bottom_nav']??'inherit')));
+        if(in_array($mobileNavAtt,['0','no','off','false'],true)){$navStyle='top';}
+        elseif(in_array($mobileNavAtt,['1','yes','on','true'],true)&&$navStyle==='top'){$navStyle='bottom_icons_text';}
         $showMemberCard=$this->shortcode_switch($atts['member_card']??'inherit',!empty($designSettings['member_card_tab_enabled']));
         if(!$showMemberCard)$enabledTabs=array_values(array_diff($enabledTabs,['card']));
         if(!$enabledTabs)$enabledTabs=['home','documents','submissions','info','logins'];
@@ -2352,7 +2413,7 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
         $pinMode=in_array(($designSettings['pin_setup_mode']??'optional'),['off','optional','required'],true)?$designSettings['pin_setup_mode']:'optional';
         $showPinPrompt=!empty($designSettings['auth_pin_enabled'])&&$pinMode!=='off'&&!get_user_meta($uid,'zau_login_pin_hash',true)&&!get_user_meta($uid,'zau_pin_prompt_dismissed',true);
         ob_start(); ?>
-        <div class="zau-cabinet zau-aqniet-cabinet<?php echo $mobileBottomNav?' has-mobile-bottom-nav':'';?>" data-zau-cabinet data-zau-cabinet-tabs data-zau-active-tab="<?php echo esc_attr($activeTab);?>">
+        <div class="zau-cabinet zau-aqniet-cabinet zau-nav-style-<?php echo esc_attr($navStyle);?>" data-zau-cabinet data-zau-cabinet-tabs data-zau-active-tab="<?php echo esc_attr($activeTab);?>">
             <header class="zau-cabinet-hero">
                 <div class="zau-cabinet-person">
                     <span class="zau-cabinet-avatar"><?php echo get_avatar($uid,72,'','', ['class'=>'zau-cabinet-avatar-image']);?></span>
@@ -2369,7 +2430,8 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
                     $isActive=$tab===$activeTab;
                     $url=add_query_arg('zau_tab',$tab,$currentUrl);
                 ?>
-                    <a id="zau-tab-<?php echo esc_attr($tab);?>" role="tab" aria-selected="<?php echo $isActive?'true':'false';?>" aria-controls="zau-<?php echo esc_attr($tab);?>" tabindex="<?php echo $isActive?'0':'-1';?>" class="<?php echo $isActive?'is-active':'';?>" data-zau-tab="<?php echo esc_attr($tab);?>" href="<?php echo esc_url($url);?>"><?php $icon=$customTabIcons[$tab]??''; if($icon):?><span class="zau-tab-icon<?php echo strpos($icon,'dashicons-')===0?' dashicons '.esc_attr($icon):'';?>"><?php if(strpos($icon,'dashicons-')!==0)echo esc_html($icon);?></span><?php endif;?><?php echo esc_html($tabLabels[$tab]);?></a>
+                    <?php $icon=$customTabIcons[$tab]??''; $shortLabel=$tabShortLabels[$tab]??$this->auto_short_label($tabLabels[$tab]); ?>
+                    <a id="zau-tab-<?php echo esc_attr($tab);?>" role="tab" aria-selected="<?php echo $isActive?'true':'false';?>" aria-controls="zau-<?php echo esc_attr($tab);?>" tabindex="<?php echo $isActive?'0':'-1';?>" class="<?php echo $isActive?'is-active':'';?>" data-zau-tab="<?php echo esc_attr($tab);?>" href="<?php echo esc_url($url);?>"><?php if($icon):?><span class="zau-tab-icon<?php echo strpos($icon,'dashicons-')===0?' dashicons '.esc_attr($icon):'';?>"><?php if(strpos($icon,'dashicons-')!==0)echo esc_html($icon);?></span><?php endif;?><span class="zau-tab-label-full"><?php echo esc_html($tabLabels[$tab]);?></span><span class="zau-tab-label-short"><?php echo esc_html($shortLabel);?></span></a>
                 <?php endforeach;?>
             </nav>
 

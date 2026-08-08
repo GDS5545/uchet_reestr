@@ -249,6 +249,8 @@
 /* 2.8.6 — собственные вкладки кабинета */
 .zau-cabinet-nav .zau-tab-icon{display:inline-flex;align-items:center;justify-content:center;margin-right:7px;line-height:1;font-size:1.05em}
 .zau-cabinet-nav .zau-tab-icon.dashicons{width:1.1em;height:1.1em;font-size:1.1em}
+/* 2.25 — короткое название показывается только в мобильной нижней панели (см. aqniet-blue.css) */
+.zau-cabinet-nav .zau-tab-label-short{display:none}
 .zau-custom-tab-panel{min-width:0}
 .zau-custom-tab-panel > :first-child{margin-top:0}
 .zau-custom-tab-panel > :last-child{margin-bottom:0}
