@@ -115,6 +115,7 @@ final class ZAU_Union_Module {
         add_action('wp_ajax_zau_union_document_data_for_user', [$this, 'ajax_document_data_for_user']);
         add_action('wp_ajax_zau_union_export_org_registry_pdf', [$this, 'ajax_export_org_registry_pdf']);
         add_action('wp_ajax_zau_union_save_registry_style', [$this, 'ajax_save_registry_style']);
+        add_action('wp_ajax_zau_union_registry_page', [$this, 'ajax_registry_page']);
         add_action('wp_logout', [$this, 'log_logout'], 10, 1);
         add_action('zau_cert_template_saved', [$this, 'auto_link_saved_template'], 10, 2);
         add_action('zau_union_repair_exit_documents_cron', [$this, 'repair_exit_documents_cron']);
@@ -3948,12 +3949,126 @@ $xref
                 'organization_bin'=>(string)($org->bin ?? get_user_meta($user->ID,'zau_organization_bin',true)),
                 'phone'=>(string)get_user_meta($user->ID,'zau_phone',true),
                 'email'=>(string)$user->user_email,
+                // ИИН нужен только для поиска (совпадение по цифрам) — в таблицу, экспорт
+                // и другой вывод не попадает, как и в остальном плагине этот файл замаскирован.
+                'iin'=>preg_replace('/\D/','',(string)get_user_meta($user->ID,'zau_profile_iin',true)),
                 'status'=>(string)(get_user_meta($user->ID,'zau_member_status',true) ?: 'Регистрация не завершена'),
                 'submission_count'=>(int)($submission->submission_count ?? 0),
                 'documents'=>$docs,
             ];
         }
         return $rows;
+    }
+
+    // Общая фильтрация строк реестра — используется и для постраничной подгрузки
+    // (AJAX), и при экспорте «всё, что подходит под текущий поиск» без выбранных
+    // галочек. Логика зеркалит клиентский JS-фильтр в initOrganizationRegistry().
+    private function filter_registry_rows($rows, $filters) {
+        $name = trim(function_exists('mb_strtolower') ? mb_strtolower((string)($filters['name'] ?? ''), 'UTF-8') : strtolower((string)($filters['name'] ?? '')));
+        $dateFrom = (string)($filters['date_from'] ?? '');
+        $dateTo = (string)($filters['date_to'] ?? '');
+        $orgId = absint($filters['organization'] ?? 0);
+        $phone = preg_replace('/\D/', '', (string)($filters['phone'] ?? ''));
+        $email = trim(strtolower((string)($filters['email'] ?? '')));
+        $document = trim((string)($filters['document'] ?? ''));
+        $iin = preg_replace('/\D/', '', (string)($filters['iin'] ?? ''));
+        if ($name === '' && $dateFrom === '' && $dateTo === '' && !$orgId && $phone === '' && $email === '' && $document === '' && $iin === '') {
+            return $rows;
+        }
+        return array_values(array_filter($rows, function($row) use ($name, $dateFrom, $dateTo, $orgId, $phone, $email, $document, $iin) {
+            if ($name !== '') {
+                $rowName = function_exists('mb_strtolower') ? mb_strtolower($row['full_name'], 'UTF-8') : strtolower($row['full_name']);
+                if (strpos($rowName, $name) === false) { return false; }
+            }
+            if ($dateFrom !== '' && substr((string)$row['registration_date'], 0, 10) < $dateFrom) { return false; }
+            if ($dateTo !== '' && substr((string)$row['registration_date'], 0, 10) > $dateTo) { return false; }
+            if ($orgId && (int)$row['organization_id'] !== $orgId) { return false; }
+            if ($phone !== '' && strpos(preg_replace('/\D/', '', $row['phone']), $phone) === false) { return false; }
+            if ($email !== '' && strpos(strtolower($row['email']), $email) === false) { return false; }
+            if ($iin !== '' && (empty($row['iin']) || strpos($row['iin'], $iin) === false)) { return false; }
+            if ($document !== '') {
+                $docNames = array_values(array_filter(array_map(function($d) { return $d['name']; }, $row['documents'])));
+                if ($document === '__has__' && !$docNames) { return false; }
+                elseif ($document === '__none__' && $docNames) { return false; }
+                elseif (!in_array($document, ['__has__', '__none__'], true) && !in_array($document, $docNames, true)) { return false; }
+            }
+            return true;
+        }));
+    }
+
+    private function registry_request_filters() {
+        return [
+            'name'=>(string)wp_unslash($_POST['f_name'] ?? $_GET['f_name'] ?? ''),
+            'date_from'=>(string)wp_unslash($_POST['f_date_from'] ?? $_GET['f_date_from'] ?? ''),
+            'date_to'=>(string)wp_unslash($_POST['f_date_to'] ?? $_GET['f_date_to'] ?? ''),
+            'organization'=>(string)wp_unslash($_POST['f_organization'] ?? $_GET['f_organization'] ?? ''),
+            'phone'=>(string)wp_unslash($_POST['f_phone'] ?? $_GET['f_phone'] ?? ''),
+            'email'=>(string)wp_unslash($_POST['f_email'] ?? $_GET['f_email'] ?? ''),
+            'document'=>(string)wp_unslash($_POST['f_document'] ?? $_GET['f_document'] ?? ''),
+            'iin'=>(string)wp_unslash($_POST['f_iin'] ?? $_GET['f_iin'] ?? ''),
+        ];
+    }
+
+    // Экспорт «всё, что подходит» (ничего не отмечено галочками) должен применять те
+    // же фильтры поиска, что сейчас видит пользователь на странице — иначе постраничная
+    // подгрузка (только 50 строк в DOM) привела бы к экспорту одной страницы вместо
+    // всех отфильтрованных строк.
+    private function apply_registry_request_filters_if_unselected($rows, $wasSelected) {
+        if ($wasSelected) { return $rows; }
+        return $this->filter_registry_rows($rows, $this->registry_request_filters());
+    }
+
+    private function render_registry_row($row) {
+        $doc_names = array_values(array_filter(array_map(function($doc) { return $doc['name']; }, $row['documents'])));
+        $search_name = function_exists('mb_strtolower') ? mb_strtolower($row['full_name'], 'UTF-8') : strtolower($row['full_name']);
+        $search_phone = preg_replace('/\D/', '', $row['phone']);
+        $search_email = strtolower($row['email']);
+        ob_start(); ?>
+        <tr data-zau-registry-row data-user-id="<?php echo (int)$row['user_id'];?>" data-name="<?php echo esc_attr($search_name);?>" data-date="<?php echo esc_attr(substr($row['registration_date'],0,10));?>" data-organization="<?php echo (int)$row['organization_id'];?>" data-phone="<?php echo esc_attr($search_phone);?>" data-email="<?php echo esc_attr($search_email);?>" data-documents="<?php echo esc_attr(wp_json_encode($doc_names,JSON_UNESCAPED_UNICODE));?>">
+            <td data-label="Выбор"><input type="checkbox" data-zau-registry-check value="<?php echo (int)$row['user_id'];?>"></td>
+            <td data-label="ФИО" data-col="name"><strong><?php echo esc_html($row['full_name']);?></strong><small><?php echo esc_html($row['status']);?></small></td>
+            <td data-label="Дата регистрации" data-col="date"><?php echo esc_html($row['registration_display']);?></td>
+            <td data-label="Организация" data-col="organization"><strong><?php echo esc_html($row['organization'] ?: 'Не назначена');?></strong><?php if($row['organization_bin']):?><small>БИН <?php echo esc_html($row['organization_bin']);?></small><?php endif;?></td>
+            <td data-label="Телефон" data-col="phone"><a href="tel:<?php echo esc_attr(preg_replace('/[^+0-9]/','',$row['phone']));?>"><?php echo esc_html($row['phone'] ?: '—');?></a></td>
+            <td data-label="Email" data-col="email"><a href="mailto:<?php echo esc_attr($row['email']);?>"><?php echo esc_html($row['email'] ?: '—');?></a></td>
+            <td data-label="Документы" data-col="documents"><div class="zau-registry-docs"><?php if(!$row['documents']):?><span class="zau-muted">Нет документов</span><?php endif;?><?php foreach($row['documents'] as $doc):?><div class="zau-registry-doc"><span><strong><?php echo esc_html($doc['name']);?></strong><small><?php echo esc_html($doc['number']);?></small></span><?php if($doc['ready']&&$doc['view_url']):?><a class="zau-registry-doc-button" target="_blank" rel="noopener" href="<?php echo esc_url($doc['view_url']);?>">Просмотр</a><a class="zau-registry-doc-button" href="<?php echo esc_url($doc['download_url']);?>">Скачать</a><?php else:?><em>готовится</em><?php endif;?></div><?php endforeach;?></div></td>
+        </tr>
+        <?php return ob_get_clean();
+    }
+
+    public function ajax_registry_page() {
+        check_ajax_referer(self::NONCE, 'nonce');
+        if (!is_user_logged_in()) { wp_send_json_error(['message'=>'Сначала войдите в систему.'], 401); }
+        if (!current_user_can(ZAU_Certificate_PDF_Generator::CAP_ORG_MANAGE) && !current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE) && !current_user_can('manage_options')) {
+            wp_send_json_error(['message'=>'У вас нет доступа к реестру организации.'], 403);
+        }
+        $rows = $this->organization_registry_rows($this->allowed_registry_member_ids(get_current_user_id()));
+        // Экспорт PDF собирается на клиенте из HTML-строк (canvas), поэтому ему нужны
+        // именно те строки, что попали под выбор/поиск, — не только текущая страница.
+        $explicitIds = array_values(array_unique(array_filter(array_map('absint', explode(',', (string)wp_unslash($_POST['ids'] ?? ''))))));
+        if ($explicitIds) {
+            $byId = [];
+            foreach ($rows as $row) { $byId[$row['user_id']] = $row; }
+            $slice = array_values(array_filter(array_map(function($id) use ($byId) { return $byId[$id] ?? null; }, $explicitIds)));
+            $html = '';
+            foreach ($slice as $row) { $html .= $this->render_registry_row($row); }
+            wp_send_json_success(['html'=>$html, 'total'=>count($slice), 'page'=>1, 'total_pages'=>1, 'per_page'=>count($slice), 'shown'=>count($slice)]);
+        }
+        $filtered = $this->filter_registry_rows($rows, $this->registry_request_filters());
+        if (!empty($_POST['all'])) {
+            $slice = array_slice($filtered, 0, 3000);
+            $html = '';
+            foreach ($slice as $row) { $html .= $this->render_registry_row($row); }
+            wp_send_json_success(['html'=>$html, 'total'=>count($filtered), 'page'=>1, 'total_pages'=>1, 'per_page'=>count($slice), 'shown'=>count($slice)]);
+        }
+        $perPage = 50;
+        $total = count($filtered);
+        $totalPages = max(1, (int)ceil($total / $perPage));
+        $page = max(1, min($totalPages, absint($_POST['page'] ?? 1)));
+        $slice = array_slice($filtered, ($page - 1) * $perPage, $perPage);
+        $html = '';
+        foreach ($slice as $row) { $html .= $this->render_registry_row($row); }
+        wp_send_json_success(['html'=>$html, 'total'=>$total, 'page'=>$page, 'total_pages'=>$totalPages, 'per_page'=>$perPage, 'shown'=>count($slice)]);
     }
 
     public function organization_registry_shortcode($atts = []) {
@@ -3971,11 +4086,19 @@ $xref
         }
         asort($organizations); asort($document_types);
         $registryStyle = $this->registry_style_for_user(get_current_user_id());
+        // Отрисовываем только первую страницу (50 строк) сразу — остальное подгружается
+        // AJAX-ом по мере пролистывания/поиска, чтобы страница кабинета не тормозила
+        // на организациях с большим количеством участников.
+        $perPage = 50;
+        $total = count($rows);
+        $totalPages = max(1, (int)ceil($total / $perPage));
+        $page1 = array_slice($rows, 0, $perPage);
         ob_start(); ?>
-        <div class="zau-org-registry<?php echo $embedded?' is-embedded':'';?>" data-zau-org-registry data-pdf-action="zau_union_export_org_registry_pdf" data-zau-registry-style="<?php echo esc_attr(wp_json_encode($registryStyle, JSON_UNESCAPED_UNICODE)); ?>">
+        <div class="zau-org-registry<?php echo $embedded?' is-embedded':'';?>" data-zau-org-registry data-pdf-action="zau_union_export_org_registry_pdf" data-zau-registry-style="<?php echo esc_attr(wp_json_encode($registryStyle, JSON_UNESCAPED_UNICODE)); ?>" data-per-page="<?php echo (int)$perPage;?>" data-total-pages="<?php echo (int)$totalPages;?>" data-total="<?php echo (int)$total;?>">
             <?php if(!$embedded):?><div class="zau-org-registry-head"><div><h2>Реестр участников организации</h2><p>Доступны только участники организаций, назначенных вам администратором.</p></div><a class="zau-union-button zau-secondary-button" href="<?php echo esc_url($this->settings()['cabinet_page_id'] ? get_permalink((int)$this->settings()['cabinet_page_id']) : home_url('/lk-profsoyuz/')); ?>">Личный кабинет</a></div><?php endif;?>
             <div class="zau-org-registry-filters">
                 <label>ФИО<input type="search" data-filter="name" placeholder="Введите ФИО"></label>
+                <label>ИИН<input type="search" inputmode="numeric" data-filter="iin" placeholder="12 цифр или часть"></label>
                 <label>Дата от<input type="date" data-filter="date_from"></label>
                 <label>Дата до<input type="date" data-filter="date_to"></label>
                 <label>Организация<select data-filter="organization"><option value="">Все организации</option><?php foreach($organizations as $id=>$name):?><option value="<?php echo (int)$id; ?>"><?php echo esc_html($name); ?></option><?php endforeach;?></select></label>
@@ -3985,8 +4108,8 @@ $xref
                 <button type="button" class="zau-link-button" data-zau-registry-reset>Сбросить фильтры</button>
             </div>
             <div class="zau-org-registry-toolbar">
-                <label class="zau-registry-select-all"><input type="checkbox" data-zau-registry-select-all> Выбрать видимые</label>
-                <span data-zau-registry-count>Показано: <?php echo count($rows); ?></span>
+                <label class="zau-registry-select-all"><input type="checkbox" data-zau-registry-select-all> Выбрать все на странице</label>
+                <span data-zau-registry-count>Показано: <?php echo count($page1);?> из <?php echo (int)$total;?></span>
                 <div class="zau-org-registry-actions">
                     <button type="button" class="zau-union-button zau-secondary-button" data-zau-registry-format>Оформление</button>
                     <button type="button" class="zau-link-button" data-zau-registry-format-clear hidden>Сбросить оформление</button>
@@ -3995,29 +4118,21 @@ $xref
                     <button type="button" class="zau-union-button zau-secondary-button" data-zau-registry-zip>Скачать документы ZIP</button>
                 </div>
             </div>
-            <p class="zau-registry-hint">Если отмечены строки — экспортируются только они. Если ничего не отмечено — экспортируются все строки, оставшиеся после фильтрации.</p>
+            <p class="zau-registry-hint">Список загружается страницами по <?php echo (int)$perPage;?>. Если отмечены строки (на любой странице) — экспортируются только они. Если ничего не отмечено — экспортируются все строки, подходящие под текущий поиск.</p>
             <p class="zau-registry-hint zau-registry-format-hint" data-zau-registry-format-hint hidden>Режим оформления включён: кликните по ячейке, строке (слева) или заголовку столбца, чтобы задать цвет и жирность — как в Excel. Повторное нажатие «Оформление» выключает режим.</p>
             <div class="zau-org-registry-message" data-zau-registry-message></div>
-            <div class="zau-org-registry-table-wrap"><table class="zau-org-registry-table"><thead><tr><th></th><th data-col="name">ФИО</th><th data-col="date">Дата регистрации</th><th data-col="organization">Наименование предприятия, организации</th><th data-col="phone">Телефон</th><th data-col="email">Email</th><th data-col="documents">Документы</th></tr></thead><tbody>
-            <?php if(!$rows):?><tr><td colspan="7">Участники не найдены.</td></tr><?php endif;?>
-            <?php foreach($rows as $row):
-                $doc_names = array_values(array_filter(array_map(function($doc){ return $doc['name']; }, $row['documents'])));
-                $search_name = function_exists('mb_strtolower') ? mb_strtolower($row['full_name'],'UTF-8') : strtolower($row['full_name']);
-                $search_phone = preg_replace('/\D/','',$row['phone']);
-                $search_email = strtolower($row['email']);
-            ?>
-                <tr data-zau-registry-row data-user-id="<?php echo (int)$row['user_id'];?>" data-name="<?php echo esc_attr($search_name);?>" data-date="<?php echo esc_attr(substr($row['registration_date'],0,10));?>" data-organization="<?php echo (int)$row['organization_id'];?>" data-phone="<?php echo esc_attr($search_phone);?>" data-email="<?php echo esc_attr($search_email);?>" data-documents="<?php echo esc_attr(wp_json_encode($doc_names,JSON_UNESCAPED_UNICODE));?>">
-                    <td data-label="Выбор"><input type="checkbox" data-zau-registry-check value="<?php echo (int)$row['user_id'];?>"></td>
-                    <td data-label="ФИО" data-col="name"><strong><?php echo esc_html($row['full_name']);?></strong><small><?php echo esc_html($row['status']);?></small></td>
-                    <td data-label="Дата регистрации" data-col="date"><?php echo esc_html($row['registration_display']);?></td>
-                    <td data-label="Организация" data-col="organization"><strong><?php echo esc_html($row['organization'] ?: 'Не назначена');?></strong><?php if($row['organization_bin']):?><small>БИН <?php echo esc_html($row['organization_bin']);?></small><?php endif;?></td>
-                    <td data-label="Телефон" data-col="phone"><a href="tel:<?php echo esc_attr(preg_replace('/[^+0-9]/','',$row['phone']));?>"><?php echo esc_html($row['phone'] ?: '—');?></a></td>
-                    <td data-label="Email" data-col="email"><a href="mailto:<?php echo esc_attr($row['email']);?>"><?php echo esc_html($row['email'] ?: '—');?></a></td>
-                    <td data-label="Документы" data-col="documents"><div class="zau-registry-docs"><?php if(!$row['documents']):?><span class="zau-muted">Нет документов</span><?php endif;?><?php foreach($row['documents'] as $doc):?><div class="zau-registry-doc"><span><strong><?php echo esc_html($doc['name']);?></strong><small><?php echo esc_html($doc['number']);?></small></span><?php if($doc['ready']&&$doc['view_url']):?><a class="zau-registry-doc-button" target="_blank" rel="noopener" href="<?php echo esc_url($doc['view_url']);?>">Просмотр</a><a class="zau-registry-doc-button" href="<?php echo esc_url($doc['download_url']);?>">Скачать</a><?php else:?><em>готовится</em><?php endif;?></div><?php endforeach;?></div></td>
-                </tr>
-            <?php endforeach;?></tbody></table></div>
+            <div class="zau-org-registry-table-wrap"><table class="zau-org-registry-table"><thead><tr><th></th><th data-col="name">ФИО</th><th data-col="date">Дата регистрации</th><th data-col="organization">Наименование предприятия, организации</th><th data-col="phone">Телефон</th><th data-col="email">Email</th><th data-col="documents">Документы</th></tr></thead><tbody data-zau-registry-tbody>
+            <?php if(!$page1):?><tr><td colspan="7">Участники не найдены.</td></tr><?php endif;?>
+            <?php foreach($page1 as $row) { echo $this->render_registry_row($row); } ?>
+            </tbody></table></div>
+            <div class="zau-org-registry-pagination" data-zau-registry-pagination<?php echo $totalPages<2?' hidden':'';?>>
+                <button type="button" class="zau-union-button zau-secondary-button" data-zau-registry-prev>‹ Назад</button>
+                <span data-zau-registry-page-label>Страница 1 из <?php echo (int)$totalPages;?></span>
+                <button type="button" class="zau-union-button zau-secondary-button" data-zau-registry-next>Вперёд ›</button>
+            </div>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php'));?>" data-zau-registry-server-form hidden>
                 <?php wp_nonce_field('zau_union_org_registry_export');?><input type="hidden" name="action" value=""><input type="hidden" name="member_ids" value="">
+                <input type="hidden" name="f_name"><input type="hidden" name="f_iin"><input type="hidden" name="f_date_from"><input type="hidden" name="f_date_to"><input type="hidden" name="f_organization"><input type="hidden" name="f_phone"><input type="hidden" name="f_email"><input type="hidden" name="f_document">
             </form>
         </div>
         <?php return ob_get_clean();
@@ -4026,7 +4141,9 @@ $xref
     public function export_org_registry_excel() {
         $this->require_org_registry_access();
         check_admin_referer('zau_union_org_registry_export');
-        $rows = $this->organization_registry_rows($this->authorized_registry_member_ids($this->requested_registry_member_ids()));
+        $requestedIds = $this->requested_registry_member_ids();
+        $rows = $this->organization_registry_rows($this->authorized_registry_member_ids($requestedIds));
+        $rows = $this->apply_registry_request_filters_if_unselected($rows, (bool)$requestedIds);
         $filename = 'reestr-organizacii-'.wp_date('Y-m-d-His').'.xls';
         nocache_headers();
         header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
@@ -4054,7 +4171,9 @@ $xref
         $this->require_org_registry_access();
         check_admin_referer('zau_union_org_registry_export');
         if (!class_exists('ZipArchive')) { wp_die('На сервере не установлено расширение PHP ZipArchive. Отдельные PDF можно скачать кнопками в реестре.'); }
-        $rows = $this->organization_registry_rows($this->authorized_registry_member_ids($this->requested_registry_member_ids()));
+        $requestedIds = $this->requested_registry_member_ids();
+        $rows = $this->organization_registry_rows($this->authorized_registry_member_ids($requestedIds));
+        $rows = $this->apply_registry_request_filters_if_unselected($rows, (bool)$requestedIds);
         $tmp = wp_tempnam('zau-org-documents.zip');
         if (!$tmp) { wp_die('Не удалось создать временный ZIP-файл.'); }
         $zip = new ZipArchive();
@@ -4129,7 +4248,7 @@ $xref
         if(!$memberIds)return '<div class="zau-org-members">'.($showHeading?'<h3>Участники моей организации или филиала</h3>':'').'<p>Пока нет привязанных участников. Администратор должен назначить вам организации или филиалы.</p></div>';
         $users=get_users(['include'=>$memberIds,'number'=>1000,'orderby'=>'display_name','order'=>'ASC']);global $wpdb;$cabinetUrl=$this->settings()['cabinet_page_id']?get_permalink((int)$this->settings()['cabinet_page_id']):home_url('/lk-profsoyuz/');
         ob_start(); ?>
-        <section class="zau-org-members" data-zau-org-members><?php if($showHeading):?><div class="zau-org-members-head"><div><h3>Участники моей организации или филиала</h3><p>Статусы, согласование вступления и личные карточки.</p></div><div class="zau-org-members-tools"><a class="zau-union-button zau-secondary-button" href="<?php echo esc_url($this->organization_registry_url());?>">Открыть полный реестр</a><input type="search" data-zau-member-search placeholder="Найти по ФИО, телефону или email"></div></div><?php endif;?>
+        <section class="zau-org-members" data-zau-org-members><?php if($showHeading):?><div class="zau-org-members-head"><div><h3>Участники моей организации или филиала</h3><p>Статусы, согласование вступления и личные карточки.</p></div><div class="zau-org-members-tools"><a class="zau-union-button zau-secondary-button" href="<?php echo esc_url($this->organization_registry_url());?>">Открыть полный реестр</a><input type="search" data-zau-member-search placeholder="Найти по ФИО, email, телефону или ИИН"></div></div><?php endif;?>
         <div class="zau-org-members-message" data-zau-manager-message></div>
         <div class="zau-org-members-bulk" data-zau-member-bulk-bar><label><input type="checkbox" data-zau-select-all-members> Выбрать видимых</label><select data-zau-bulk-member-action><option value="set_status">Установить статус</option><option value="approve">Одобрить вступление</option><option value="revision">На доработку</option><option value="reject">Отклонить</option></select><select data-zau-bulk-member-status><?php foreach($this->membership_statuses() as $option):?><option><?php echo esc_html($option);?></option><?php endforeach;?></select><input type="text" data-zau-bulk-member-note placeholder="Комментарий"><button type="button" class="zau-union-button" data-zau-apply-member-bulk>Применить</button></div>
         <div class="zau-org-member-list">
@@ -4137,7 +4256,8 @@ $xref
             $orgId=$this->member_org_id($member->ID);$org=$orgId?$wpdb->get_row($wpdb->prepare("SELECT name,bin FROM {$this->orgs_table} WHERE id=%d",$orgId)):null;$branch=$this->get_branch($this->member_branch_id($member->ID));
             $phone=get_user_meta($member->ID,'zau_phone',true);$status=get_user_meta($member->ID,'zau_member_status',true)?:'Регистрация не завершена';$approval=$this->membership_approval_status($member->ID);$cardStatus=get_user_meta($member->ID,'zau_member_card_review_status',true)?:'draft';
             $submissionCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT form_id) FROM {$this->submissions_table} WHERE user_id=%d",$member->ID));$docCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT NULLIF(template_id,0)) + SUM(template_id=0) FROM {$this->docs_table} WHERE user_id=%d",$member->ID));
-            $searchSource=$member->display_name.' '.$member->user_email.' '.$phone.' '.($org->name??'').' '.($branch->name??'');$searchText=function_exists('mb_strtolower')?mb_strtolower($searchSource,'UTF-8'):strtolower($searchSource);
+            $memberIin=preg_replace('/\D/','',(string)get_user_meta($member->ID,'zau_profile_iin',true));
+            $searchSource=$member->display_name.' '.$member->user_email.' '.$phone.' '.$memberIin.' '.($org->name??'').' '.($branch->name??'');$searchText=function_exists('mb_strtolower')?mb_strtolower($searchSource,'UTF-8'):strtolower($searchSource);
             $cardUrl=add_query_arg(['zau_tab'=>'card','member_id'=>$member->ID],$cabinetUrl);
         ?>
         <article class="zau-org-member-card" data-search="<?php echo esc_attr($searchText);?>" data-member-id="<?php echo (int)$member->ID;?>"><div class="zau-org-member-check"><input type="checkbox" data-zau-member-select value="<?php echo (int)$member->ID;?>"></div><div class="zau-org-member-main"><strong><?php echo esc_html($member->display_name);?></strong><span><?php echo esc_html(trim($member->user_email.' '.$phone));?></span><small><?php echo esc_html($org?($org->name.' · БИН '.$org->bin):'Организация не назначена');?></small><small><?php echo esc_html($branch?'Филиал: '.$branch->name:'Филиал не назначен');?></small><small>Заявок: <?php echo $submissionCount;?> · Документов: <?php echo $docCount;?> · Карточка: <?php echo esc_html($cardStatus);?></small><span class="zau-status-pill"><?php echo esc_html($this->membership_approval_label($approval));?></span></div><div class="zau-org-member-control"><select data-zau-member-status="<?php echo (int)$member->ID;?>"><?php foreach($this->membership_statuses() as $option):?><option <?php selected($status,$option);?>><?php echo esc_html($option);?></option><?php endforeach;?></select><button type="button" class="zau-union-button zau-small-button" data-zau-save-member="<?php echo (int)$member->ID;?>">Сохранить статус</button><button type="button" class="zau-union-button zau-small-button" data-zau-quick-approve="<?php echo (int)$member->ID;?>">Одобрить вступление</button><a class="zau-union-button zau-secondary-button zau-small-button" href="<?php echo esc_url($cardUrl);?>">Личная карточка</a><?php if(current_user_can('manage_options')):?><a class="zau-union-button zau-secondary-button zau-small-button" href="<?php echo esc_url($this->view_as_cabinet_url($member->ID));?>" target="_blank">Смотреть кабинет</a><?php endif;?></div></article>
