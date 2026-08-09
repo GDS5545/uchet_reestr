@@ -152,7 +152,7 @@
         return map;
     }
     function remapStatLabel(key){
-        const labels = {submissions_updated:'Заявок обновлено',fields_filled:'Полей заполнено',documents_updated:'Документов обновлено',unchanged:'Без изменений',errors:'Ошибки'};
+        const labels = {submissions_updated:'Заявок обновлено',fields_filled:'Полей заполнено',documents_updated:'Документов обновлено',accounts_updated:'Аккаунтов участников обновлено',unchanged:'Без изменений',errors:'Ошибки'};
         return labels[key] || key;
     }
     function renderRemapProgress($section, job){

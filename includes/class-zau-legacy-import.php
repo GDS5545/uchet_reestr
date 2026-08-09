@@ -988,7 +988,7 @@ final class ZAU_Legacy_Import {
             'cursor' => 0,
             'processed' => 0,
             'total' => $total,
-            'stats' => ['submissions_updated'=>0,'fields_filled'=>0,'documents_updated'=>0,'unchanged'=>0,'errors'=>0],
+            'stats' => ['submissions_updated'=>0,'fields_filled'=>0,'documents_updated'=>0,'accounts_updated'=>0,'unchanged'=>0,'errors'=>0],
             'report' => [],
             'log' => [],
             'status' => 'running',
@@ -1046,9 +1046,34 @@ final class ZAU_Legacy_Import {
             // как заявка уже была исправлена ранее) никогда не находил бы устаревшее ФИО
             // в уже созданном документе, потому что "изменений в заявке" в этом проходе нет.
             if ($syncDocuments && !empty($data['full_name'])) {
+                $newName = trim((string)$data['full_name']);
+                // Синхронизируем и сам аккаунт участника (wp_users.display_name), а не только
+                // заявку и документ. Раньше эта строка обновляла только документ, поэтому
+                // неправильное имя оставалось в display_name — и именно оно используется везде,
+                // где плагин показывает или ищет участников (списки, реестр, поиск по ФИО),
+                // так что человек оставался "невидимым" по своему настоящему имени.
+                if ($newName !== '') {
+                    $wpUser = get_userdata((int)$row->user_id);
+                    if ($wpUser && $wpUser->display_name !== $newName) {
+                        $job['report'][] = [
+                            'submission_id'=>(int)$row->id, 'document_id'=>0,
+                            'old_full_name'=>'[аккаунт] ' . $wpUser->display_name, 'new_full_name'=>$newName,
+                            'old_organization'=>'', 'new_organization'=>'',
+                        ];
+                        if (!$dryRun) {
+                            $nameParts = preg_split('/\s+/u', $newName, 2);
+                            wp_update_user([
+                                'ID'=>(int)$row->user_id,
+                                'display_name'=>$newName,
+                                'first_name'=>$nameParts[0] ?? '',
+                                'last_name'=>$nameParts[1] ?? '',
+                            ]);
+                        }
+                        $job['stats']['accounts_updated'] = ($job['stats']['accounts_updated'] ?? 0) + 1;
+                    }
+                }
                 $docs = $wpdb->get_results($wpdb->prepare("SELECT id,full_name,organization FROM {$this->docs_table} WHERE source_submission_id=%d", $row->id));
                 foreach ($docs as $doc) {
-                    $newName = trim((string)$data['full_name']);
                     $newOrg = trim((string)($data['organization'] ?? $doc->organization));
                     if ($newName === '' || ((string)$doc->full_name === $newName && (string)$doc->organization === $newOrg)) { continue; }
                     $job['report'][] = [
@@ -1799,7 +1824,7 @@ final class ZAU_Legacy_Import {
                     <div class="zau-ui-table-wrap"><table class="widefat striped"><thead><tr><th>Поле в заявке</th><th>Примеры значений</th><th>Заявок с этим полем</th><th>Сопоставить с</th></tr></thead><tbody data-zau-remap-table></tbody></table></div>
                     <div class="zau-ui-options">
                         <label><input type="checkbox" data-zau-remap-overwrite> Перезаписывать поле, если оно уже заполнено</label>
-                        <label><input type="checkbox" data-zau-remap-sync checked> Обновить ФИО и организацию в уже созданных документах этих заявок</label>
+                        <label><input type="checkbox" data-zau-remap-sync checked> Обновить ФИО и организацию в уже созданных документах и в самом аккаунте участника (личный кабинет, списки, реестр, поиск)</label>
                     </div>
                     <div class="zau-ui-actions">
                         <button type="button" class="button button-secondary" data-zau-remap-start="dry">Только проверить</button>
