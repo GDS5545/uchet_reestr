@@ -4247,8 +4247,36 @@ $xref
         $memberIds=array_values(array_diff(array_map('absint',(array)$memberIds),[$uid]));
         if(!$memberIds)return '<div class="zau-org-members">'.($showHeading?'<h3>Участники моей организации или филиала</h3>':'').'<p>Пока нет привязанных участников. Администратор должен назначить вам организации или филиалы.</p></div>';
         $users=get_users(['include'=>$memberIds,'number'=>1000,'orderby'=>'display_name','order'=>'ASC']);global $wpdb;$cabinetUrl=$this->settings()['cabinet_page_id']?get_permalink((int)$this->settings()['cabinet_page_id']):home_url('/lk-profsoyuz/');
+        // Документы всех участников списка одним запросом (как в реестре организации),
+        // чтобы кнопка «Документы» у каждой карточки открывала предпросмотр в попапе
+        // без отдельного запроса на каждого участника.
+        $memberDocsMap = [];
+        if ($memberIds) {
+            $ph = implode(',', array_fill(0, count($memberIds), '%d'));
+            $docsRows = $wpdb->get_results($wpdb->prepare("SELECT d.*,t.name template_name FROM {$this->docs_table} d LEFT JOIN {$this->templates_table} t ON t.id=d.template_id WHERE d.user_id IN ($ph) ORDER BY d.user_id ASC,d.id DESC", $memberIds));
+            $rawDocsMap = [];
+            foreach ((array)$docsRows as $doc) { $rawDocsMap[(int)$doc->user_id][] = $doc; }
+            $docController = ZAU_Certificate_PDF_Generator::instance();
+            foreach ($rawDocsMap as $memberId => $memberDocs) {
+                $list = [];
+                foreach ($this->dedupe_documents_by_template($memberDocs) as $doc) {
+                    $canAccess = $docController->user_can_access_document($doc, true);
+                    $list[] = [
+                        'id'=>(int)$doc->id,
+                        'name'=>(string)($doc->template_name ?: $doc->document_title),
+                        'number'=>(string)$doc->document_no,
+                        'ready'=>!empty($doc->pdf_url),
+                        'image_url'=>$canAccess && !empty($doc->image_url) ? $docController->secure_document_url($doc,'image') : '',
+                        'pdf_url'=>$canAccess && !empty($doc->pdf_url) ? $docController->secure_document_url($doc,'pdf') : '',
+                    ];
+                }
+                $memberDocsMap[$memberId] = $list;
+            }
+        }
         ob_start(); ?>
-        <section class="zau-org-members" data-zau-org-members><?php if($showHeading):?><div class="zau-org-members-head"><div><h3>Участники моей организации или филиала</h3><p>Статусы, согласование вступления и личные карточки.</p></div><div class="zau-org-members-tools"><a class="zau-union-button zau-secondary-button" href="<?php echo esc_url($this->organization_registry_url());?>">Открыть полный реестр</a><input type="search" data-zau-member-search placeholder="Найти по ФИО, email, телефону или ИИН"></div></div><?php endif;?>
+        <section class="zau-org-members is-compact" data-zau-org-members>
+            <?php if($showHeading):?><div class="zau-org-members-head"><h3>Участники моей организации или филиала</h3><p>Статусы, согласование вступления и личные карточки.</p></div><?php endif;?>
+            <div class="zau-org-members-tools"><input type="search" data-zau-member-search placeholder="Найти по ФИО, email, телефону или ИИН"><a class="zau-union-button zau-secondary-button" href="<?php echo esc_url($this->organization_registry_url());?>">Открыть полный реестр</a></div>
         <div class="zau-org-members-message" data-zau-manager-message></div>
         <div class="zau-org-members-bulk" data-zau-member-bulk-bar><label><input type="checkbox" data-zau-select-all-members> Выбрать видимых</label><select data-zau-bulk-member-action><option value="set_status">Установить статус</option><option value="approve">Одобрить вступление</option><option value="revision">На доработку</option><option value="reject">Отклонить</option></select><select data-zau-bulk-member-status><?php foreach($this->membership_statuses() as $option):?><option><?php echo esc_html($option);?></option><?php endforeach;?></select><input type="text" data-zau-bulk-member-note placeholder="Комментарий"><button type="button" class="zau-union-button" data-zau-apply-member-bulk>Применить</button></div>
         <div class="zau-org-member-list">
@@ -4259,8 +4287,32 @@ $xref
             $memberIin=preg_replace('/\D/','',(string)get_user_meta($member->ID,'zau_profile_iin',true));
             $searchSource=$member->display_name.' '.$member->user_email.' '.$phone.' '.$memberIin.' '.($org->name??'').' '.($branch->name??'');$searchText=function_exists('mb_strtolower')?mb_strtolower($searchSource,'UTF-8'):strtolower($searchSource);
             $cardUrl=add_query_arg(['zau_tab'=>'card','member_id'=>$member->ID],$cabinetUrl);
+            $memberDocs=$memberDocsMap[$member->ID]??[];
         ?>
-        <article class="zau-org-member-card" data-search="<?php echo esc_attr($searchText);?>" data-member-id="<?php echo (int)$member->ID;?>"><div class="zau-org-member-check"><input type="checkbox" data-zau-member-select value="<?php echo (int)$member->ID;?>"></div><div class="zau-org-member-main"><strong><?php echo esc_html($member->display_name);?></strong><span><?php echo esc_html(trim($member->user_email.' '.$phone));?></span><small><?php echo esc_html($org?($org->name.' · БИН '.$org->bin):'Организация не назначена');?></small><small><?php echo esc_html($branch?'Филиал: '.$branch->name:'Филиал не назначен');?></small><small>Заявок: <?php echo $submissionCount;?> · Документов: <?php echo $docCount;?> · Карточка: <?php echo esc_html($cardStatus);?></small><span class="zau-status-pill"><?php echo esc_html($this->membership_approval_label($approval));?></span></div><div class="zau-org-member-control"><select data-zau-member-status="<?php echo (int)$member->ID;?>"><?php foreach($this->membership_statuses() as $option):?><option <?php selected($status,$option);?>><?php echo esc_html($option);?></option><?php endforeach;?></select><button type="button" class="zau-union-button zau-small-button" data-zau-save-member="<?php echo (int)$member->ID;?>">Сохранить статус</button><button type="button" class="zau-union-button zau-small-button" data-zau-quick-approve="<?php echo (int)$member->ID;?>">Одобрить вступление</button><a class="zau-union-button zau-secondary-button zau-small-button" href="<?php echo esc_url($cardUrl);?>">Личная карточка</a><?php if(current_user_can('manage_options')):?><a class="zau-union-button zau-secondary-button zau-small-button" href="<?php echo esc_url($this->view_as_cabinet_url($member->ID));?>" target="_blank">Смотреть кабинет</a><?php endif;?></div></article>
+        <article class="zau-org-member-card" data-search="<?php echo esc_attr($searchText);?>" data-member-id="<?php echo (int)$member->ID;?>">
+            <div class="zau-org-member-check"><input type="checkbox" data-zau-member-select value="<?php echo (int)$member->ID;?>"></div>
+            <div class="zau-org-member-main">
+                <strong><?php echo esc_html($member->display_name);?></strong>
+                <span><?php echo esc_html(trim($member->user_email.' '.$phone));?></span>
+                <small><?php echo esc_html($org?($org->name.' · БИН '.$org->bin):'Организация не назначена');?><?php echo $branch?' · Филиал: '.esc_html($branch->name):'';?> · Заявок: <?php echo $submissionCount;?> · Карточка: <?php echo esc_html($cardStatus);?></small>
+                <span class="zau-status-pill"><?php echo esc_html($this->membership_approval_label($approval));?></span>
+            </div>
+            <div class="zau-org-member-control">
+                <select data-zau-member-status="<?php echo (int)$member->ID;?>"><?php foreach($this->membership_statuses() as $option):?><option <?php selected($status,$option);?>><?php echo esc_html($option);?></option><?php endforeach;?></select>
+                <button type="button" class="zau-union-button zau-small-button" data-zau-save-member="<?php echo (int)$member->ID;?>">Сохранить статус</button>
+                <button type="button" class="zau-union-button zau-small-button" data-zau-quick-approve="<?php echo (int)$member->ID;?>">Одобрить вступление</button>
+                <button type="button" class="zau-union-button zau-secondary-button zau-small-button" data-zau-toggle-member-docs<?php echo $memberDocs?'':' disabled';?>>Документы (<?php echo count($memberDocs);?>)</button>
+                <a class="zau-union-button zau-secondary-button zau-small-button" href="<?php echo esc_url($cardUrl);?>">Личная карточка</a>
+                <?php if(current_user_can('manage_options')):?><a class="zau-union-button zau-secondary-button zau-small-button" href="<?php echo esc_url($this->view_as_cabinet_url($member->ID));?>" target="_blank">Смотреть кабинет</a><?php endif;?>
+            </div>
+            <?php if($memberDocs):?>
+            <div class="zau-registry-docs zau-org-member-docs" data-zau-member-docs hidden>
+                <?php foreach($memberDocs as $doc):?>
+                <div class="zau-registry-doc"><span><strong><?php echo esc_html($doc['name']);?></strong><small><?php echo esc_html($doc['number']);?></small></span><?php if($doc['ready']&&($doc['image_url']||$doc['pdf_url'])):?><button type="button" class="zau-registry-doc-button" data-zau-document-preview data-preview-url="<?php echo esc_url($doc['image_url']);?>" data-preview-pdf-url="<?php echo esc_url($doc['pdf_url']);?>" data-preview-title="<?php echo esc_attr($doc['name']);?>">Просмотр</button><?php if($doc['pdf_url']):?><a class="zau-registry-doc-button" href="<?php echo esc_url($doc['pdf_url']);?>">Скачать</a><?php endif;?><?php else:?><em>готовится</em><?php endif;?></div>
+                <?php endforeach;?>
+            </div>
+            <?php endif;?>
+        </article>
         <?php endforeach;?></div></section><?php return ob_get_clean();
     }
 

@@ -19,6 +19,16 @@
 .zau-org-member-control{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
 .zau-org-member-control select{min-width:220px;padding:9px 10px;border:1px solid #ccd7d1;border-radius:9px;background:#fff}
 @media(max-width:760px){.zau-org-members-head{display:grid;align-items:stretch}.zau-org-members-head input{min-width:0;width:100%}.zau-org-member-card{grid-template-columns:1fr}.zau-org-member-control{justify-content:flex-start}.zau-org-member-control select{width:100%}}
+.zau-org-member-docs{grid-column:1/-1;margin-top:2px;min-width:0}
+/* 2.29 — компактный режим списка «Участники моей организации» */
+.zau-org-members.is-compact .zau-org-member-card{padding:10px 14px;gap:12px}
+.zau-org-members.is-compact .zau-org-member-main{gap:2px}
+.zau-org-members.is-compact .zau-org-member-main strong{font-size:15px}
+.zau-org-members.is-compact .zau-org-member-main span,.zau-org-members.is-compact .zau-org-member-main small{font-size:12px}
+.zau-org-members.is-compact .zau-org-member-control{gap:6px}
+.zau-org-members.is-compact .zau-org-member-control select{min-width:170px;padding:6px 8px;font-size:12px}
+.zau-org-members.is-compact .zau-org-member-control .zau-small-button{padding:6px 9px;font-size:12px}
+.zau-org-members.is-compact .zau-org-member-list{gap:8px}
 
 /* 2.4 — филиалы и адаптивный личный кабинет */
 .zau-branch-summary{margin-top:10px;padding:14px;border:1px solid #cfe1d7;border-radius:12px;background:#f5faf7;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px}.zau-branch-summary[hidden]{display:none}.zau-branch-summary>div{display:grid;gap:2px;min-width:0}.zau-branch-summary span{font-size:12px;color:#6b756f}.zau-branch-summary strong{font-size:14px;overflow-wrap:anywhere}.zau-branch-loading{grid-column:1/-1;color:#607068}
