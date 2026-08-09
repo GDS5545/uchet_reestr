@@ -977,6 +977,18 @@ final class ZAU_Legacy_Import {
         if (!$mapping) { wp_send_json_error(['message'=>'Не выбрано ни одного целевого поля.'], 400); }
         global $wpdb;
         $total = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->submissions_table} WHERE form_id=%d", $formId));
+        // Защита от "чужого" имени в ФИО: на старом сайте некоторые поля хранят имя того,
+        // кто оформлял/переносил заявку, а не самого заявителя. Если одно и то же значение
+        // предлагается сразу для многих разных заявок — это явный признак такого случая
+        // (у настоящего ФИО так не бывает), и такие строки не трогаем.
+        $suspiciousFullName = [];
+        foreach ($mapping as $rawKey => $target) {
+            if ($target !== 'full_name') { continue; }
+            $counts = $this->remap_value_frequency($formId, $rawKey);
+            foreach ($counts as $value => $count) {
+                if ($count >= 3) { $suspiciousFullName[$value] = $count; }
+            }
+        }
         $job = [
             'form_id' => $formId,
             'mapping' => $mapping,
@@ -985,18 +997,46 @@ final class ZAU_Legacy_Import {
                 'overwrite' => empty($_POST['overwrite']) ? 0 : 1,
                 'sync_documents' => empty($_POST['sync_documents']) ? 0 : 1,
             ],
+            'suspicious_full_name_values' => $suspiciousFullName,
             'cursor' => 0,
             'processed' => 0,
             'total' => $total,
-            'stats' => ['submissions_updated'=>0,'fields_filled'=>0,'documents_updated'=>0,'accounts_updated'=>0,'unchanged'=>0,'errors'=>0],
+            'stats' => ['submissions_updated'=>0,'fields_filled'=>0,'documents_updated'=>0,'accounts_updated'=>0,'unchanged'=>0,'skipped_suspicious'=>0,'errors'=>0],
             'report' => [],
             'log' => [],
             'status' => 'running',
             'started_at' => current_time('mysql'),
             'finished_at' => '',
         ];
+        if ($suspiciousFullName) {
+            $job['log'][] = 'Найдено подозрительных значений ФИО (встречаются у многих разных заявок, похоже на имя того, кто оформлял записи, а не заявителя): ' . count($suspiciousFullName) . '. Такие заявки/документы/аккаунты будут пропущены.';
+        }
         update_option($this->job_option_key('remap'), $job, false);
         wp_send_json_success($this->public_remap_job($job));
+    }
+
+    // Считает, сколько раз (после очистки от кода/даты) встречается каждое значение
+    // сырого поля $rawKey среди ВСЕХ заявок формы — используется, чтобы найти значения,
+    // которые не могут быть настоящим уникальным ФИО заявителя (см. suspicious_full_name_values).
+    private function remap_value_frequency($formId, $rawKey) {
+        global $wpdb;
+        $counts = [];
+        $lastId = 0;
+        do {
+            $rows = $wpdb->get_results($wpdb->prepare(
+                "SELECT id,data_json FROM {$this->submissions_table} WHERE form_id=%d AND id>%d ORDER BY id ASC LIMIT 500",
+                $formId, $lastId
+            ));
+            foreach ($rows as $row) {
+                $lastId = (int)$row->id;
+                $data = json_decode((string)$row->data_json, true);
+                if (!is_array($data) || !array_key_exists($rawKey, $data)) { continue; }
+                $value = $this->remap_clean_value(trim((string)$data[$rawKey]));
+                if ($value === '') { continue; }
+                $counts[$value] = ($counts[$value] ?? 0) + 1;
+            }
+        } while (count($rows) === 500);
+        return $counts;
     }
 
     public function ajax_remap_process() {
@@ -1010,6 +1050,7 @@ final class ZAU_Legacy_Import {
         $overwrite = !empty($job['options']['overwrite']);
         $syncDocuments = !empty($job['options']['sync_documents']);
         $batchSize = 150;
+        $suspicious = (array)($job['suspicious_full_name_values'] ?? []);
         $rows = $wpdb->get_results($wpdb->prepare(
             "SELECT id,user_id,data_json FROM {$this->submissions_table} WHERE form_id=%d AND id>%d ORDER BY id ASC LIMIT %d",
             $formId, (int)$job['cursor'], $batchSize
@@ -1021,10 +1062,12 @@ final class ZAU_Legacy_Import {
             if (!is_array($data)) { $job['stats']['errors']++; continue; }
             $changed = false;
             $filled = 0;
+            $hadSuspicious = false;
             foreach ($job['mapping'] as $rawKey => $target) {
                 if (!array_key_exists($rawKey, $data)) { continue; }
                 $value = $this->remap_clean_value(trim((string)$data[$rawKey]));
                 if ($value === '') { continue; }
+                if ($target === 'full_name' && isset($suspicious[$value])) { $hadSuspicious = true; continue; }
                 $current = trim((string)($data[$target] ?? ''));
                 if ($current !== '' && !$overwrite) { continue; }
                 if ($current === $value) { continue; }
@@ -1032,6 +1075,7 @@ final class ZAU_Legacy_Import {
                 $changed = true;
                 $filled++;
             }
+            if ($hadSuspicious) { $job['stats']['skipped_suspicious']++; }
             if ($changed) {
                 $job['stats']['submissions_updated']++;
                 $job['stats']['fields_filled'] += $filled;
@@ -1045,7 +1089,7 @@ final class ZAU_Legacy_Import {
             // поменялась в этом прогоне — иначе повторный запуск (или запуск после того,
             // как заявка уже была исправлена ранее) никогда не находил бы устаревшее ФИО
             // в уже созданном документе, потому что "изменений в заявке" в этом проходе нет.
-            if ($syncDocuments && !empty($data['full_name'])) {
+            if ($syncDocuments && !empty($data['full_name']) && !isset($suspicious[trim((string)$data['full_name'])])) {
                 $newName = trim((string)$data['full_name']);
                 // Синхронизируем и сам аккаунт участника (wp_users.display_name), а не только
                 // заявку и документ. Раньше эта строка обновляла только документ, поэтому
