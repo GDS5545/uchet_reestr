@@ -206,6 +206,23 @@
   color:var(--zau-muted)!important;
 }
 .zau-auth .zau-auth-submit,.zau-auth-method .zau-union-button{background:var(--zau-brand)!important}
+/* 2.27 — настраиваемые цвет/скругление/размер/жирность кнопок входа и регистрации.
+   Большие карточки выбора «Зарегистрироваться/Войти» (.zau-auth-flow-tab) сюда
+   намеренно не входят — у них свой фирменный вид (мягкий градиент, значок),
+   который простая заливка только испортила бы. */
+.zau-auth-tab.is-active,
+.zau-auth .zau-auth-submit,
+.zau-auth-method .zau-union-button{
+  background:var(--zau-auth-btn-bg)!important;
+  color:var(--zau-auth-btn-text)!important;
+  border-color:var(--zau-auth-btn-bg)!important;
+}
+.zau-auth-tab,
+.zau-auth-submit{
+  border-radius:var(--zau-auth-btn-radius)!important;
+  font-size:var(--zau-auth-btn-font-size)!important;
+  font-weight:var(--zau-auth-btn-font-weight)!important;
+}
 .zau-auth-sent-note{background:var(--zau-success-soft);color:var(--zau-success)}
 
 /* Registration form */
@@ -462,6 +479,14 @@
 .zau-document-modal-head button{display:grid;place-items:center;width:38px;height:38px;border-radius:50%;background:#EEF2F7;color:#344054}
 .zau-document-modal-body{background:#F1F5F9}
 .zau-document-modal-body img,.zau-document-modal-body iframe{border-radius:12px;background:#fff}
+/* 2.27 — расположение крестика закрытия попапов (настройка админа) */
+:root[data-zau-modal-close="left"] .zau-document-modal-head{flex-direction:row-reverse}
+:root[data-zau-modal-close="center"] .zau-document-modal-dialog{overflow:visible}
+:root[data-zau-modal-close="center"] .zau-document-modal-head{justify-content:center}
+:root[data-zau-modal-close="center"] .zau-document-modal-head button{
+  position:absolute;top:-18px;left:50%;transform:translateX(-50%);
+  box-shadow:0 8px 20px rgba(15,23,42,.28);
+}
 
 /* Organization manager / registry */
 .zau-org-registry{

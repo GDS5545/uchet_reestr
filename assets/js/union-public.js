@@ -340,6 +340,41 @@ function initCabinetTabs(scope=document){
 }
 function initBenefitModals(){document.querySelectorAll('[data-zau-benefit-modal]').forEach(modal=>{if(modal.dataset.zauBenefitReady==='1')return;modal.dataset.zauBenefitReady='1';const section=modal.closest('.zau-benefits');if(!section)return;const body=modal.querySelector('[data-zau-benefit-modal-body]');const titleEl=modal.querySelector('[data-zau-benefit-modal-title]');let lastFocus=null;const close=()=>{modal.hidden=true;document.documentElement.classList.remove('zau-modal-open');body.innerHTML='';if(lastFocus)lastFocus.focus();};const open=card=>{const tpl=card.querySelector('template.zau-benefit-detail-template');if(!tpl)return;lastFocus=card;titleEl.textContent=card.querySelector('h4')?.textContent||'';body.innerHTML='';body.appendChild(tpl.content.cloneNode(true));modal.hidden=false;document.documentElement.classList.add('zau-modal-open');modal.querySelector('.zau-document-modal-head button')?.focus();};section.addEventListener('click',event=>{if(event.target.closest('a'))return;const card=event.target.closest('[data-zau-benefit-open]');if(!card||!section.contains(card))return;open(card);});section.addEventListener('keydown',event=>{if(event.key!=='Enter'&&event.key!==' ')return;const card=event.target.closest('[data-zau-benefit-open]');if(!card)return;event.preventDefault();open(card);});modal.querySelectorAll('[data-zau-modal-close]').forEach(el=>el.addEventListener('click',close));document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.hidden)close();});});}
 function initPinPrompt(){const modal=document.querySelector('[data-zau-pin-prompt-modal]');if(!modal||modal.dataset.zauPinPromptReady==='1')return;modal.dataset.zauPinPromptReady='1';document.documentElement.classList.add('zau-modal-open');const valueInput=modal.querySelector('[data-zau-pin-prompt-value]');const confirmInput=modal.querySelector('[data-zau-pin-prompt-confirm]');const errorEl=modal.querySelector('[data-zau-pin-prompt-error]');const saveButton=modal.querySelector('[data-zau-pin-prompt-save]');const min=parseInt(modal.dataset.pinMin,10)||4;const max=parseInt(modal.dataset.pinMax,10)||8;const showError=msg=>{if(!errorEl)return;errorEl.textContent=msg||'';errorEl.hidden=!msg;};const close=()=>{modal.hidden=true;document.documentElement.classList.remove('zau-modal-open');};const dismiss=async()=>{close();try{await ajax('zau_union_dismiss_pin_prompt',{});}catch(e){}};modal.querySelectorAll('[data-zau-pin-prompt-dismiss]').forEach(el=>el.addEventListener('click',dismiss));saveButton?.addEventListener('click',async()=>{const pin=(valueInput?.value||'').trim();const confirmVal=(confirmInput?.value||'').trim();if(!/^\d+$/.test(pin)||pin.length<min||pin.length>max){showError(`PIN должен содержать от ${min} до ${max} цифр.`);return;}if(pin!==confirmVal){showError('PIN и подтверждение не совпадают.');return;}showError('');saveButton.disabled=true;try{await ajax('zau_union_set_login_pin',{pin,pin_confirm:confirmVal});close();}catch(e){showError(e.message||'Не удалось сохранить PIN.');}finally{saveButton.disabled=false;}});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.hidden)dismiss();});}
+function initSecurityModal(){
+  const openButton=document.querySelector('[data-zau-open-security]');
+  const modal=document.querySelector('[data-zau-security-modal]');
+  if(!openButton||!modal||modal.dataset.zauSecurityReady==='1')return;
+  modal.dataset.zauSecurityReady='1';
+  const close=()=>{modal.hidden=true;document.documentElement.classList.remove('zau-modal-open');};
+  const open=()=>{modal.hidden=false;document.documentElement.classList.add('zau-modal-open');};
+  openButton.addEventListener('click',open);
+  modal.querySelectorAll('[data-zau-security-dismiss]').forEach(el=>el.addEventListener('click',close));
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.hidden)close();});
+  const pinMin=parseInt(modal.dataset.pinMin,10)||4,pinMax=parseInt(modal.dataset.pinMax,10)||8;
+  const pinValue=modal.querySelector('[data-zau-security-pin-value]'),pinConfirm=modal.querySelector('[data-zau-security-pin-confirm]'),pinError=modal.querySelector('[data-zau-security-pin-error]'),pinSave=modal.querySelector('[data-zau-security-pin-save]');
+  const showPinError=msg=>{if(!pinError)return;pinError.textContent=msg||'';pinError.hidden=!msg;};
+  pinSave?.addEventListener('click',async()=>{
+    const pin=(pinValue?.value||'').trim(),confirmVal=(pinConfirm?.value||'').trim();
+    if(!/^\d+$/.test(pin)||pin.length<pinMin||pin.length>pinMax){showPinError(`PIN должен содержать от ${pinMin} до ${pinMax} цифр.`);return;}
+    if(pin!==confirmVal){showPinError('PIN и подтверждение не совпадают.');return;}
+    showPinError('');pinSave.disabled=true;
+    try{await ajax('zau_union_set_login_pin',{pin,pin_confirm:confirmVal});showPinError('PIN сохранён.');if(pinValue)pinValue.value='';if(pinConfirm)pinConfirm.value='';}
+    catch(e){showPinError(e.message||'Не удалось сохранить PIN.');}
+    finally{pinSave.disabled=false;}
+  });
+  const pwCurrent=modal.querySelector('[data-zau-security-password-current]'),pwNew=modal.querySelector('[data-zau-security-password-new]'),pwConfirm=modal.querySelector('[data-zau-security-password-confirm]'),pwError=modal.querySelector('[data-zau-security-password-error]'),pwSave=modal.querySelector('[data-zau-security-password-save]');
+  const showPwError=msg=>{if(!pwError)return;pwError.textContent=msg||'';pwError.hidden=!msg;};
+  pwSave?.addEventListener('click',async()=>{
+    const current=pwCurrent?.value||'',next=pwNew?.value||'',confirmVal=pwConfirm?.value||'';
+    if(!current){showPwError('Введите текущий пароль.');return;}
+    if(next.length<8){showPwError('Новый пароль должен быть не короче 8 символов.');return;}
+    if(next!==confirmVal){showPwError('Новый пароль и подтверждение не совпадают.');return;}
+    showPwError('');pwSave.disabled=true;
+    try{await ajax('zau_union_change_password',{current_password:current,new_password:next,new_password_confirm:confirmVal});showPwError('Пароль изменён.');if(pwCurrent)pwCurrent.value='';if(pwNew)pwNew.value='';if(pwConfirm)pwConfirm.value='';}
+    catch(e){showPwError(e.message||'Не удалось изменить пароль.');}
+    finally{pwSave.disabled=false;}
+  });
+}
 function initAll(scope=document){
  initAuth(scope);
  initCabinetTabs(scope);
@@ -352,6 +387,7 @@ function initAll(scope=document){
  initOrganizationRegistry();
  initBenefitModals();
  initPinPrompt();
+ initSecurityModal();
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>initAll(document));else initAll(document);
 window.addEventListener('elementor/frontend/init',()=>{

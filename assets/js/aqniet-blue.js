@@ -8,6 +8,22 @@ function applyBrand(){
  document.documentElement.style.setProperty('--zau-brand',color);
 }
 
+function applyAuthButtonDesign(){
+ const root=document.documentElement;
+ const bg=/^#[0-9a-f]{6}$/i.test(App.designAuthButtonBg||'')?App.designAuthButtonBg:'#1565C0';
+ const text=/^#[0-9a-f]{6}$/i.test(App.designAuthButtonText||'')?App.designAuthButtonText:'#ffffff';
+ const radius=parseInt(App.designAuthButtonRadius,10);
+ const fontSize=parseInt(App.designAuthButtonFontSize,10);
+ const weight=['400','600','700','800'].includes(String(App.designAuthButtonFontWeight))?App.designAuthButtonFontWeight:'700';
+ root.style.setProperty('--zau-auth-btn-bg',bg);
+ root.style.setProperty('--zau-auth-btn-text',text);
+ root.style.setProperty('--zau-auth-btn-radius',(Number.isFinite(radius)?radius:9)+'px');
+ root.style.setProperty('--zau-auth-btn-font-size',(Number.isFinite(fontSize)?fontSize:15)+'px');
+ root.style.setProperty('--zau-auth-btn-font-weight',weight);
+ const closePos=['right','center','left'].includes(App.designModalClosePosition)?App.designModalClosePosition:'right';
+ root.setAttribute('data-zau-modal-close',closePos);
+}
+
 function normalize(s){return String(s||'').toLocaleLowerCase('ru-RU').trim();}
 
 function initQuickLinks(scope=document){
@@ -127,7 +143,7 @@ function initStepForms(scope=document){
  scope.querySelectorAll?.('[data-zau-aqniet-steps="1"]').forEach(initStepForm);
 }
 
-function init(scope=document){applyBrand();initQuickLinks(scope);initDocumentSearch(scope);initStepForms(scope);}
+function init(scope=document){applyBrand();applyAuthButtonDesign();initQuickLinks(scope);initDocumentSearch(scope);initStepForms(scope);}
 ready(()=>init(document));
 window.addEventListener('elementor/frontend/init',()=>{
  if(window.elementorFrontend?.hooks)window.elementorFrontend.hooks.addAction('frontend/element_ready/global',scope=>init(scope?.[0]||scope||document));

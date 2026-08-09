@@ -109,6 +109,7 @@ final class ZAU_Union_Module {
         add_action('wp_ajax_zau_union_reveal_sensitive', [$this, 'ajax_reveal_sensitive']);
         add_action('wp_ajax_zau_union_set_login_pin', [$this, 'ajax_set_login_pin']);
         add_action('wp_ajax_zau_union_dismiss_pin_prompt', [$this, 'ajax_dismiss_pin_prompt']);
+        add_action('wp_ajax_zau_union_change_password', [$this, 'ajax_change_password']);
         add_action('wp_ajax_nopriv_zau_union_get_branch', [$this, 'ajax_get_branch']);
         add_action('wp_ajax_zau_union_get_branch', [$this, 'ajax_get_branch']);
         add_action('wp_ajax_zau_union_document_data_for_user', [$this, 'ajax_document_data_for_user']);
@@ -826,6 +827,12 @@ final class ZAU_Union_Module {
             'design_mobile_nav_style'=>'bottom_icons_text',
             'nav_tab_icons'=>['home'=>'⌂','documents'=>'▤','submissions'=>'✓','card'=>'🪪','benefits'=>'★','members'=>'♙','registry'=>'☷','info'=>'i','logins'=>'↻'],
             'nav_tab_short'=>[],
+            'design_modal_close_position'=>'right',
+            'design_auth_button_bg'=>'#1565C0',
+            'design_auth_button_text'=>'#ffffff',
+            'design_auth_button_radius'=>9,
+            'design_auth_button_font_size'=>15,
+            'design_auth_button_font_weight'=>'700',
         ]);
         // До 2.25 «нижняя навигация» была галочкой да/нет. Если новый параметр
         // ещё не сохранялся явно, переносим прежний выбор в новый список вариантов,
@@ -969,6 +976,12 @@ final class ZAU_Union_Module {
             'designMobileNavStyle'=>in_array(($settings['design_mobile_nav_style']??''),['top','bottom_icons_text','bottom_icons_only'],true)?$settings['design_mobile_nav_style']:'bottom_icons_text',
             'designQuickActions'=>!empty($settings['design_quick_actions']),
             'designDocumentSearch'=>!empty($settings['design_document_search']),
+            'designModalClosePosition'=>in_array(($settings['design_modal_close_position']??''),['right','center','left'],true)?$settings['design_modal_close_position']:'right',
+            'designAuthButtonBg'=>sanitize_hex_color($settings['design_auth_button_bg']??'')?:'#1565C0',
+            'designAuthButtonText'=>sanitize_hex_color($settings['design_auth_button_text']??'')?:'#ffffff',
+            'designAuthButtonRadius'=>max(0,min(40,(int)($settings['design_auth_button_radius']??9))),
+            'designAuthButtonFontSize'=>max(10,min(24,(int)($settings['design_auth_button_font_size']??15))),
+            'designAuthButtonFontWeight'=>in_array(($settings['design_auth_button_font_weight']??''),['400','600','700','800'],true)?$settings['design_auth_button_font_weight']:'700',
         ]);
     }
 
@@ -1989,6 +2002,28 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
             </td></tr>
             <tr><th>Быстрые действия</th><td><label><input type="checkbox" name="design_quick_actions" value="1" <?php checked(!empty($s['design_quick_actions']));?>> Показывать карточки быстрых действий на главной</label></td></tr>
             <tr><th>Поиск документов</th><td><label><input type="checkbox" name="design_document_search" value="1" <?php checked(!empty($s['design_document_search']));?>> Показывать поиск и фильтр во вкладке «Документы»</label></td></tr>
+            <tr><th>Крестик закрытия попапов</th><td>
+                <select name="design_modal_close_position">
+                    <option value="right" <?php selected($s['design_modal_close_position'],'right');?>>Справа в шапке окна (по умолчанию)</option>
+                    <option value="center" <?php selected($s['design_modal_close_position'],'center');?>>По центру, приподнят над окном</option>
+                    <option value="left" <?php selected($s['design_modal_close_position'],'left');?>>Слева в шапке окна</option>
+                </select>
+                <p class="description">Касается всех всплывающих окон: предпросмотр документа, PIN, акции и скидки, смена PIN/пароля.</p>
+            </td></tr>
+        </table>
+        <h2>Кнопки входа и регистрации</h2>
+        <p class="description">Цвет, скругление, размер и жирность шрифта кнопок на экране входа/регистрации («Войти», «Зарегистрироваться», переключатели способа входа).</p>
+        <table class="form-table">
+            <tr><th>Цвет фона</th><td><input type="color" name="design_auth_button_bg" value="<?php echo esc_attr($s['design_auth_button_bg']?:'#1565C0');?>"></td></tr>
+            <tr><th>Цвет текста</th><td><input type="color" name="design_auth_button_text" value="<?php echo esc_attr($s['design_auth_button_text']?:'#ffffff');?>"></td></tr>
+            <tr><th>Скругление углов</th><td><input type="number" min="0" max="40" name="design_auth_button_radius" value="<?php echo (int)$s['design_auth_button_radius'];?>"> px</td></tr>
+            <tr><th>Размер шрифта</th><td><input type="number" min="10" max="24" name="design_auth_button_font_size" value="<?php echo (int)$s['design_auth_button_font_size'];?>"> px</td></tr>
+            <tr><th>Жирность шрифта</th><td><select name="design_auth_button_font_weight">
+                <option value="400" <?php selected($s['design_auth_button_font_weight'],'400');?>>Обычный</option>
+                <option value="600" <?php selected($s['design_auth_button_font_weight'],'600');?>>Средний</option>
+                <option value="700" <?php selected($s['design_auth_button_font_weight'],'700');?>>Полужирный</option>
+                <option value="800" <?php selected($s['design_auth_button_font_weight'],'800');?>>Жирный</option>
+            </select></td></tr>
         </table>
         <h2>Разделы кабинета — иконки и короткие названия</h2>
         <p class="description">Иконка показывается перед названием раздела всегда. Короткое название используется в узкой панели на телефоне (варианты «иконка и короткое название» выше) — если оставить пустым, оно возьмётся из первого слова полного названия.</p>
@@ -2031,6 +2066,12 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
         }
         $s['nav_tab_icons']=$navIcons;
         $s['nav_tab_short']=$navShort;
+        $s['design_modal_close_position']=in_array(($_POST['design_modal_close_position']??''),['right','center','left'],true)?$_POST['design_modal_close_position']:'right';
+        $s['design_auth_button_bg']=sanitize_hex_color(wp_unslash($_POST['design_auth_button_bg']??''))?:'#1565C0';
+        $s['design_auth_button_text']=sanitize_hex_color(wp_unslash($_POST['design_auth_button_text']??''))?:'#ffffff';
+        $s['design_auth_button_radius']=max(0,min(40,absint($_POST['design_auth_button_radius']??9)));
+        $s['design_auth_button_font_size']=max(10,min(24,absint($_POST['design_auth_button_font_size']??15)));
+        $s['design_auth_button_font_weight']=in_array(($_POST['design_auth_button_font_weight']??''),['400','600','700','800'],true)?$_POST['design_auth_button_font_weight']:'700';
         $allowedSensitive=[];
         foreach(explode(',',(string)wp_unslash($_POST['member_card_sensitive_fields']??'')) as $sensitiveKey){$sensitiveKey=sanitize_key(trim($sensitiveKey));if($sensitiveKey)$allowedSensitive[]=$sensitiveKey;}
         $s['member_card_sensitive_fields']=implode(',',array_values(array_unique($allowedSensitive)));
@@ -2344,6 +2385,14 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
         return $this->dedupe_documents_by_template($docs);
     }
 
+    // Ссылка «Смотреть кабинет» для супер-админа (только manage_options) — открывает
+    // личный кабинет конкретного участника в режиме только для чтения. Токен привязан
+    // к конкретному ID участника, поэтому ссылку нельзя переиспользовать для другого.
+    private function view_as_cabinet_url($userId) {
+        $cabinetUrl = $this->settings()['cabinet_page_id'] ? get_permalink((int)$this->settings()['cabinet_page_id']) : home_url('/lk-profsoyuz/');
+        return add_query_arg(['zau_view_as'=>(int)$userId,'zau_view_as_nonce'=>wp_create_nonce('zau_view_as_'.(int)$userId)], $cabinetUrl);
+    }
+
     public function cabinet_shortcode($atts=[]) {
         if(!is_user_logged_in())return $this->auth_shortcode($atts);
         if(!defined('DONOTCACHEPAGE')){ define('DONOTCACHEPAGE', true); }
@@ -2358,8 +2407,18 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
             'member_card'=>'inherit',
         ],(array)$atts,'zau_union_cabinet');
         global $wpdb;
-        $uid=get_current_user_id();
-        $user=wp_get_current_user();
+        $viewAsId=0; $viewAsUser=null;
+        if (current_user_can('manage_options')) {
+            $requestedViewAs=absint($_GET['zau_view_as']??0);
+            if ($requestedViewAs && wp_verify_nonce((string)($_GET['zau_view_as_nonce']??''),'zau_view_as_'.$requestedViewAs)) {
+                $candidate=get_user_by('id',$requestedViewAs);
+                if ($candidate) { $viewAsId=$requestedViewAs; $viewAsUser=$candidate; }
+            }
+        }
+        $isViewAs=(bool)$viewAsId;
+        $uid=$isViewAs?$viewAsId:get_current_user_id();
+        $user=$isViewAs?$viewAsUser:wp_get_current_user();
+        if ($isViewAs) { $this->log('admin_view_as_cabinet','user',$uid,'admin_id='.get_current_user_id()); }
         $status=get_user_meta($uid,'zau_member_status',true)?:'Заявление ещё не рассмотрено';
         $phone=get_user_meta($uid,'zau_phone',true);
         $submissions=$this->latest_submissions_for_user($uid);
@@ -2377,7 +2436,11 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
         $canView=!empty($certSettings['owner_pdf_view']);
         $lastLogin='';
         foreach($loginHistory as $event){if($this->is_login_action($event->action)){$lastLogin=$event->created_at;break;}}
-        $canManageOrg=current_user_can(ZAU_Certificate_PDF_Generator::CAP_ORG_MANAGE)||current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE)||current_user_can('manage_options');
+        // В режиме «Смотреть кабинет» показываем ровно то, что видит сам участник, —
+        // проверяем права ЦЕЛЕВОГО пользователя, а не реального супер-админа за экраном.
+        $canManageOrg=$isViewAs
+            ? (user_can($uid,ZAU_Certificate_PDF_Generator::CAP_ORG_MANAGE)||user_can($uid,ZAU_Certificate_PDF_Generator::CAP_MANAGE)||user_can($uid,'manage_options'))
+            : (current_user_can(ZAU_Certificate_PDF_Generator::CAP_ORG_MANAGE)||current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE)||current_user_can('manage_options'));
         $customTabs=$this->available_custom_tabs($uid,$canManageOrg);
         $designSettings=$this->settings();
         $tabLabels=$this->builtin_tab_labels();
@@ -2413,7 +2476,13 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
         $pinMode=in_array(($designSettings['pin_setup_mode']??'optional'),['off','optional','required'],true)?$designSettings['pin_setup_mode']:'optional';
         $showPinPrompt=!empty($designSettings['auth_pin_enabled'])&&$pinMode!=='off'&&!get_user_meta($uid,'zau_login_pin_hash',true)&&!get_user_meta($uid,'zau_pin_prompt_dismissed',true);
         ob_start(); ?>
-        <div class="zau-cabinet zau-aqniet-cabinet zau-nav-style-<?php echo esc_attr($navStyle);?>" data-zau-cabinet data-zau-cabinet-tabs data-zau-active-tab="<?php echo esc_attr($activeTab);?>">
+        <div class="zau-cabinet zau-aqniet-cabinet zau-nav-style-<?php echo esc_attr($navStyle);?><?php echo $isViewAs?' zau-view-as-readonly':'';?>" data-zau-cabinet data-zau-cabinet-tabs data-zau-active-tab="<?php echo esc_attr($activeTab);?>">
+            <?php if($isViewAs):?>
+            <div class="zau-view-as-banner" role="alert">
+                <span>👁 Режим просмотра (только чтение): вы смотрите кабинет участника <strong><?php echo esc_html($user->display_name);?></strong> от имени супер-администратора. Изменения в этом режиме не сохраняются.</span>
+                <a class="zau-union-button zau-secondary-button" data-zau-view-as-exit href="<?php echo esc_url(remove_query_arg(['zau_view_as','zau_view_as_nonce']));?>">Вернуться в свой кабинет</a>
+            </div>
+            <?php endif;?>
             <header class="zau-cabinet-hero">
                 <div class="zau-cabinet-person">
                     <span class="zau-cabinet-avatar"><?php echo get_avatar($uid,72,'','', ['class'=>'zau-cabinet-avatar-image']);?></span>
@@ -2421,6 +2490,7 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
                 </div>
                 <div class="zau-cabinet-hero-actions">
                     <div class="zau-member-status"><span>Статус членства</span><strong><?php echo esc_html($status);?></strong></div>
+                    <?php if(!$isViewAs&&(!empty($designSettings['auth_pin_enabled'])||!empty($designSettings['auth_password_enabled']))):?><button type="button" class="zau-union-button zau-secondary-button zau-small-button" data-zau-open-security>Сменить PIN / пароль</button><?php endif;?>
                     <a class="zau-cabinet-logout" href="<?php echo esc_url(wp_logout_url(home_url('/')));?>">Выйти</a>
                 </div>
             </header>
@@ -2582,6 +2652,41 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
                         </div>
                         <p class="zau-pin-prompt-error" data-zau-pin-prompt-error hidden></p>
                         <div class="zau-auth-actions"><button type="button" class="zau-union-button zau-auth-submit" data-zau-pin-prompt-save><span>Сохранить PIN</span></button><button type="button" class="zau-link-button" data-zau-pin-prompt-dismiss>Не сейчас</button></div>
+                    </div>
+                </div>
+            </div>
+            <?php endif;?>
+            <?php if(!$isViewAs&&(!empty($designSettings['auth_pin_enabled'])||!empty($designSettings['auth_password_enabled']))):?>
+            <div class="zau-document-modal zau-security-modal" data-zau-security-modal hidden data-pin-min="<?php echo (int)$designSettings['pin_min_length'];?>" data-pin-max="<?php echo (int)$designSettings['pin_max_length'];?>">
+                <div class="zau-document-modal-backdrop" data-zau-security-dismiss></div>
+                <div class="zau-document-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="zau-security-title">
+                    <div class="zau-document-modal-head"><strong id="zau-security-title">Смена PIN и пароля</strong><button type="button" data-zau-security-dismiss aria-label="Закрыть">×</button></div>
+                    <div class="zau-document-modal-body zau-security-body">
+                        <?php if(!empty($designSettings['auth_pin_enabled'])):?>
+                        <section class="zau-security-section">
+                            <h4>Постоянный PIN</h4>
+                            <p>Для входа без email и SMS.</p>
+                            <div class="zau-pin-prompt-form">
+                                <label>Новый PIN<input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="12" data-zau-security-pin-value autocomplete="new-password" placeholder="От <?php echo (int)$designSettings['pin_min_length'];?> до <?php echo (int)$designSettings['pin_max_length'];?> цифр"></label>
+                                <label>Повторите PIN<input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="12" data-zau-security-pin-confirm autocomplete="new-password"></label>
+                            </div>
+                            <p class="zau-pin-prompt-error" data-zau-security-pin-error hidden></p>
+                            <div class="zau-auth-actions"><button type="button" class="zau-union-button zau-auth-submit" data-zau-security-pin-save><span>Сохранить PIN</span></button></div>
+                        </section>
+                        <?php endif;?>
+                        <?php if(!empty($designSettings['auth_password_enabled'])):?>
+                        <section class="zau-security-section">
+                            <h4>Пароль</h4>
+                            <p>Для входа по логину/email и паролю.</p>
+                            <div class="zau-pin-prompt-form">
+                                <label>Текущий пароль<input type="password" autocomplete="current-password" data-zau-security-password-current></label>
+                                <label>Новый пароль<input type="password" autocomplete="new-password" data-zau-security-password-new placeholder="Не короче 8 символов"></label>
+                                <label>Повторите новый пароль<input type="password" autocomplete="new-password" data-zau-security-password-confirm></label>
+                            </div>
+                            <p class="zau-pin-prompt-error" data-zau-security-password-error hidden></p>
+                            <div class="zau-auth-actions"><button type="button" class="zau-union-button zau-auth-submit" data-zau-security-password-save><span>Сохранить пароль</span></button></div>
+                        </section>
+                        <?php endif;?>
                     </div>
                 </div>
             </div>
@@ -2925,6 +3030,25 @@ e-mail: ..., телефон"><?php echo esc_textarea($this->union_head_requisite
         if(!is_user_logged_in())wp_send_json_error(['message'=>'Сначала войдите в систему.'],401);
         update_user_meta(get_current_user_id(),'zau_pin_prompt_dismissed',1);
         wp_send_json_success(['message'=>'ok']);
+    }
+
+    public function ajax_change_password() {
+        check_ajax_referer(self::NONCE,'nonce');
+        if(!is_user_logged_in())wp_send_json_error(['message'=>'Сначала войдите в систему.'],401);
+        if(empty($this->settings()['auth_password_enabled']))wp_send_json_error(['message'=>'Смена пароля отключена администратором.'],403);
+        $uid=get_current_user_id(); $user=wp_get_current_user();
+        $current=(string)wp_unslash($_POST['current_password']??'');
+        $new=(string)wp_unslash($_POST['new_password']??'');
+        $confirm=(string)wp_unslash($_POST['new_password_confirm']??'');
+        if(!wp_check_password($current,$user->user_pass,$uid))wp_send_json_error(['message'=>'Текущий пароль указан неверно.'],400);
+        if(mb_strlen($new)<8)wp_send_json_error(['message'=>'Новый пароль должен быть не короче 8 символов.'],400);
+        if($new!==$confirm)wp_send_json_error(['message'=>'Новый пароль и подтверждение не совпадают.'],400);
+        wp_set_password($new,$uid);
+        // wp_set_password() завершает все сессии пользователя, включая текущую —
+        // сразу выдаём новую куку входа, чтобы участник не вылетел из кабинета.
+        wp_set_auth_cookie($uid,true);
+        $this->log('member_changed_password','user',$uid,'');
+        wp_send_json_success(['message'=>'Пароль изменён.']);
     }
 
     private function parse_destination($raw) {
@@ -4016,7 +4140,7 @@ $xref
             $searchSource=$member->display_name.' '.$member->user_email.' '.$phone.' '.($org->name??'').' '.($branch->name??'');$searchText=function_exists('mb_strtolower')?mb_strtolower($searchSource,'UTF-8'):strtolower($searchSource);
             $cardUrl=add_query_arg(['zau_tab'=>'card','member_id'=>$member->ID],$cabinetUrl);
         ?>
-        <article class="zau-org-member-card" data-search="<?php echo esc_attr($searchText);?>" data-member-id="<?php echo (int)$member->ID;?>"><div class="zau-org-member-check"><input type="checkbox" data-zau-member-select value="<?php echo (int)$member->ID;?>"></div><div class="zau-org-member-main"><strong><?php echo esc_html($member->display_name);?></strong><span><?php echo esc_html(trim($member->user_email.' '.$phone));?></span><small><?php echo esc_html($org?($org->name.' · БИН '.$org->bin):'Организация не назначена');?></small><small><?php echo esc_html($branch?'Филиал: '.$branch->name:'Филиал не назначен');?></small><small>Заявок: <?php echo $submissionCount;?> · Документов: <?php echo $docCount;?> · Карточка: <?php echo esc_html($cardStatus);?></small><span class="zau-status-pill"><?php echo esc_html($this->membership_approval_label($approval));?></span></div><div class="zau-org-member-control"><select data-zau-member-status="<?php echo (int)$member->ID;?>"><?php foreach($this->membership_statuses() as $option):?><option <?php selected($status,$option);?>><?php echo esc_html($option);?></option><?php endforeach;?></select><button type="button" class="zau-union-button zau-small-button" data-zau-save-member="<?php echo (int)$member->ID;?>">Сохранить статус</button><button type="button" class="zau-union-button zau-small-button" data-zau-quick-approve="<?php echo (int)$member->ID;?>">Одобрить вступление</button><a class="zau-union-button zau-secondary-button zau-small-button" href="<?php echo esc_url($cardUrl);?>">Личная карточка</a></div></article>
+        <article class="zau-org-member-card" data-search="<?php echo esc_attr($searchText);?>" data-member-id="<?php echo (int)$member->ID;?>"><div class="zau-org-member-check"><input type="checkbox" data-zau-member-select value="<?php echo (int)$member->ID;?>"></div><div class="zau-org-member-main"><strong><?php echo esc_html($member->display_name);?></strong><span><?php echo esc_html(trim($member->user_email.' '.$phone));?></span><small><?php echo esc_html($org?($org->name.' · БИН '.$org->bin):'Организация не назначена');?></small><small><?php echo esc_html($branch?'Филиал: '.$branch->name:'Филиал не назначен');?></small><small>Заявок: <?php echo $submissionCount;?> · Документов: <?php echo $docCount;?> · Карточка: <?php echo esc_html($cardStatus);?></small><span class="zau-status-pill"><?php echo esc_html($this->membership_approval_label($approval));?></span></div><div class="zau-org-member-control"><select data-zau-member-status="<?php echo (int)$member->ID;?>"><?php foreach($this->membership_statuses() as $option):?><option <?php selected($status,$option);?>><?php echo esc_html($option);?></option><?php endforeach;?></select><button type="button" class="zau-union-button zau-small-button" data-zau-save-member="<?php echo (int)$member->ID;?>">Сохранить статус</button><button type="button" class="zau-union-button zau-small-button" data-zau-quick-approve="<?php echo (int)$member->ID;?>">Одобрить вступление</button><a class="zau-union-button zau-secondary-button zau-small-button" href="<?php echo esc_url($cardUrl);?>">Личная карточка</a><?php if(current_user_can('manage_options')):?><a class="zau-union-button zau-secondary-button zau-small-button" href="<?php echo esc_url($this->view_as_cabinet_url($member->ID));?>" target="_blank">Смотреть кабинет</a><?php endif;?></div></article>
         <?php endforeach;?></div></section><?php return ob_get_clean();
     }
 
@@ -4566,7 +4690,7 @@ $xref
         <p><strong>Найдено участников: <?php echo number_format_i18n($total);?></strong> · показано <?php echo number_format_i18n(count($users));?> · страница <?php echo (int)$paged;?> из <?php echo (int)$pages;?></p><?php if($pagination):?><div class="tablenav"><div class="tablenav-pages"><?php echo wp_kses_post($pagination);?></div></div><?php endif;?>
         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php'));?>"><?php wp_nonce_field(self::NONCE);?><input type="hidden" name="action" value="zau_union_bulk_member_status"><div class="zau-bulk-status-bar"><select name="bulk_action"><option value="set_status">Установить статус</option><option value="approve">Одобрить вступление</option><option value="revision">Вернуть на доработку</option><option value="reject">Отклонить</option></select><select name="bulk_status"><?php foreach($this->membership_statuses() as $item):?><option><?php echo esc_html($item);?></option><?php endforeach;?></select><input name="note" placeholder="Комментарий к изменению"><button class="button button-primary">Применить к выбранным</button></div>
         <table class="widefat striped"><thead><tr><th><input type="checkbox" onclick="document.querySelectorAll('.zau-status-row-check').forEach(x=>x.checked=this.checked)"></th><th>Участник</th><th>Организация / филиал</th><th>Статус</th><th>Решение</th><th>Карточка</th><th></th></tr></thead><tbody><?php if(!$users):?><tr><td colspan="7">Участники не найдены.</td></tr><?php endif;?><?php foreach($users as $user):$oid=$this->member_org_id($user->ID);$bid=$this->member_branch_id($user->ID);$current=get_user_meta($user->ID,'zau_member_status',true)?:'Регистрация не завершена';$approval=$this->membership_approval_status($user->ID);$card=get_user_meta($user->ID,'zau_member_card_review_status',true)?:'draft';?>
-        <tr><td><input class="zau-status-row-check" type="checkbox" name="user_ids[]" value="<?php echo (int)$user->ID;?>"></td><td><strong><?php echo esc_html($user->display_name);?></strong><br><small><?php echo esc_html($user->user_email.' '.get_user_meta($user->ID,'zau_phone',true));?></small></td><td><?php echo esc_html($orgMap[$oid]->name??'—');?><br><small><?php echo esc_html($branchMap[$bid]->name??'—');?></small></td><td><select name="row_status[<?php echo (int)$user->ID;?>]"><?php foreach($this->membership_statuses() as $item):?><option <?php selected($current,$item);?>><?php echo esc_html($item);?></option><?php endforeach;?></select></td><td><?php echo esc_html($this->membership_approval_label($approval));?></td><td><?php echo esc_html($card);?></td><td><button class="button" name="single_user_id" value="<?php echo (int)$user->ID;?>">Сохранить строку</button> <a class="button" href="<?php echo esc_url(add_query_arg(['zau_tab'=>'card','member_id'=>$user->ID],$this->settings()['cabinet_page_id']?get_permalink((int)$this->settings()['cabinet_page_id']):home_url('/lk-profsoyuz/')));?>" target="_blank">Карточка</a></td></tr>
+        <tr><td><input class="zau-status-row-check" type="checkbox" name="user_ids[]" value="<?php echo (int)$user->ID;?>"></td><td><strong><?php echo esc_html($user->display_name);?></strong><br><small><?php echo esc_html($user->user_email.' '.get_user_meta($user->ID,'zau_phone',true));?></small></td><td><?php echo esc_html($orgMap[$oid]->name??'—');?><br><small><?php echo esc_html($branchMap[$bid]->name??'—');?></small></td><td><select name="row_status[<?php echo (int)$user->ID;?>]"><?php foreach($this->membership_statuses() as $item):?><option <?php selected($current,$item);?>><?php echo esc_html($item);?></option><?php endforeach;?></select></td><td><?php echo esc_html($this->membership_approval_label($approval));?></td><td><?php echo esc_html($card);?></td><td><button class="button" name="single_user_id" value="<?php echo (int)$user->ID;?>">Сохранить строку</button> <a class="button" href="<?php echo esc_url(add_query_arg(['zau_tab'=>'card','member_id'=>$user->ID],$this->settings()['cabinet_page_id']?get_permalink((int)$this->settings()['cabinet_page_id']):home_url('/lk-profsoyuz/')));?>" target="_blank">Карточка</a> <?php if(current_user_can('manage_options')):?><a class="button" href="<?php echo esc_url($this->view_as_cabinet_url($user->ID));?>" target="_blank">Смотреть кабинет</a><?php endif;?></td></tr>
         <?php endforeach;?></tbody></table></form><?php if($pagination):?><div class="tablenav"><div class="tablenav-pages"><?php echo wp_kses_post($pagination);?></div></div><?php endif;?></div><?php
     }
 
