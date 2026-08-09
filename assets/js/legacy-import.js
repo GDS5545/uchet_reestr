@@ -198,6 +198,7 @@
             dry_run: dry?1:0,
             overwrite: $section.find('[data-zau-remap-overwrite]').is(':checked') ? 1 : 0,
             sync_documents: $section.find('[data-zau-remap-sync]').is(':checked') ? 1 : 0,
+            exclude_values: $section.find('[data-zau-remap-exclude]').val() || '',
         };
         $section.find('[data-zau-remap-start]').prop('disabled',true);
         ajax(data).done(function(resp){

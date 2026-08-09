@@ -981,12 +981,21 @@ final class ZAU_Legacy_Import {
         // кто оформлял/переносил заявку, а не самого заявителя. Если одно и то же значение
         // предлагается сразу для многих разных заявок — это явный признак такого случая
         // (у настоящего ФИО так не бывает), и такие строки не трогаем.
+        // Ручной чёрный список конкретных значений — на случай, когда автоматическая
+        // защита по частоте не распознала конкретное "чужое" имя (например, из-за
+        // непечатаемых символов или слишком малого числа повторов).
+        $excludedSignatures = [];
+        foreach (preg_split('/[\r\n]+/', (string)wp_unslash($_POST['exclude_values'] ?? '')) as $line) {
+            $line = trim($line);
+            if ($line === '') { continue; }
+            $excludedSignatures[$this->remap_name_signature($line)] = true;
+        }
         $suspiciousFullName = [];
         foreach ($mapping as $rawKey => $target) {
             if ($target !== 'full_name') { continue; }
             $groups = $this->remap_value_frequency($formId, $rawKey);
-            foreach ($groups as $group) {
-                if ($group['count'] >= 3) {
+            foreach ($groups as $sig => $group) {
+                if ($group['count'] >= 3 || isset($excludedSignatures[$sig])) {
                     foreach (array_keys($group['raw']) as $rawValue) { $suspiciousFullName[$rawValue] = $group['count']; }
                 }
             }
@@ -1017,11 +1026,14 @@ final class ZAU_Legacy_Import {
         wp_send_json_success($this->public_remap_job($job));
     }
 
-    // "Подпись" имени без учёта порядка слов — "Иванов Пётр" и "Пётр Иванов" дают
-    // одинаковую подпись, чтобы такие варианты одного и того же чужого имени не
-    // ускользали от подсчёта повторов поодиночке.
+    // "Подпись" имени без учёта порядка слов и разделителей между ними — "Иванов Пётр"
+    // и "Пётр Иванов" дают одинаковую подпись. Берём только буквенные последовательности
+    // (а не разбиение по \s+), чтобы непечатаемые/неразрывные пробелы или лишняя
+    // пунктуация в исходных данных не мешали считать это тем же самым значением.
     private function remap_name_signature($value) {
-        $words = preg_split('/\s+/u', function_exists('mb_strtoupper') ? mb_strtoupper(trim((string)$value), 'UTF-8') : strtoupper(trim((string)$value)), -1, PREG_SPLIT_NO_EMPTY);
+        $upper = function_exists('mb_strtoupper') ? mb_strtoupper((string)$value, 'UTF-8') : strtoupper((string)$value);
+        preg_match_all('/\p{L}+/u', $upper, $matches);
+        $words = $matches[0] ?? [];
         sort($words);
         return implode(' ', $words);
     }
@@ -1885,6 +1897,7 @@ final class ZAU_Legacy_Import {
                     <div class="zau-ui-options">
                         <label><input type="checkbox" data-zau-remap-overwrite> Перезаписывать поле, если оно уже заполнено</label>
                         <label><input type="checkbox" data-zau-remap-sync checked> Обновить ФИО и организацию в уже созданных документах и в самом аккаунте участника (личный кабинет, списки, реестр, поиск)</label>
+                        <label>Исключить конкретные значения ФИО (по одному на строку — не будут применены, даже если автоматическая защита их не распознала)<textarea data-zau-remap-exclude rows="3" style="width:100%" placeholder="Например:&#10;Dauren Zhakupov&#10;Zhakupov Dauren&#10;Dayren Zhakupov"></textarea></label>
                     </div>
                     <div class="zau-ui-actions">
                         <button type="button" class="button button-secondary" data-zau-remap-start="dry">Только проверить</button>
