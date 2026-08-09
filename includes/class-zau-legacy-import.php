@@ -984,9 +984,11 @@ final class ZAU_Legacy_Import {
         $suspiciousFullName = [];
         foreach ($mapping as $rawKey => $target) {
             if ($target !== 'full_name') { continue; }
-            $counts = $this->remap_value_frequency($formId, $rawKey);
-            foreach ($counts as $value => $count) {
-                if ($count >= 3) { $suspiciousFullName[$value] = $count; }
+            $groups = $this->remap_value_frequency($formId, $rawKey);
+            foreach ($groups as $group) {
+                if ($group['count'] >= 3) {
+                    foreach (array_keys($group['raw']) as $rawValue) { $suspiciousFullName[$rawValue] = $group['count']; }
+                }
             }
         }
         $job = [
@@ -1015,9 +1017,20 @@ final class ZAU_Legacy_Import {
         wp_send_json_success($this->public_remap_job($job));
     }
 
-    // Считает, сколько раз (после очистки от кода/даты) встречается каждое значение
-    // сырого поля $rawKey среди ВСЕХ заявок формы — используется, чтобы найти значения,
-    // которые не могут быть настоящим уникальным ФИО заявителя (см. suspicious_full_name_values).
+    // "Подпись" имени без учёта порядка слов — "Иванов Пётр" и "Пётр Иванов" дают
+    // одинаковую подпись, чтобы такие варианты одного и того же чужого имени не
+    // ускользали от подсчёта повторов поодиночке.
+    private function remap_name_signature($value) {
+        $words = preg_split('/\s+/u', function_exists('mb_strtoupper') ? mb_strtoupper(trim((string)$value), 'UTF-8') : strtoupper(trim((string)$value)), -1, PREG_SPLIT_NO_EMPTY);
+        sort($words);
+        return implode(' ', $words);
+    }
+
+    // Считает, сколько раз (после очистки от кода/даты и без учёта порядка слов)
+    // встречается каждое значение сырого поля $rawKey среди ВСЕХ заявок формы —
+    // используется, чтобы найти значения, которые не могут быть настоящим уникальным
+    // ФИО заявителя (см. suspicious_full_name_values). Возвращает массив
+    // подпись => ['count'=>N, 'raw'=>[исходное_значение=>true, ...]].
     private function remap_value_frequency($formId, $rawKey) {
         global $wpdb;
         $counts = [];
@@ -1033,7 +1046,10 @@ final class ZAU_Legacy_Import {
                 if (!is_array($data) || !array_key_exists($rawKey, $data)) { continue; }
                 $value = $this->remap_clean_value(trim((string)$data[$rawKey]));
                 if ($value === '') { continue; }
-                $counts[$value] = ($counts[$value] ?? 0) + 1;
+                $sig = $this->remap_name_signature($value);
+                if (!isset($counts[$sig])) { $counts[$sig] = ['count'=>0,'raw'=>[]]; }
+                $counts[$sig]['count']++;
+                $counts[$sig]['raw'][$value] = true;
             }
         } while (count($rows) === 500);
         return $counts;
