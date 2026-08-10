@@ -1008,13 +1008,14 @@ final class ZAU_Legacy_Import {
                 'dry_run' => empty($_POST['dry_run']) ? 0 : 1,
                 'overwrite' => empty($_POST['overwrite']) ? 0 : 1,
                 'sync_documents' => empty($_POST['sync_documents']) ? 0 : 1,
+                'sync_contacts' => empty($_POST['sync_contacts']) ? 0 : 1,
             ],
             'suspicious_full_name_values' => $suspiciousFullName,
             'excluded_signatures' => $excludedSignatures,
             'cursor' => 0,
             'processed' => 0,
             'total' => $total,
-            'stats' => ['submissions_updated'=>0,'fields_filled'=>0,'documents_updated'=>0,'accounts_updated'=>0,'unchanged'=>0,'skipped_suspicious'=>0,'errors'=>0],
+            'stats' => ['submissions_updated'=>0,'fields_filled'=>0,'documents_updated'=>0,'accounts_updated'=>0,'contacts_updated'=>0,'contacts_conflict'=>0,'unchanged'=>0,'skipped_suspicious'=>0,'errors'=>0],
             'report' => [],
             'log' => [],
             'status' => 'running',
@@ -1079,6 +1080,7 @@ final class ZAU_Legacy_Import {
         $dryRun = !empty($job['options']['dry_run']);
         $overwrite = !empty($job['options']['overwrite']);
         $syncDocuments = !empty($job['options']['sync_documents']);
+        $syncContacts = !empty($job['options']['sync_contacts']);
         $batchSize = 150;
         $suspicious = (array)($job['suspicious_full_name_values'] ?? []);
         $excludedSignatures = (array)($job['excluded_signatures'] ?? []);
@@ -1163,6 +1165,60 @@ final class ZAU_Legacy_Import {
                         $wpdb->update($this->docs_table, ['full_name'=>$newName, 'organization'=>$newOrg, 'updated_at'=>current_time('mysql')], ['id'=>$doc->id]);
                     }
                     $job['stats']['documents_updated']++;
+                }
+            }
+            // Сверка email и телефона аккаунта с тем, что реально указано в самой заявке
+            // (не из application_no — из штатных полей email/phone анкеты). Ставим в
+            // приоритет безопасность входа: если целевой email/телефон уже занят ДРУГИМ
+            // участником, запись не трогаем и выводим отдельно как конфликт для ручной
+            // проверки, а не перезаписываем чужой логин.
+            if ($syncContacts) {
+                $wpUser = get_userdata((int)$row->user_id);
+                if ($wpUser) {
+                    $newEmail = trim((string)($data['email'] ?? ''));
+                    if ($newEmail !== '' && is_email($newEmail) && strtolower($newEmail) !== strtolower($wpUser->user_email)) {
+                        $existingOwner = email_exists($newEmail);
+                        if ($existingOwner && (int)$existingOwner !== (int)$row->user_id) {
+                            $job['report'][] = [
+                                'submission_id'=>(int)$row->id, 'document_id'=>0,
+                                'old_full_name'=>'[конфликт email] ' . $wpUser->user_email, 'new_full_name'=>$newEmail . ' — уже занят участником #' . (int)$existingOwner,
+                                'old_organization'=>'', 'new_organization'=>'',
+                            ];
+                            $job['stats']['contacts_conflict']++;
+                        } else {
+                            $job['report'][] = [
+                                'submission_id'=>(int)$row->id, 'document_id'=>0,
+                                'old_full_name'=>'[email] ' . $wpUser->user_email, 'new_full_name'=>$newEmail,
+                                'old_organization'=>'', 'new_organization'=>'',
+                            ];
+                            if (!$dryRun) { wp_update_user(['ID'=>(int)$row->user_id, 'user_email'=>$newEmail]); }
+                            $job['stats']['contacts_updated']++;
+                        }
+                    }
+                    $newPhone = preg_replace('/[^0-9+]/', '', (string)($data['phone'] ?? ''));
+                    $currentPhone = (string)get_user_meta((int)$row->user_id, 'zau_phone', true);
+                    if ($newPhone !== '' && $newPhone !== $currentPhone) {
+                        $conflictId = 0;
+                        foreach ((array)get_users(['meta_key'=>'zau_phone', 'meta_value'=>$newPhone, 'number'=>5, 'fields'=>'ID']) as $otherId) {
+                            if ((int)$otherId !== (int)$row->user_id) { $conflictId = (int)$otherId; break; }
+                        }
+                        if ($conflictId) {
+                            $job['report'][] = [
+                                'submission_id'=>(int)$row->id, 'document_id'=>0,
+                                'old_full_name'=>'[конфликт телефона] ' . $currentPhone, 'new_full_name'=>$newPhone . ' — уже занят участником #' . $conflictId,
+                                'old_organization'=>'', 'new_organization'=>'',
+                            ];
+                            $job['stats']['contacts_conflict']++;
+                        } else {
+                            $job['report'][] = [
+                                'submission_id'=>(int)$row->id, 'document_id'=>0,
+                                'old_full_name'=>'[телефон] ' . $currentPhone, 'new_full_name'=>$newPhone,
+                                'old_organization'=>'', 'new_organization'=>'',
+                            ];
+                            if (!$dryRun) { update_user_meta((int)$row->user_id, 'zau_phone', $newPhone); }
+                            $job['stats']['contacts_updated']++;
+                        }
+                    }
                 }
             }
         }
@@ -1902,7 +1958,7 @@ final class ZAU_Legacy_Import {
 
             <section class="zau-ui-card" data-zau-remap>
                 <h2>Восстановление полей у уже загруженных заявок</h2>
-                <p class="description">Если заявки этой формы попали в базу не через сопоставление колонок этого плагина (например, напрямую в базу данных), их данные могут лежать под «сырыми» названиями старых полей вместо ФИО, организации, руководителя, филиала и т.д. — из-за этого поля не подставляются в PDF-документ и участник не появляется в реестре организации. Здесь можно сопоставить такие поля задним числом, не перезагружая файл заново. Галочка «Обновить ФИО и организацию в уже созданных документах» исправляет и уже сохранённые записи документов — но сам файл PDF нужно пересоздать отдельно через «Профсоюз → Массовое пересоздание», чтобы он отобразил исправленные данные.</p>
+                <p class="description">Если заявки этой формы попали в базу не через сопоставление колонок этого плагина (например, напрямую в базу данных), их данные могут лежать под «сырыми» названиями старых полей вместо ФИО, организации, руководителя, филиала и т.д. — из-за этого поля не подставляются в PDF-документ и участник не появляется в реестре организации. Здесь можно сопоставить такие поля задним числом, не перезагружая файл заново. Галочка «Обновить ФИО и организацию в уже созданных документах» исправляет и уже сохранённые записи документов — но сам файл PDF нужно пересоздать отдельно через «Профсоюз → Массовое пересоздание», чтобы он отобразил исправленные данные. Отдельная галочка «Также сверить email и телефон аккаунта» дополнительно сверяет способ входа участника (email/телефон) с тем, что реально указано в заявке — независимо от полей выше.</p>
                 <div class="zau-ui-grid">
                     <label>Форма для проверки<select data-zau-remap-form>
                         <option value="">— выберите форму —</option>
@@ -1920,6 +1976,7 @@ final class ZAU_Legacy_Import {
                     <div class="zau-ui-options">
                         <label><input type="checkbox" data-zau-remap-overwrite> Перезаписывать поле, если оно уже заполнено</label>
                         <label><input type="checkbox" data-zau-remap-sync checked> Обновить ФИО и организацию в уже созданных документах и в самом аккаунте участника (личный кабинет, списки, реестр, поиск)</label>
+                        <label><input type="checkbox" data-zau-remap-sync-contacts> Также сверить email и телефон аккаунта с данными заявки (только если email/телефон не занят другим участником — иначе строка пропускается и попадает в отдельный список конфликтов, а не перезаписывает чужой вход)</label>
                         <label>Исключить конкретные значения ФИО (по одному на строку — не будут применены, даже если автоматическая защита их не распознала)<textarea data-zau-remap-exclude rows="3" style="width:100%" placeholder="Например:&#10;Dauren Zhakupov&#10;Zhakupov Dauren&#10;Dayren Zhakupov"></textarea></label>
                     </div>
                     <div class="zau-ui-actions">
