@@ -58,6 +58,8 @@ final class ZAU_Legacy_Import {
         add_action('wp_ajax_zau_legacy_remap_start', [$this, 'ajax_remap_start']);
         add_action('wp_ajax_zau_legacy_remap_process', [$this, 'ajax_remap_process']);
         add_action('wp_ajax_zau_legacy_reset_opcache', [$this, 'ajax_reset_opcache']);
+        add_action('wp_ajax_zau_legacy_duplicates_scan', [$this, 'ajax_duplicates_scan']);
+        add_action('wp_ajax_zau_legacy_duplicates_merge', [$this, 'ajax_duplicates_merge']);
         add_action('wp_ajax_zau_legacy_remap_reset', [$this, 'ajax_remap_reset']);
         add_action('admin_post_zau_legacy_remap_report', [$this, 'download_remap_report']);
 
@@ -1267,6 +1269,88 @@ final class ZAU_Legacy_Import {
         wp_send_json_error(['message'=>'Не удалось сбросить OPcache (возможно, функция отключена в настройках сервера). Обратитесь в поддержку хостинга с просьбой перезапустить PHP.'], 500);
     }
 
+    /* ---------------------------------------------------------------------
+     * Дубликаты аккаунтов по ИИН — один и тот же человек мог оказаться на
+     * сайте под двумя (или больше) разными аккаунтами (например, повторная
+     * регистрация под другой почтой при прямой загрузке в базу). ИИН —
+     * уникальный номер, совпадение у разных пользователей означает, что
+     * это один и тот же человек. Инструмент переносит заявки/документы на
+     * выбранный «главный» аккаунт и скрывает дубликаты, ничего не удаляя.
+     * ------------------------------------------------------------------ */
+
+    private function mask_iin_value($iin) {
+        $digits = preg_replace('/\D/', '', (string)$iin);
+        if (strlen($digits) <= 4) { return str_repeat('•', max(1, strlen($digits))); }
+        return str_repeat('•', strlen($digits) - 4) . substr($digits, -4);
+    }
+
+    public function ajax_duplicates_scan() {
+        $this->require_access();
+        global $wpdb;
+        $rows = $wpdb->get_results(
+            "SELECT meta_value AS iin, GROUP_CONCAT(user_id) AS user_ids
+             FROM {$wpdb->usermeta}
+             WHERE meta_key = 'zau_profile_iin' AND meta_value <> ''
+             GROUP BY meta_value
+             HAVING COUNT(DISTINCT user_id) > 1
+             ORDER BY iin
+             LIMIT 300"
+        );
+        $groups = [];
+        foreach ($rows as $row) {
+            $ids = array_values(array_unique(array_filter(array_map('absint', explode(',', (string)$row->user_ids)))));
+            if (count($ids) < 2) { continue; }
+            $users = [];
+            foreach ($ids as $id) {
+                $user = get_userdata($id);
+                if (!$user) { continue; }
+                $submissionCount = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->submissions_table} WHERE user_id=%d", $id));
+                $docCount = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->docs_table} WHERE user_id=%d", $id));
+                $users[] = [
+                    'id' => $id,
+                    'display_name' => $user->display_name,
+                    'email' => $user->user_email,
+                    'phone' => (string)get_user_meta($id, 'zau_phone', true),
+                    'registered' => mysql2date('d.m.Y', $user->user_registered),
+                    'submissions' => $submissionCount,
+                    'documents' => $docCount,
+                    'hidden' => (bool)get_user_meta($id, 'zau_hidden_from_registry', true),
+                ];
+            }
+            if (count($users) > 1) {
+                $groups[] = ['iin_masked' => $this->mask_iin_value($row->iin), 'users' => $users];
+            }
+        }
+        wp_send_json_success(['groups' => $groups, 'total' => count($groups)]);
+    }
+
+    public function ajax_duplicates_merge() {
+        $this->require_access();
+        global $wpdb;
+        $keepId = absint($_POST['keep_id'] ?? 0);
+        $mergeIds = array_values(array_diff(array_unique(array_filter(array_map('absint', (array)($_POST['merge_ids'] ?? [])))), [$keepId]));
+        if (!$keepId || !get_userdata($keepId)) { wp_send_json_error(['message' => 'Не выбран (или не найден) главный аккаунт.'], 400); }
+        if (!$mergeIds) { wp_send_json_error(['message' => 'Отметьте хотя бы один дублирующийся аккаунт для объединения.'], 400); }
+        $movedSubmissions = 0; $movedDocs = 0; $hiddenCount = 0;
+        foreach ($mergeIds as $mergeId) {
+            $mergeUser = get_userdata($mergeId);
+            if (!$mergeUser) { continue; }
+            $movedSubmissions += (int)$wpdb->update($this->submissions_table, ['user_id' => $keepId], ['user_id' => $mergeId]);
+            $movedDocs += (int)$wpdb->update($this->docs_table, ['user_id' => $keepId], ['user_id' => $mergeId]);
+            update_user_meta($mergeId, 'zau_hidden_from_registry', 1);
+            if (strpos($mergeUser->display_name, '(объединён с #') === false) {
+                wp_update_user(['ID' => $mergeId, 'display_name' => $mergeUser->display_name . ' (объединён с #' . $keepId . ')']);
+            }
+            $hiddenCount++;
+        }
+        wp_send_json_success([
+            'message' => 'Перенесено заявок: ' . $movedSubmissions . ', документов: ' . $movedDocs . '. Скрыто дублирующихся аккаунтов: ' . $hiddenCount . '.',
+            'moved_submissions' => $movedSubmissions,
+            'moved_documents' => $movedDocs,
+            'hidden' => $hiddenCount,
+        ]);
+    }
+
     public function download_remap_report() {
         if (!$this->can_manage()) { wp_die('Недостаточно прав.', 403); }
         check_admin_referer(self::NONCE);
@@ -1991,6 +2075,16 @@ final class ZAU_Legacy_Import {
                     <pre data-zau-log></pre>
                     <p><a class="button" data-zau-remap-report href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=zau_legacy_remap_report'), self::NONCE)); ?>" target="_blank">Скачать список изменённых документов (CSV)</a></p>
                 </div>
+            </section>
+
+            <section class="zau-ui-card" data-zau-duplicates>
+                <h2>Дубликаты аккаунтов (по ИИН)</h2>
+                <p class="description">Находит участников с ОДИНАКОВЫМ ИИН — это уникальный номер, у двух разных людей совпадать не может, значит это один и тот же человек с двумя (или более) аккаунтами (например, зарегистрировался повторно под другой почтой). Инструмент переносит все заявки и документы на выбранный «главный» аккаунт, а остальные — скрывает из реестра и списков участников (данные не удаляются, только аккаунт становится неактивным и невидимым в поиске).</p>
+                <div class="zau-ui-actions">
+                    <button type="button" class="button button-primary" data-zau-dup-scan>Найти дубликаты</button>
+                </div>
+                <p data-zau-dup-message></p>
+                <div data-zau-dup-groups></div>
             </section>
 
             <section class="zau-ui-card" data-zau-bridge>

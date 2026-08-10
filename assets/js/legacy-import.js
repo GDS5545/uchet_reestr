@@ -217,6 +217,75 @@
         }).fail(function(xhr){ $section.find('[data-zau-remap-start]').prop('disabled',false); message($section, 'Ошибка запуска: HTTP '+xhr.status, 'error'); });
     });
 
+    /* ---- Дубликаты аккаунтов (по ИИН) ---- */
+    function renderDuplicateGroups($section, groups){
+        let html = '';
+        groups.forEach(function(group, gi){
+            html += '<div class="zau-dup-group" data-zau-dup-group="'+gi+'">';
+            html += '<h4>ИИН: '+esc(group.iin_masked)+'</h4>';
+            html += '<div class="zau-ui-table-wrap"><table class="widefat striped"><thead><tr>'
+                +'<th>Оставить (главный)</th><th>Объединить (скрыть)</th><th>ID</th><th>Имя</th><th>Email</th>'
+                +'<th>Телефон</th><th>Регистрация</th><th>Заявок</th><th>Документов</th><th>Скрыт сейчас</th>'
+                +'</tr></thead><tbody>';
+            (group.users || []).forEach(function(u, ui){
+                html += '<tr>';
+                html += '<td><input type="radio" class="zau-dup-keep" name="zau-dup-keep-'+gi+'" value="'+esc(u.id)+'"'+(ui===0?' checked':'')+'></td>';
+                html += '<td><input type="checkbox" class="zau-dup-merge" value="'+esc(u.id)+'"'+(ui!==0?' checked':'')+(ui===0?' disabled':'')+'></td>';
+                html += '<td>#'+esc(u.id)+'</td>';
+                html += '<td>'+esc(u.display_name)+'</td>';
+                html += '<td>'+esc(u.email)+'</td>';
+                html += '<td>'+esc(u.phone)+'</td>';
+                html += '<td>'+esc(u.registered)+'</td>';
+                html += '<td>'+esc(u.submissions)+'</td>';
+                html += '<td>'+esc(u.documents)+'</td>';
+                html += '<td>'+(u.hidden ? 'да' : 'нет')+'</td>';
+                html += '</tr>';
+            });
+            html += '</tbody></table></div>';
+            html += '<div class="zau-ui-actions"><button type="button" class="button button-primary" data-zau-dup-merge-btn>Объединить выбранные аккаунты в главный</button></div>';
+            html += '<p data-zau-dup-group-message></p>';
+            html += '</div>';
+        });
+        $section.find('[data-zau-dup-groups]').html(html || '<p>Дубликаты по ИИН не найдены.</p>');
+    }
+    $(document).on('change','.zau-dup-keep',function(){
+        const $group = $(this).closest('[data-zau-dup-group]');
+        const keepId = $(this).val();
+        $group.find('.zau-dup-merge').each(function(){
+            const isKeep = String($(this).val()) === String(keepId);
+            $(this).prop('disabled', isKeep);
+            if(isKeep){ $(this).prop('checked', false); }
+        });
+    });
+    $(document).on('click','[data-zau-dup-scan]',function(){
+        const $section = $(this).closest('[data-zau-duplicates]');
+        const $btn = $(this).prop('disabled',true).text('Ищем…');
+        ajax({action:'zau_legacy_duplicates_scan'}).done(function(resp){
+            if(!resp || !resp.success){ message($section, resp && resp.data && resp.data.message ? resp.data.message : 'Не удалось найти дубликаты.', 'error'); return; }
+            const groups = resp.data.groups || [];
+            $section.find('[data-zau-dup-message]').text(groups.length ? ('Найдено групп дубликатов: '+groups.length) : 'Дубликаты по ИИН не найдены — всё чисто.');
+            renderDuplicateGroups($section, groups);
+        }).fail(function(xhr){ message($section, 'Ошибка поиска: HTTP '+xhr.status, 'error'); }).always(function(){ $btn.prop('disabled',false).text('Найти дубликаты'); });
+    });
+    $(document).on('click','[data-zau-dup-merge-btn]',function(){
+        const $group = $(this).closest('[data-zau-dup-group]');
+        const $section = $(this).closest('[data-zau-duplicates]');
+        const keepId = $group.find('.zau-dup-keep:checked').val();
+        const mergeIds = [];
+        $group.find('.zau-dup-merge:checked').each(function(){ mergeIds.push($(this).val()); });
+        const $msg = $group.find('[data-zau-dup-group-message]');
+        if(!keepId){ $msg.css('color','#b32d2e').text('Выберите главный аккаунт.'); return; }
+        if(!mergeIds.length){ $msg.css('color','#b32d2e').text('Отметьте хотя бы один дублирующийся аккаунт.'); return; }
+        if(!window.confirm('Перенести все заявки и документы на аккаунт #'+keepId+' и скрыть остальные ('+mergeIds.length+') из реестра и списков? Данные не удаляются, но скрытые аккаунты перестанут находиться в поиске.')) return;
+        const $btn = $(this).prop('disabled',true).text('Объединяем…');
+        ajax({action:'zau_legacy_duplicates_merge', keep_id:keepId, merge_ids:mergeIds}).done(function(resp){
+            if(!resp || !resp.success){ $msg.css('color','#b32d2e').text(resp && resp.data && resp.data.message ? resp.data.message : 'Не удалось объединить.'); $btn.prop('disabled',false).text('Объединить выбранные аккаунты в главный'); return; }
+            $msg.css('color','#1a7f37').text(resp.data.message);
+            $group.find('table').css('opacity','0.5');
+            $btn.text('Готово');
+        }).fail(function(xhr){ $msg.css('color','#b32d2e').text('Ошибка: HTTP '+xhr.status); $btn.prop('disabled',false).text('Объединить выбранные аккаунты в главный'); });
+    });
+
     /* ---- PDF привязка по уникальному ID ---- */
     function pdfParams($section){
         return {
