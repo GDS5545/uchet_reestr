@@ -1010,6 +1010,7 @@ final class ZAU_Legacy_Import {
                 'sync_documents' => empty($_POST['sync_documents']) ? 0 : 1,
             ],
             'suspicious_full_name_values' => $suspiciousFullName,
+            'excluded_signatures' => $excludedSignatures,
             'cursor' => 0,
             'processed' => 0,
             'total' => $total,
@@ -1080,6 +1081,7 @@ final class ZAU_Legacy_Import {
         $syncDocuments = !empty($job['options']['sync_documents']);
         $batchSize = 150;
         $suspicious = (array)($job['suspicious_full_name_values'] ?? []);
+        $excludedSignatures = (array)($job['excluded_signatures'] ?? []);
         $rows = $wpdb->get_results($wpdb->prepare(
             "SELECT id,user_id,data_json FROM {$this->submissions_table} WHERE form_id=%d AND id>%d ORDER BY id ASC LIMIT %d",
             $formId, (int)$job['cursor'], $batchSize
@@ -1096,7 +1098,7 @@ final class ZAU_Legacy_Import {
                 if (!array_key_exists($rawKey, $data)) { continue; }
                 $value = $this->remap_clean_value(trim((string)$data[$rawKey]));
                 if ($value === '') { continue; }
-                if ($target === 'full_name' && isset($suspicious[$value])) { $hadSuspicious = true; continue; }
+                if ($target === 'full_name' && (isset($suspicious[$value]) || isset($excludedSignatures[$this->remap_name_signature($value)]))) { $hadSuspicious = true; continue; }
                 $current = trim((string)($data[$target] ?? ''));
                 if ($current !== '' && !$overwrite) { continue; }
                 if ($current === $value) { continue; }
@@ -1118,7 +1120,10 @@ final class ZAU_Legacy_Import {
             // поменялась в этом прогоне — иначе повторный запуск (или запуск после того,
             // как заявка уже была исправлена ранее) никогда не находил бы устаревшее ФИО
             // в уже созданном документе, потому что "изменений в заявке" в этом проходе нет.
-            if ($syncDocuments && !empty($data['full_name']) && !isset($suspicious[trim((string)$data['full_name'])])) {
+            $fullNameForSync = trim((string)($data['full_name'] ?? ''));
+            $fullNameIsExcluded = $fullNameForSync !== '' && (isset($suspicious[$fullNameForSync]) || isset($excludedSignatures[$this->remap_name_signature($fullNameForSync)]));
+            if ($fullNameIsExcluded && !$hadSuspicious) { $job['stats']['skipped_suspicious']++; }
+            if ($syncDocuments && !empty($data['full_name']) && !$fullNameIsExcluded) {
                 $newName = trim((string)$data['full_name']);
                 // Синхронизируем и сам аккаунт участника (wp_users.display_name), а не только
                 // заявку и документ. Раньше эта строка обновляла только документ, поэтому
