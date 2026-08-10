@@ -57,6 +57,7 @@ final class ZAU_Legacy_Import {
         add_action('wp_ajax_zau_legacy_remap_scan', [$this, 'ajax_remap_scan']);
         add_action('wp_ajax_zau_legacy_remap_start', [$this, 'ajax_remap_start']);
         add_action('wp_ajax_zau_legacy_remap_process', [$this, 'ajax_remap_process']);
+        add_action('wp_ajax_zau_legacy_reset_opcache', [$this, 'ajax_reset_opcache']);
         add_action('wp_ajax_zau_legacy_remap_reset', [$this, 'ajax_remap_reset']);
         add_action('admin_post_zau_legacy_remap_report', [$this, 'download_remap_report']);
 
@@ -1190,6 +1191,21 @@ final class ZAU_Legacy_Import {
         wp_send_json_success(['message'=>'Прогресс сброшен. Уже применённые изменения не отменяются.']);
     }
 
+    // Кнопка на случай, если хостинг кэширует скомпилированный PHP-код (OPcache) и
+    // продолжает выполнять старую версию файлов плагина даже после их обновления —
+    // сбрасывает этот кэш без обращения в поддержку хостинга.
+    public function ajax_reset_opcache() {
+        $this->require_access();
+        if (!function_exists('opcache_reset')) {
+            wp_send_json_error(['message'=>'На сервере не используется PHP OPcache (функция opcache_reset недоступна) — дело не в нём. Проверьте кэш-плагины сайта (LiteSpeed Cache, WP Rocket и т.п.) или обратитесь в поддержку хостинга с просьбой перезапустить PHP.'], 400);
+        }
+        $ok = opcache_reset();
+        if ($ok) {
+            wp_send_json_success(['message'=>'Кэш PHP (OPcache) сброшен. Попробуйте «Проверить форму» → «Только проверить» ещё раз.']);
+        }
+        wp_send_json_error(['message'=>'Не удалось сбросить OPcache (возможно, функция отключена в настройках сервера). Обратитесь в поддержку хостинга с просьбой перезапустить PHP.'], 500);
+    }
+
     public function download_remap_report() {
         if (!$this->can_manage()) { wp_die('Недостаточно прав.', 403); }
         check_admin_referer(self::NONCE);
@@ -1890,7 +1906,9 @@ final class ZAU_Legacy_Import {
                 </div>
                 <div class="zau-ui-actions">
                     <button type="button" class="button button-primary" data-zau-remap-scan>Проверить форму</button>
+                    <button type="button" class="button" data-zau-reset-opcache>Сбросить кэш PHP на сервере</button>
                 </div>
+                <p class="description">Если после обновления плагина результаты «Только проверить» не меняются, хотя вы точно обновили файлы, — на сервере закэширован старый код. Нажмите «Сбросить кэш PHP на сервере» и попробуйте проверку ещё раз.</p>
                 <p data-zau-remap-message></p>
                 <div data-zau-remap-mapping hidden>
                     <div class="zau-ui-table-wrap"><table class="widefat striped"><thead><tr><th>Поле в заявке</th><th>Примеры значений</th><th>Заявок с этим полем</th><th>Сопоставить с</th></tr></thead><tbody data-zau-remap-table></tbody></table></div>

@@ -176,6 +176,13 @@
             renderRemapProgress($section, resp.data);
         }).fail(function(xhr){ message($section, 'Сервер остановил обработку: HTTP '+xhr.status+'. Нажмите «Исправить данные» повторно — уже обработанные заявки не задублируются.', 'error'); });
     }
+    $(document).on('click','[data-zau-reset-opcache]',function(){
+        const $section = $(this).closest('[data-zau-remap]');
+        const $btn = $(this).prop('disabled',true).text('Сбрасываем…');
+        ajax({action:'zau_legacy_reset_opcache'}).done(function(resp){
+            message($section, resp && resp.data && resp.data.message ? resp.data.message : (resp && resp.success ? 'Готово.' : 'Не удалось сбросить кэш.'), resp && resp.success ? 'success' : 'error');
+        }).fail(function(xhr){ message($section, 'Ошибка: HTTP '+xhr.status, 'error'); }).always(function(){ $btn.prop('disabled',false).text('Сбросить кэш PHP на сервере'); });
+    });
     $(document).on('click','[data-zau-remap-scan]',function(){
         const $section = $(this).closest('[data-zau-remap]');
         const formId = $section.find('[data-zau-remap-form]').val();
