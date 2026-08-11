@@ -158,6 +158,7 @@ final class ZAU_Legacy_Import {
             'accountFields' => $this->account_fields(),
             'applicationFields' => $this->application_fields(),
             'remapReportUrl' => wp_nonce_url(admin_url('admin-post.php?action=zau_legacy_remap_report'), self::NONCE),
+            'bulkRegenerateUrl' => admin_url('admin.php?page=zau-cert-bulk-regenerate'),
         ]);
     }
 
@@ -563,6 +564,32 @@ final class ZAU_Legacy_Import {
         return $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->map_table} WHERE kind=%s AND legacy_id=%s", $kind, (string)$legacyId));
     }
 
+    /**
+     * На старом сайте главными полями были email и телефон (ИИН не всегда заполнен) — если
+     * запись со старого сайта ещё не привязана по legacy_user_id (например, аккаунт уже
+     * существует в новой базе из другого источника), ищем совпадение по ИИН, затем по email,
+     * затем по телефону, чтобы не создавать дубликат аккаунта.
+     */
+    private function find_existing_account_by_contact($mapped) {
+        global $wpdb;
+        $iin = preg_replace('/\D+/', '', (string)($mapped['iin'] ?? ''));
+        if ($iin !== '') {
+            $found = (int)$wpdb->get_var($wpdb->prepare("SELECT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_profile_iin' AND meta_value=%s ORDER BY user_id ASC LIMIT 1", $iin));
+            if ($found) { return $found; }
+        }
+        $email = trim((string)($mapped['email'] ?? ''));
+        if ($email !== '' && is_email($email)) {
+            $owner = email_exists($email);
+            if ($owner) { return (int)$owner; }
+        }
+        $phone = trim((string)($mapped['phone'] ?? ''));
+        if ($phone !== '') {
+            $found = (int)$wpdb->get_var($wpdb->prepare("SELECT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_phone' AND meta_value=%s ORDER BY user_id ASC LIMIT 1", $phone));
+            if ($found) { return $found; }
+        }
+        return 0;
+    }
+
     private function save_map_row($kind, $legacyId, $fields) {
         global $wpdb;
         $now = current_time('mysql');
@@ -715,8 +742,14 @@ final class ZAU_Legacy_Import {
             $found = (int)$wpdb->get_var($wpdb->prepare("SELECT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_legacy_user_id' AND meta_value=%s ORDER BY user_id ASC LIMIT 1", $legacyId));
             if ($found) { $userId = $found; }
         }
+        $matchedByContact = false;
+        if (!$userId) {
+            $userId = $this->find_existing_account_by_contact($mapped);
+            $matchedByContact = (bool)$userId;
+        }
         if ($dry) {
-            return ['kind'=>$userId ? 'would_update' : 'would_create','row'=>$rowNumber,'message'=>$userId ? 'Найден ранее перенесённый аккаунт, будет обновлён.' : 'Будет создан новый аккаунт.','user_id'=>$userId,'mapped'=>$mapped];
+            $msg = $matchedByContact ? 'Найден существующий аккаунт по email/телефону/ИИН, будет обновлён (без дубликата).' : ($userId ? 'Найден ранее перенесённый аккаунт, будет обновлён.' : 'Будет создан новый аккаунт.');
+            return ['kind'=>$userId ? 'would_update' : 'would_create','row'=>$rowNumber,'message'=>$msg,'user_id'=>$userId,'mapped'=>$mapped];
         }
         $created = false;
         if (!$userId) {
@@ -728,7 +761,8 @@ final class ZAU_Legacy_Import {
         $updated = $this->update_account_user($userId, $mapped, $overwrite || $created, (string)$job['options']['default_status']);
         if (is_wp_error($updated)) { return ['kind'=>'error','row'=>$rowNumber,'message'=>$updated->get_error_message(),'user_id'=>$userId,'mapped'=>$mapped]; }
         $this->save_map_row('account', $legacyId, ['target_user_id'=>$userId,'status'=>'imported','message'=>'OK']);
-        return ['kind'=>$created ? 'created' : 'updated','row'=>$rowNumber,'message'=>$created ? 'Аккаунт создан.' : 'Аккаунт обновлён.','user_id'=>$userId,'mapped'=>$mapped];
+        $msg = $created ? 'Аккаунт создан.' : ($matchedByContact ? 'Найден и дополнен существующий аккаунт (по email/телефону/ИИН), дубликат не создан.' : 'Аккаунт обновлён.');
+        return ['kind'=>$created ? 'created' : 'updated','row'=>$rowNumber,'message'=>$msg,'user_id'=>$userId,'mapped'=>$mapped];
     }
 
     private function ensure_form_id($formId) {
@@ -1235,7 +1269,7 @@ final class ZAU_Legacy_Import {
     }
 
     private function public_remap_job($job) {
-        return [
+        $payload = [
             'status' => $job['status'] ?? 'idle',
             'processed' => (int)($job['processed'] ?? 0),
             'total' => (int)($job['total'] ?? 0),
@@ -1245,6 +1279,14 @@ final class ZAU_Legacy_Import {
             'finished_at' => $job['finished_at'] ?? '',
             'report_count' => count((array)($job['report'] ?? [])),
         ];
+        if (($job['status'] ?? '') === 'finished' && empty($job['options']['dry_run'])) {
+            $ids = [];
+            foreach ((array)($job['report'] ?? []) as $row) {
+                if (!empty($row['document_id'])) { $ids[(int)$row['document_id']] = true; }
+            }
+            $payload['changed_document_ids'] = array_values(array_map('intval', array_keys($ids)));
+        }
+        return $payload;
     }
 
     public function ajax_remap_reset() {
@@ -1798,8 +1840,14 @@ final class ZAU_Legacy_Import {
             $found = (int)$wpdb->get_var($wpdb->prepare("SELECT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_legacy_user_id' AND meta_value=%s ORDER BY user_id ASC LIMIT 1", $legacyId));
             if ($found) { $userId = $found; }
         }
+        $matchedByContact = false;
+        if (!$userId) {
+            $userId = $this->find_existing_account_by_contact($mapped);
+            $matchedByContact = (bool)$userId;
+        }
         if ($dry) {
-            return ['kind'=>$userId ? 'would_update' : 'would_create','row'=>$job['processed'],'message'=>$userId ? 'Аккаунт будет дополнен данными со старого сайта.' : 'Будет создан новый аккаунт.','user_id'=>$userId,'mapped'=>$mapped];
+            $msg = $matchedByContact ? 'Найден существующий аккаунт по email/телефону/ИИН, будет дополнен (без дубликата).' : ($userId ? 'Аккаунт будет дополнен данными со старого сайта.' : 'Будет создан новый аккаунт.');
+            return ['kind'=>$userId ? 'would_update' : 'would_create','row'=>$job['processed'],'message'=>$msg,'user_id'=>$userId,'mapped'=>$mapped];
         }
         $created = false;
         if (!$userId) {
@@ -1813,7 +1861,8 @@ final class ZAU_Legacy_Import {
         $updated = $this->update_account_user($userId, $mapped, $overwrite || $created, (string)$job['options']['default_status'], false);
         if (is_wp_error($updated)) { return ['kind'=>'error','row'=>$job['processed'],'message'=>$updated->get_error_message(),'user_id'=>$userId,'mapped'=>$mapped]; }
         $this->save_map_row('account', $legacyId, ['target_user_id'=>$userId,'status'=>'imported','message'=>'OK (API)']);
-        return ['kind'=>$created ? 'created' : 'updated','row'=>$job['processed'],'message'=>$created ? 'Аккаунт создан по API.' : 'Аккаунт дополнен по API.','user_id'=>$userId,'mapped'=>$mapped];
+        $msg = $created ? 'Аккаунт создан по API.' : ($matchedByContact ? 'Найден и дополнен существующий аккаунт по API (по email/телефону/ИИН), дубликат не создан.' : 'Аккаунт дополнен по API.');
+        return ['kind'=>$created ? 'created' : 'updated','row'=>$job['processed'],'message'=>$msg,'user_id'=>$userId,'mapped'=>$mapped];
     }
 
     /** Скачивает файл со старого сайта через защищённый /file и сохраняет локально. Возвращает URL или ''. */
@@ -2074,6 +2123,7 @@ final class ZAU_Legacy_Import {
                     <div class="zau-ui-stats" data-zau-stats></div>
                     <pre data-zau-log></pre>
                     <p><a class="button" data-zau-remap-report href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=zau_legacy_remap_report'), self::NONCE)); ?>" target="_blank">Скачать список изменённых документов (CSV)</a></p>
+                    <div data-zau-remap-recreate-hint hidden></div>
                 </div>
             </section>
 

@@ -129,6 +129,7 @@ final class ZAU_Bulk_Regeneration {
             current_user_can('manage_options') ? 1 : 0
         ));
         $active_job_id = absint($_GET['job'] ?? 0);
+        $prefill_document_ids = sanitize_text_field(wp_unslash($_GET['document_ids'] ?? ''));
         ?>
         <div class="wrap zau-wrap zau-bulk-wrap" id="zau-bulk-regenerate-page" data-active-job-id="<?php echo (int)$active_job_id; ?>">
             <div class="zau-page-head">
@@ -140,6 +141,9 @@ final class ZAU_Bulk_Regeneration {
             </div>
 
             <div class="notice notice-info inline"><p><strong>Перед массовым запуском:</strong> пересоздайте сначала 1–3 документа вручную, проверьте поля, подписи, фон, QR и префикс. Старый файл можно сохранять в архиве до успешной проверки нового.</p></div>
+            <?php if ($prefill_document_ids !== ''): ?>
+            <div class="notice notice-success inline"><p>Список ID документов подставлен из инструмента «Восстановление полей» — это именно те записи, у которых только что исправились данные. Нажмите «Проверить выборку», затем «Создать очередь и начать», чтобы пересоздать PDF только для них.</p></div>
+            <?php endif; ?>
 
             <div class="zau-card zau-bulk-backfill" data-zau-bulk-backfill>
                 <h2>Шаг 0. Создать документы для заявок без документа</h2>
@@ -184,7 +188,7 @@ final class ZAU_Bulk_Regeneration {
                         <input type="date" name="date_to">
                     </label>
                     <label class="zau-bulk-wide">ID документов — необязательно
-                        <input type="text" name="document_ids" placeholder="Например: 15, 18, 20-35. При заполнении остальные фильтры также применяются.">
+                        <input type="text" name="document_ids" value="<?php echo esc_attr($prefill_document_ids); ?>" placeholder="Например: 15, 18, 20-35. При заполнении остальные фильтры также применяются.">
                     </label>
                     <label>Максимум документов
                         <input type="number" name="limit" min="0" max="100000" value="0">

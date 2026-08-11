@@ -166,6 +166,19 @@
         $section.find('[data-zau-log]').text((job.log||[]).join('\n'));
         if(job.status === 'finished'){
             message($section, job.dry_run ? 'Проверка завершена. Данные не записывались.' : 'Восстановление завершено.', 'success');
+            const ids = job.changed_document_ids || [];
+            const $hint = $section.find('[data-zau-remap-recreate-hint]');
+            if(!job.dry_run && ids.length){
+                const urlIds = ids.slice(0, 300);
+                const idList = ids.join(', ');
+                const url = cfg.bulkRegenerateUrl + '&document_ids=' + encodeURIComponent(urlIds.join(','));
+                const truncNote = ids.length > urlIds.length ? ' (в ссылку подставлены первые '+urlIds.length+' — остальные скопируйте из списка ниже вручную в поле «ID документов»)' : '';
+                $hint.html('<div class="notice notice-warning inline"><p>У '+ids.length+' документ(ов) изменились данные (ФИО/организация) — PDF-файл ещё содержит старые данные. '
+                    +'<a class="button button-primary" href="'+esc(url)+'" target="_blank">Открыть «Массовое пересоздание» с этим списком</a>'+truncNote+'</p>'
+                    +'<p class="description">ID документов: '+esc(idList)+'</p></div>').prop('hidden', false);
+            } else {
+                $hint.empty().prop('hidden', true);
+            }
             return;
         }
         setTimeout(function(){ remapProcessBatch($section); }, 250);
