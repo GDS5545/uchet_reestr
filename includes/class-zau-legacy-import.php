@@ -808,7 +808,10 @@ final class ZAU_Legacy_Import {
         $resultKind = '';
         if ($existingMap && $existingMap->target_submission_id) {
             $submissionId = (int)$existingMap->target_submission_id;
-            $ok = $wpdb->update($this->submissions_table, ['status'=>$status,'data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),'signature_urls_json'=>wp_json_encode($signatures, JSON_UNESCAPED_UNICODE),'updated_at'=>current_time('mysql')], ['id'=>$submissionId]);
+            /* user_id пересчитывается заново из карты аккаунтов при каждом запуске: если аккаунт
+               был раньше привязан неверно (например, несколько людей делили один общий аккаунт) и
+               это исправили повторным переносом аккаунтов, заявка должна переехать на правильный. */
+            $ok = $wpdb->update($this->submissions_table, ['user_id'=>$userId,'status'=>$status,'data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),'signature_urls_json'=>wp_json_encode($signatures, JSON_UNESCAPED_UNICODE),'updated_at'=>current_time('mysql')], ['id'=>$submissionId]);
             if ($ok === false) { return ['kind'=>'error','row'=>$rowNumber,'message'=>'Не удалось обновить ранее перенесённую заявку.','mapped'=>$mapped]; }
             $resultKind = 'updated';
         } else {
@@ -1931,6 +1934,7 @@ final class ZAU_Legacy_Import {
             $existing = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->docs_table} WHERE id=%d", $existingDocumentId));
             if ($existing && $existing->record_status === 'draft') {
                 $update = [
+                    'user_id'=>$userId,
                     'full_name'=>sanitize_text_field($data['full_name'] ?? ''),
                     'organization'=>sanitize_text_field($data['organization'] ?? ''),
                     'issue_date'=>$issueDate,
@@ -2040,7 +2044,11 @@ final class ZAU_Legacy_Import {
         $existingDocumentId = $existingMap ? (int)$existingMap->target_document_id : 0;
         if ($existingMap && $existingMap->target_submission_id) {
             $submissionId = (int)$existingMap->target_submission_id;
+            /* user_id пересчитывается заново из карты аккаунтов при каждом запуске: если аккаунт
+               был раньше привязан неверно (например, несколько людей делили один общий аккаунт) и
+               это исправили повторным переносом аккаунтов, заявка должна переехать на правильный. */
             $wpdb->update($this->submissions_table, [
+                'user_id'=>$userId,
                 'status'=>$status,
                 'data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE),
                 'signature_urls_json'=>wp_json_encode($signatures, JSON_UNESCAPED_UNICODE),
