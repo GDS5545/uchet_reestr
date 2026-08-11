@@ -230,15 +230,19 @@
         }).fail(function(xhr){ $section.find('[data-zau-remap-start]').prop('disabled',false); message($section, 'Ошибка запуска: HTTP '+xhr.status, 'error'); });
     });
 
-    /* ---- Дубликаты аккаунтов (по ИИН) ---- */
+    /* ---- Дубликаты аккаунтов (по ИИН и email) ---- */
+    function reasonsLabel(reasons){
+        const labels = { 'ИИН':'ИИН', 'email':'email' };
+        return (reasons || []).map(r => labels[r] || r).join(' + ') || 'совпадение';
+    }
     function renderDuplicateGroups($section, groups){
         let html = '';
         groups.forEach(function(group, gi){
             html += '<div class="zau-dup-group" data-zau-dup-group="'+gi+'">';
-            html += '<h4>ИИН: '+esc(group.iin_masked)+'</h4>';
+            html += '<h4>Совпадение по: '+esc(reasonsLabel(group.reasons))+'</h4>';
             html += '<div class="zau-ui-table-wrap"><table class="widefat striped"><thead><tr>'
                 +'<th>Оставить (главный)</th><th>Объединить (скрыть)</th><th>ID</th><th>Имя</th><th>Email</th>'
-                +'<th>Телефон</th><th>Регистрация</th><th>Заявок</th><th>Документов</th><th>Скрыт сейчас</th>'
+                +'<th>Телефон</th><th>ИИН</th><th>Регистрация</th><th>Заявок</th><th>Документов</th><th>Скрыт сейчас</th>'
                 +'</tr></thead><tbody>';
             (group.users || []).forEach(function(u, ui){
                 html += '<tr>';
@@ -248,6 +252,7 @@
                 html += '<td>'+esc(u.display_name)+'</td>';
                 html += '<td>'+esc(u.email)+'</td>';
                 html += '<td>'+esc(u.phone)+'</td>';
+                html += '<td>'+esc(u.iin_masked)+'</td>';
                 html += '<td>'+esc(u.registered)+'</td>';
                 html += '<td>'+esc(u.submissions)+'</td>';
                 html += '<td>'+esc(u.documents)+'</td>';
@@ -259,7 +264,7 @@
             html += '<p data-zau-dup-group-message></p>';
             html += '</div>';
         });
-        $section.find('[data-zau-dup-groups]').html(html || '<p>Дубликаты по ИИН не найдены.</p>');
+        $section.find('[data-zau-dup-groups]').html(html || '<p>Дубликаты по ИИН/email не найдены.</p>');
     }
     $(document).on('change','.zau-dup-keep',function(){
         const $group = $(this).closest('[data-zau-dup-group]');
@@ -276,7 +281,7 @@
         ajax({action:'zau_legacy_duplicates_scan'}).done(function(resp){
             if(!resp || !resp.success){ message($section, resp && resp.data && resp.data.message ? resp.data.message : 'Не удалось найти дубликаты.', 'error'); return; }
             const groups = resp.data.groups || [];
-            $section.find('[data-zau-dup-message]').text(groups.length ? ('Найдено групп дубликатов: '+groups.length) : 'Дубликаты по ИИН не найдены — всё чисто.');
+            $section.find('[data-zau-dup-message]').text(groups.length ? ('Найдено групп дубликатов: '+groups.length) : 'Дубликаты по ИИН/email не найдены — всё чисто.');
             renderDuplicateGroups($section, groups);
         }).fail(function(xhr){ message($section, 'Ошибка поиска: HTTP '+xhr.status, 'error'); }).always(function(){ $btn.prop('disabled',false).text('Найти дубликаты'); });
     });

@@ -758,10 +758,14 @@ final class ZAU_Legacy_Import {
             $userId = (int)$newUser;
             $created = true;
         }
-        $updated = $this->update_account_user($userId, $mapped, $overwrite || $created, (string)$job['options']['default_status']);
+        /* Если аккаунт найден заново по email/телефону/ИИН (а не по уже сохранённой связке), это
+           значит: на новом сайте у него оказались другие ФИО/данные, а старый сайт для этого же
+           человека — источник истины. В этом случае ФИО и метаданные (место работы, филиал, БИН и
+           т.д.) переносятся из старого сайта всегда, даже если общая галочка «Перезаписать» выключена. */
+        $updated = $this->update_account_user($userId, $mapped, $overwrite || $created || $matchedByContact, (string)$job['options']['default_status']);
         if (is_wp_error($updated)) { return ['kind'=>'error','row'=>$rowNumber,'message'=>$updated->get_error_message(),'user_id'=>$userId,'mapped'=>$mapped]; }
         $this->save_map_row('account', $legacyId, ['target_user_id'=>$userId,'status'=>'imported','message'=>'OK']);
-        $msg = $created ? 'Аккаунт создан.' : ($matchedByContact ? 'Найден и дополнен существующий аккаунт (по email/телефону/ИИН), дубликат не создан.' : 'Аккаунт обновлён.');
+        $msg = $created ? 'Аккаунт создан.' : ($matchedByContact ? 'Найден по email/телефону/ИИН — ФИО и метаданные заменены данными со старого сайта, дубликат не создан.' : 'Аккаунт обновлён.');
         return ['kind'=>$created ? 'created' : 'updated','row'=>$rowNumber,'message'=>$msg,'user_id'=>$userId,'mapped'=>$mapped];
     }
 
@@ -1315,12 +1319,13 @@ final class ZAU_Legacy_Import {
     }
 
     /* ---------------------------------------------------------------------
-     * Дубликаты аккаунтов по ИИН — один и тот же человек мог оказаться на
-     * сайте под двумя (или больше) разными аккаунтами (например, повторная
-     * регистрация под другой почтой при прямой загрузке в базу). ИИН —
-     * уникальный номер, совпадение у разных пользователей означает, что
-     * это один и тот же человек. Инструмент переносит заявки/документы на
-     * выбранный «главный» аккаунт и скрывает дубликаты, ничего не удаляя.
+     * Дубликаты аккаунтов по ИИН и/или email — один и тот же человек мог
+     * оказаться на сайте под двумя (или больше) разными аккаунтами
+     * (например, повторная регистрация или прямая загрузка в базу).
+     * ИИН и email считаются надёжными — совпадение у разных аккаунтов
+     * означает, что это один и тот же человек. Инструмент переносит
+     * заявки/документы на выбранный «главный» аккаунт и скрывает
+     * дубликаты, ничего не удаляя.
      * ------------------------------------------------------------------ */
 
     private function mask_iin_value($iin) {
@@ -1329,21 +1334,67 @@ final class ZAU_Legacy_Import {
         return str_repeat('•', strlen($digits) - 4) . substr($digits, -4);
     }
 
+    /** Простой union-find: объединяет пользователей в кластеры дубликатов по любому общему
+     *  признаку (ИИН ИЛИ email) — если A совпал с B по ИИН, а B совпал с C по email, все трое
+     *  попадут в один кластер. */
+    private function duplicate_clusters() {
+        global $wpdb;
+        $parent = [];
+        $find = function ($x) use (&$parent, &$find) {
+            if (!isset($parent[$x])) { $parent[$x] = $x; }
+            while ($parent[$x] !== $x) { $parent[$x] = $parent[$parent[$x]]; $x = $parent[$x]; }
+            return $x;
+        };
+        $union = function ($a, $b) use (&$parent, &$find) {
+            $ra = $find($a); $rb = $find($b);
+            if ($ra !== $rb) { $parent[$ra] = $rb; }
+        };
+
+        $iinRows = $wpdb->get_results(
+            "SELECT meta_value AS key_value, GROUP_CONCAT(user_id) AS user_ids
+             FROM {$wpdb->usermeta}
+             WHERE meta_key = 'zau_profile_iin' AND meta_value <> ''
+             GROUP BY meta_value HAVING COUNT(DISTINCT user_id) > 1
+             ORDER BY key_value LIMIT 300"
+        );
+        $emailRows = $wpdb->get_results(
+            "SELECT user_email AS key_value, GROUP_CONCAT(ID) AS user_ids
+             FROM {$wpdb->users}
+             WHERE user_email <> ''
+             GROUP BY user_email HAVING COUNT(*) > 1
+             ORDER BY key_value LIMIT 300"
+        );
+
+        $userReasons = [];
+        foreach ([['ИИН', $iinRows], ['email', $emailRows]] as $pair) {
+            [$label, $rows] = $pair;
+            foreach ($rows as $row) {
+                $ids = array_values(array_unique(array_filter(array_map('absint', explode(',', (string)$row->user_ids)))));
+                if (count($ids) < 2) { continue; }
+                $first = $ids[0];
+                foreach ($ids as $id) {
+                    $union($first, $id);
+                    $userReasons[$id][$label] = true;
+                }
+            }
+        }
+
+        $byRoot = [];
+        foreach ($userReasons as $uid => $reasons) {
+            $root = $find($uid);
+            $byRoot[$root]['ids'][] = $uid;
+            foreach ($reasons as $r => $_) { $byRoot[$root]['reasons'][$r] = true; }
+        }
+        return $byRoot;
+    }
+
     public function ajax_duplicates_scan() {
         $this->require_access();
         global $wpdb;
-        $rows = $wpdb->get_results(
-            "SELECT meta_value AS iin, GROUP_CONCAT(user_id) AS user_ids
-             FROM {$wpdb->usermeta}
-             WHERE meta_key = 'zau_profile_iin' AND meta_value <> ''
-             GROUP BY meta_value
-             HAVING COUNT(DISTINCT user_id) > 1
-             ORDER BY iin
-             LIMIT 300"
-        );
+        $clusters = $this->duplicate_clusters();
         $groups = [];
-        foreach ($rows as $row) {
-            $ids = array_values(array_unique(array_filter(array_map('absint', explode(',', (string)$row->user_ids)))));
+        foreach ($clusters as $cluster) {
+            $ids = array_values(array_unique($cluster['ids']));
             if (count($ids) < 2) { continue; }
             $users = [];
             foreach ($ids as $id) {
@@ -1351,11 +1402,13 @@ final class ZAU_Legacy_Import {
                 if (!$user) { continue; }
                 $submissionCount = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->submissions_table} WHERE user_id=%d", $id));
                 $docCount = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->docs_table} WHERE user_id=%d", $id));
+                $iin = (string)get_user_meta($id, 'zau_profile_iin', true);
                 $users[] = [
                     'id' => $id,
                     'display_name' => $user->display_name,
                     'email' => $user->user_email,
                     'phone' => (string)get_user_meta($id, 'zau_phone', true),
+                    'iin_masked' => $iin !== '' ? $this->mask_iin_value($iin) : '',
                     'registered' => mysql2date('d.m.Y', $user->user_registered),
                     'submissions' => $submissionCount,
                     'documents' => $docCount,
@@ -1363,7 +1416,7 @@ final class ZAU_Legacy_Import {
                 ];
             }
             if (count($users) > 1) {
-                $groups[] = ['iin_masked' => $this->mask_iin_value($row->iin), 'users' => $users];
+                $groups[] = ['reasons' => array_keys($cluster['reasons']), 'users' => $users];
             }
         }
         wp_send_json_success(['groups' => $groups, 'total' => count($groups)]);
@@ -1860,11 +1913,13 @@ final class ZAU_Legacy_Import {
             $created = true;
         }
         /* Данные со старого сайта считаются достоверными — заполняют профиль и, если включена галочка,
-           заменяют текущие значения. Статус участника никогда не откатывается назад через этот путь. */
-        $updated = $this->update_account_user($userId, $mapped, $overwrite || $created, (string)$job['options']['default_status'], false);
+           заменяют текущие значения. Статус участника никогда не откатывается назад через этот путь.
+           Если аккаунт найден заново по email/телефону/ИИН (а не по уже сохранённой связке) — ФИО и
+           метаданные переносятся из старого сайта всегда, даже если общая галочка «Перезаписать» выключена. */
+        $updated = $this->update_account_user($userId, $mapped, $overwrite || $created || $matchedByContact, (string)$job['options']['default_status'], false);
         if (is_wp_error($updated)) { return ['kind'=>'error','row'=>$job['processed'],'message'=>$updated->get_error_message(),'user_id'=>$userId,'mapped'=>$mapped]; }
         $this->save_map_row('account', $legacyId, ['target_user_id'=>$userId,'status'=>'imported','message'=>'OK (API)']);
-        $msg = $created ? 'Аккаунт создан по API.' : ($matchedByContact ? 'Найден и дополнен существующий аккаунт по API (по email/телефону/ИИН), дубликат не создан.' : 'Аккаунт дополнен по API.');
+        $msg = $created ? 'Аккаунт создан по API.' : ($matchedByContact ? 'Найден по email/телефону/ИИН — ФИО и метаданные заменены данными со старого сайта, дубликат не создан.' : 'Аккаунт дополнен по API.');
         return ['kind'=>$created ? 'created' : 'updated','row'=>$job['processed'],'message'=>$msg,'user_id'=>$userId,'mapped'=>$mapped];
     }
 
@@ -2136,8 +2191,8 @@ final class ZAU_Legacy_Import {
             </section>
 
             <section class="zau-ui-card" data-zau-duplicates>
-                <h2>Дубликаты аккаунтов (по ИИН)</h2>
-                <p class="description">Находит участников с ОДИНАКОВЫМ ИИН — это уникальный номер, у двух разных людей совпадать не может, значит это один и тот же человек с двумя (или более) аккаунтами (например, зарегистрировался повторно под другой почтой). Инструмент переносит все заявки и документы на выбранный «главный» аккаунт, а остальные — скрывает из реестра и списков участников (данные не удаляются, только аккаунт становится неактивным и невидимым в поиске).</p>
+                <h2>Дубликаты аккаунтов (по ИИН и email)</h2>
+                <p class="description">Находит участников с ОДИНАКОВЫМ ИИН или ОДИНАКОВОЙ почтой — если оба этих значения совпадают у разных аккаунтов, значит это один и тот же человек с двумя (или более) аккаунтами (например, зарегистрировался повторно). Инструмент переносит все заявки и документы на выбранный «главный» аккаунт, а остальные — скрывает из реестра и списков участников (данные не удаляются, только аккаунт становится неактивным и невидимым в поиске).</p>
                 <div class="zau-ui-actions">
                     <button type="button" class="button button-primary" data-zau-dup-scan>Найти дубликаты</button>
                 </div>
