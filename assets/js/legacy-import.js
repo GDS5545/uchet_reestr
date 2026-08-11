@@ -152,7 +152,7 @@
         return map;
     }
     function remapStatLabel(key){
-        const labels = {submissions_updated:'Заявок обновлено',fields_filled:'Полей заполнено',documents_updated:'Документов обновлено',accounts_updated:'Аккаунтов участников обновлено',contacts_updated:'Email/телефон обновлено',contacts_conflict:'Email/телефон уже занят другим (пропущено)',unchanged:'Без изменений',skipped_suspicious:'Пропущено подозрительных',errors:'Ошибки'};
+        const labels = {submissions_updated:'Заявок обновлено',fields_filled:'Полей заполнено',documents_updated:'Документов обновлено',accounts_updated:'Аккаунтов участников обновлено',contacts_updated:'Email/телефон обновлено',contacts_conflict:'Email/телефон уже занят другим (пропущено)',reassigned_existing:'Заявок перенесено на правильный аккаунт',reassigned_new_account:'Создано новых аккаунтов',unchanged:'Без изменений',skipped_suspicious:'Пропущено подозрительных',errors:'Ошибки'};
         return labels[key] || key;
     }
     function renderRemapProgress($section, job){
@@ -219,6 +219,7 @@
             overwrite: $section.find('[data-zau-remap-overwrite]').is(':checked') ? 1 : 0,
             sync_documents: $section.find('[data-zau-remap-sync]').is(':checked') ? 1 : 0,
             sync_contacts: $section.find('[data-zau-remap-sync-contacts]').is(':checked') ? 1 : 0,
+            reassign_owner: $section.find('[data-zau-remap-reassign]').is(':checked') ? 1 : 0,
             exclude_values: $section.find('[data-zau-remap-exclude]').val() || '',
         };
         $section.find('[data-zau-remap-start]').prop('disabled',true);

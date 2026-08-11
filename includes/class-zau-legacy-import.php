@@ -1052,13 +1052,14 @@ final class ZAU_Legacy_Import {
                 'overwrite' => empty($_POST['overwrite']) ? 0 : 1,
                 'sync_documents' => empty($_POST['sync_documents']) ? 0 : 1,
                 'sync_contacts' => empty($_POST['sync_contacts']) ? 0 : 1,
+                'reassign_owner' => empty($_POST['reassign_owner']) ? 0 : 1,
             ],
             'suspicious_full_name_values' => $suspiciousFullName,
             'excluded_signatures' => $excludedSignatures,
             'cursor' => 0,
             'processed' => 0,
             'total' => $total,
-            'stats' => ['submissions_updated'=>0,'fields_filled'=>0,'documents_updated'=>0,'accounts_updated'=>0,'contacts_updated'=>0,'contacts_conflict'=>0,'unchanged'=>0,'skipped_suspicious'=>0,'errors'=>0],
+            'stats' => ['submissions_updated'=>0,'fields_filled'=>0,'documents_updated'=>0,'accounts_updated'=>0,'contacts_updated'=>0,'contacts_conflict'=>0,'reassigned_existing'=>0,'reassigned_new_account'=>0,'unchanged'=>0,'skipped_suspicious'=>0,'errors'=>0],
             'report' => [],
             'log' => [],
             'status' => 'running',
@@ -1124,6 +1125,7 @@ final class ZAU_Legacy_Import {
         $overwrite = !empty($job['options']['overwrite']);
         $syncDocuments = !empty($job['options']['sync_documents']);
         $syncContacts = !empty($job['options']['sync_contacts']);
+        $reassignOwner = !empty($job['options']['reassign_owner']);
         $batchSize = 150;
         $suspicious = (array)($job['suspicious_full_name_values'] ?? []);
         $excludedSignatures = (array)($job['excluded_signatures'] ?? []);
@@ -1168,6 +1170,66 @@ final class ZAU_Legacy_Import {
             $fullNameForSync = trim((string)($data['full_name'] ?? ''));
             $fullNameIsExcluded = $fullNameForSync !== '' && (isset($suspicious[$fullNameForSync]) || isset($excludedSignatures[$this->remap_name_signature($fullNameForSync)]));
             if ($fullNameIsExcluded && !$hadSuspicious) { $job['stats']['skipped_suspicious']++; }
+            // Владелец заявки, который используется всеми проверками ниже — по умолчанию
+            // тот же, что и сейчас в базе, но может смениться в блоке переноса владельца ниже.
+            $ownerId = (int)$row->user_id;
+            // Перенос заявки на ПРАВИЛЬНЫЙ аккаунт: заявка сейчас может висеть на чужом
+            // (например, общем — когда десятки разных людей по ошибке оказались привязаны
+            // к одному и тому же аккаунту при исходной загрузке напрямую в базу). Ищем, кому
+            // на самом деле принадлежит email/телефон/ИИН, указанные В САМОЙ заявке — если это
+            // не текущий владелец, переносим заявку (и её документ) на найденный аккаунт, а
+            // если такого аккаунта ещё нет вообще — создаём новый специально под этого человека.
+            if ($reassignOwner && !$fullNameIsExcluded) {
+                $probe = [
+                    'iin' => preg_replace('/\D+/', '', (string)($data['iin'] ?? '')),
+                    'email' => sanitize_email((string)($data['email'] ?? '')),
+                    'phone' => $this->normalize_phone((string)($data['phone'] ?? '')),
+                ];
+                if ($probe['iin'] !== '' || $probe['email'] !== '' || $probe['phone'] !== '') {
+                    $currentUser = get_userdata($ownerId);
+                    $currentContactMatches = false;
+                    if ($currentUser) {
+                        $currentIin = preg_replace('/\D+/', '', (string)get_user_meta($ownerId, 'zau_profile_iin', true));
+                        $currentPhone = (string)get_user_meta($ownerId, 'zau_phone', true);
+                        if ($probe['iin'] !== '' && $currentIin !== '' && $probe['iin'] === $currentIin) { $currentContactMatches = true; }
+                        if (!$currentContactMatches && $probe['email'] !== '' && $currentUser->user_email !== '' && strtolower($probe['email']) === strtolower($currentUser->user_email)) { $currentContactMatches = true; }
+                        if (!$currentContactMatches && $probe['phone'] !== '' && $currentPhone !== '' && $probe['phone'] === $currentPhone) { $currentContactMatches = true; }
+                    }
+                    if (!$currentContactMatches) {
+                        $matchedUserId = $this->find_existing_account_by_contact($probe);
+                        if ($matchedUserId && $matchedUserId !== $ownerId) {
+                            $job['report'][] = [
+                                'submission_id'=>(int)$row->id, 'document_id'=>0,
+                                'old_full_name'=>'[владелец] аккаунт #' . $ownerId, 'new_full_name'=>'перенесено на аккаунт #' . $matchedUserId . ' (совпадение по email/телефону/ИИН из заявки)',
+                                'old_organization'=>'', 'new_organization'=>'',
+                            ];
+                            if (!$dryRun) {
+                                $wpdb->update($this->submissions_table, ['user_id'=>$matchedUserId], ['id'=>$row->id]);
+                                $wpdb->update($this->docs_table, ['user_id'=>$matchedUserId], ['source_submission_id'=>$row->id]);
+                            }
+                            $ownerId = $matchedUserId;
+                            $job['stats']['reassigned_existing'] = ($job['stats']['reassigned_existing'] ?? 0) + 1;
+                        } elseif (!$matchedUserId && ($fullNameForSync !== '' || $probe['email'] !== '' || $probe['phone'] !== '')) {
+                            $mappedForAccount = $this->normalize_mapped($data);
+                            $job['report'][] = [
+                                'submission_id'=>(int)$row->id, 'document_id'=>0,
+                                'old_full_name'=>'[владелец] аккаунт #' . $ownerId . ' (чужой)', 'new_full_name'=>'будет создан новый аккаунт: ' . ($mappedForAccount['full_name'] ?? $probe['email'] ?: $probe['phone']),
+                                'old_organization'=>'', 'new_organization'=>'',
+                            ];
+                            if (!$dryRun) {
+                                $newUserId = $this->create_account_user($mappedForAccount);
+                                if (!is_wp_error($newUserId)) {
+                                    $this->update_account_user((int)$newUserId, $mappedForAccount, true, '');
+                                    $wpdb->update($this->submissions_table, ['user_id'=>(int)$newUserId], ['id'=>$row->id]);
+                                    $wpdb->update($this->docs_table, ['user_id'=>(int)$newUserId], ['source_submission_id'=>$row->id]);
+                                    $ownerId = (int)$newUserId;
+                                }
+                            }
+                            $job['stats']['reassigned_new_account'] = ($job['stats']['reassigned_new_account'] ?? 0) + 1;
+                        }
+                    }
+                }
+            }
             if ($syncDocuments && !empty($data['full_name']) && !$fullNameIsExcluded) {
                 $newName = trim((string)$data['full_name']);
                 // Синхронизируем и сам аккаунт участника (wp_users.display_name), а не только
@@ -1176,7 +1238,7 @@ final class ZAU_Legacy_Import {
                 // где плагин показывает или ищет участников (списки, реестр, поиск по ФИО),
                 // так что человек оставался "невидимым" по своему настоящему имени.
                 if ($newName !== '') {
-                    $wpUser = get_userdata((int)$row->user_id);
+                    $wpUser = get_userdata($ownerId);
                     if ($wpUser && $wpUser->display_name !== $newName) {
                         $job['report'][] = [
                             'submission_id'=>(int)$row->id, 'document_id'=>0,
@@ -1186,7 +1248,7 @@ final class ZAU_Legacy_Import {
                         if (!$dryRun) {
                             $nameParts = preg_split('/\s+/u', $newName, 2);
                             wp_update_user([
-                                'ID'=>(int)$row->user_id,
+                                'ID'=>$ownerId,
                                 'display_name'=>$newName,
                                 'first_name'=>$nameParts[0] ?? '',
                                 'last_name'=>$nameParts[1] ?? '',
@@ -1216,12 +1278,12 @@ final class ZAU_Legacy_Import {
             // участником, запись не трогаем и выводим отдельно как конфликт для ручной
             // проверки, а не перезаписываем чужой логин.
             if ($syncContacts) {
-                $wpUser = get_userdata((int)$row->user_id);
+                $wpUser = get_userdata($ownerId);
                 if ($wpUser) {
                     $newEmail = trim((string)($data['email'] ?? ''));
                     if ($newEmail !== '' && is_email($newEmail) && strtolower($newEmail) !== strtolower($wpUser->user_email)) {
                         $existingOwner = email_exists($newEmail);
-                        if ($existingOwner && (int)$existingOwner !== (int)$row->user_id) {
+                        if ($existingOwner && (int)$existingOwner !== $ownerId) {
                             $job['report'][] = [
                                 'submission_id'=>(int)$row->id, 'document_id'=>0,
                                 'old_full_name'=>'[конфликт email] ' . $wpUser->user_email, 'new_full_name'=>$newEmail . ' — уже занят участником #' . (int)$existingOwner,
@@ -1234,16 +1296,16 @@ final class ZAU_Legacy_Import {
                                 'old_full_name'=>'[email] ' . $wpUser->user_email, 'new_full_name'=>$newEmail,
                                 'old_organization'=>'', 'new_organization'=>'',
                             ];
-                            if (!$dryRun) { wp_update_user(['ID'=>(int)$row->user_id, 'user_email'=>$newEmail]); }
+                            if (!$dryRun) { wp_update_user(['ID'=>$ownerId, 'user_email'=>$newEmail]); }
                             $job['stats']['contacts_updated']++;
                         }
                     }
                     $newPhone = preg_replace('/[^0-9+]/', '', (string)($data['phone'] ?? ''));
-                    $currentPhone = (string)get_user_meta((int)$row->user_id, 'zau_phone', true);
+                    $currentPhone = (string)get_user_meta($ownerId, 'zau_phone', true);
                     if ($newPhone !== '' && $newPhone !== $currentPhone) {
                         $conflictId = 0;
                         foreach ((array)get_users(['meta_key'=>'zau_phone', 'meta_value'=>$newPhone, 'number'=>5, 'fields'=>'ID']) as $otherId) {
-                            if ((int)$otherId !== (int)$row->user_id) { $conflictId = (int)$otherId; break; }
+                            if ((int)$otherId !== $ownerId) { $conflictId = (int)$otherId; break; }
                         }
                         if ($conflictId) {
                             $job['report'][] = [
@@ -1258,7 +1320,7 @@ final class ZAU_Legacy_Import {
                                 'old_full_name'=>'[телефон] ' . $currentPhone, 'new_full_name'=>$newPhone,
                                 'old_organization'=>'', 'new_organization'=>'',
                             ];
-                            if (!$dryRun) { update_user_meta((int)$row->user_id, 'zau_phone', $newPhone); }
+                            if (!$dryRun) { update_user_meta($ownerId, 'zau_phone', $newPhone); }
                             $job['stats']['contacts_updated']++;
                         }
                     }
@@ -2173,6 +2235,7 @@ final class ZAU_Legacy_Import {
                         <label><input type="checkbox" data-zau-remap-overwrite> Перезаписывать поле, если оно уже заполнено</label>
                         <label><input type="checkbox" data-zau-remap-sync checked> Обновить ФИО и организацию в уже созданных документах и в самом аккаунте участника (личный кабинет, списки, реестр, поиск)</label>
                         <label><input type="checkbox" data-zau-remap-sync-contacts> Также сверить email и телефон аккаунта с данными заявки (только если email/телефон не занят другим участником — иначе строка пропускается и попадает в отдельный список конфликтов, а не перезаписывает чужой вход)</label>
+                        <label><input type="checkbox" data-zau-remap-reassign> Переносить заявку на ПРАВИЛЬНЫЙ аккаунт по email/телефону/ИИН из самой заявки, если она сейчас висит на чужом (например, общем) аккаунте — если подходящего аккаунта ещё нет, он будет СОЗДАН заново. Используйте, если много разных заявок оказались привязаны к одним и тем же нескольким аккаунтам — сначала проверьте, сколько новых аккаунтов будет создано, в режиме «Только проверить».</label>
                         <label>Исключить конкретные значения ФИО (по одному на строку — не будут применены, даже если автоматическая защита их не распознала)<textarea data-zau-remap-exclude rows="3" style="width:100%" placeholder="Например:&#10;Dauren Zhakupov&#10;Zhakupov Dauren&#10;Dayren Zhakupov"></textarea></label>
                     </div>
                     <div class="zau-ui-actions">
