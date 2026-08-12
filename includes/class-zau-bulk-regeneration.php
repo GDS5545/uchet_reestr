@@ -40,6 +40,7 @@ final class ZAU_Bulk_Regeneration {
         add_action('wp_ajax_zau_cert_bulk_control', [$this, 'ajax_control']);
         add_action('wp_ajax_zau_cert_bulk_backfill_forms', [$this, 'ajax_backfill_forms']);
         add_action('wp_ajax_zau_cert_bulk_backfill_docs', [$this, 'ajax_backfill_docs']);
+        add_action('wp_ajax_zau_cert_bulk_check_consistency', [$this, 'ajax_check_consistency']);
         add_action('admin_post_zau_cert_bulk_report', [$this, 'download_report']);
     }
 
@@ -144,6 +145,16 @@ final class ZAU_Bulk_Regeneration {
             <?php if ($prefill_document_ids !== ''): ?>
             <div class="notice notice-success inline"><p>Список ID документов подставлен из инструмента «Восстановление полей» — это именно те записи, у которых только что исправились данные. Нажмите «Проверить выборку», затем «Создать очередь и начать», чтобы пересоздать PDF только для них.</p></div>
             <?php endif; ?>
+
+            <div class="zau-card" data-zau-bulk-consistency>
+                <h2>Проверка: у кого документ не совпадает с текущими данными аккаунта</h2>
+                <p>Сверяет ФИО, сохранённое в самом PDF-документе, с текущим именем в аккаунте владельца — если
+                аккаунт позже переименовали, объединили или перенесли (восстановление полей, дубликаты, перенос
+                со старого сайта), а документ ещё не пересоздавали, здесь это будет видно. Также показывает
+                документы без привязанного (или удалённого) аккаунта. Ничего не меняет — только показывает список.</p>
+                <button type="button" class="button button-secondary" data-zau-bulk-check-consistency>Проверить расхождения</button>
+                <div data-zau-bulk-consistency-result></div>
+            </div>
 
             <div class="zau-card zau-bulk-backfill" data-zau-bulk-backfill>
                 <h2>Шаг 0. Создать документы для заявок без документа</h2>
@@ -512,6 +523,51 @@ final class ZAU_Bulk_Regeneration {
         if (!$formId) { wp_send_json_error(['message'=>'Не указана форма.'], 400); }
         $result = ZAU_Union_Module::instance()->backfill_missing_documents_from_submissions($formId, $afterId, 150);
         wp_send_json_success($result);
+    }
+
+    /** Сверяет ФИО (и организацию), сохранённые в каждом документе, с тем, что сейчас
+     *  указано в аккаунте владельца — после переноса/объединения аккаунтов документ мог
+     *  остаться со старыми данными, пока его не пересоздали. Также находит документы без
+     *  привязанного (или удалённого) аккаунта. Не меняет ничего — только показывает список. */
+    public function ajax_check_consistency() {
+        $this->require_ajax();
+        global $wpdb;
+        $countTotal = (int)$wpdb->get_var(
+            "SELECT COUNT(*) FROM {$this->docs_table} d
+             LEFT JOIN {$wpdb->users} u ON u.ID = d.user_id
+             WHERE d.user_id = 0 OR u.ID IS NULL OR d.full_name <> u.display_name"
+        );
+        $rows = $wpdb->get_results(
+            "SELECT d.id, d.full_name AS doc_name, d.organization AS doc_org, d.user_id,
+                    u.display_name AS account_name
+             FROM {$this->docs_table} d
+             LEFT JOIN {$wpdb->users} u ON u.ID = d.user_id
+             WHERE d.user_id = 0 OR u.ID IS NULL OR d.full_name <> u.display_name
+             ORDER BY d.id DESC
+             LIMIT 3000"
+        );
+        $ids = [];
+        $sample = [];
+        foreach ($rows as $row) {
+            $ids[] = (int)$row->id;
+            if (count($sample) < 200) {
+                $sample[] = [
+                    'id' => (int)$row->id,
+                    'doc_name' => (string)$row->doc_name,
+                    'doc_org' => (string)$row->doc_org,
+                    'user_id' => (int)$row->user_id,
+                    'account_name' => $row->account_name !== null ? (string)$row->account_name : '',
+                    'orphan' => $row->account_name === null,
+                ];
+            }
+        }
+        wp_send_json_success([
+            'total' => $countTotal,
+            'truncated' => $countTotal > count($ids),
+            'sample' => $sample,
+            'sample_shown' => count($sample),
+            'document_ids' => $ids,
+        ]);
     }
 
     public function download_report() {

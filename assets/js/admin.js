@@ -726,6 +726,40 @@
             }
         });
 
+        const checkButton = root.querySelector('[data-zau-bulk-check-consistency]');
+        const checkResult = root.querySelector('[data-zau-bulk-consistency-result]');
+        checkButton?.addEventListener('click', async () => {
+            checkButton.disabled = true;
+            checkResult.innerHTML = '<p>Проверяем…</p>';
+            try {
+                const data = await ajaxTimeout('zau_cert_bulk_check_consistency', {}, 30000);
+                const ids = data.document_ids || [];
+                if (!ids.length) {
+                    checkResult.innerHTML = '<div class="notice notice-success inline"><p>Расхождений не найдено — у всех документов ФИО совпадает с текущим именем в аккаунте.</p></div>';
+                    return;
+                }
+                let html = `<div class="notice notice-warning inline"><p>Найдено документов с расхождением: <strong>${data.total}</strong>`
+                    + (data.truncated ? ` (показаны и подставлены в фильтр первые ${ids.length})` : '') + `.</p>`
+                    + `<p><button type="button" class="button button-primary" data-zau-bulk-consistency-fill>Подставить эти ID в фильтр ниже</button></p></div>`;
+                html += '<div class="zau-ui-table-wrap"><table class="widefat striped"><thead><tr><th>ID</th><th>ФИО в документе</th><th>Организация в документе</th><th>Текущее имя в аккаунте</th></tr></thead><tbody>';
+                data.sample.forEach(row => {
+                    const accountText = row.orphan ? '<em>аккаунт не найден (ID ' + esc(row.user_id) + ')</em>' : esc(row.account_name);
+                    html += `<tr><td>#${esc(row.id)}</td><td>${esc(row.doc_name)}</td><td>${esc(row.doc_org)}</td><td>${accountText}</td></tr>`;
+                });
+                html += '</tbody></table></div>';
+                if (data.sample_shown < ids.length) { html += `<p class="description">В таблице показаны первые ${data.sample_shown} из ${ids.length}.</p>`; }
+                checkResult.innerHTML = html;
+                checkResult.querySelector('[data-zau-bulk-consistency-fill]')?.addEventListener('click', () => {
+                    const field = form.querySelector('[name="document_ids"]');
+                    if (field) { field.value = ids.join(','); field.scrollIntoView({behavior:'smooth', block:'center'}); field.focus(); }
+                });
+            } catch (err) {
+                checkResult.innerHTML = `<div class="notice notice-error inline"><p>${esc(err.message || 'Не удалось проверить.')}</p></div>`;
+            } finally {
+                checkButton.disabled = false;
+            }
+        });
+
         const sleep = ms => new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
         const formPayload = () => {
             const fd = new FormData(form); const payload = {};
