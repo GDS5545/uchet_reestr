@@ -41,6 +41,7 @@ final class ZAU_Bulk_Regeneration {
         add_action('wp_ajax_zau_cert_bulk_backfill_forms', [$this, 'ajax_backfill_forms']);
         add_action('wp_ajax_zau_cert_bulk_backfill_docs', [$this, 'ajax_backfill_docs']);
         add_action('wp_ajax_zau_cert_bulk_check_consistency', [$this, 'ajax_check_consistency']);
+        add_action('wp_ajax_zau_cert_bulk_fix_consistency', [$this, 'ajax_fix_consistency']);
         add_action('admin_post_zau_cert_bulk_report', [$this, 'download_report']);
     }
 
@@ -148,10 +149,13 @@ final class ZAU_Bulk_Regeneration {
 
             <div class="zau-card" data-zau-bulk-consistency>
                 <h2>Проверка: у кого документ не совпадает с текущими данными аккаунта</h2>
-                <p>Сверяет ФИО, сохранённое в самом PDF-документе, с текущим именем в аккаунте владельца — если
+                <p>Сверяет ФИО, сохранённое в самом документе (в базе), с текущим именем в аккаунте владельца — если
                 аккаунт позже переименовали, объединили или перенесли (восстановление полей, дубликаты, перенос
-                со старого сайта), а документ ещё не пересоздавали, здесь это будет видно. Также показывает
-                документы без привязанного (или удалённого) аккаунта. Ничего не меняет — только показывает список.</p>
+                со старого сайта), а документ ещё не обновляли, здесь это будет видно. Также показывает
+                документы без привязанного (или удалённого) аккаунта. Кнопка «Проверить» ничего не меняет — только
+                показывает список. Само пересоздание PDF ниже рисует картинку из того, что уже записано в
+                документе — поэтому сначала нужно нажать «Исправить ФИО в документах», и только потом пересоздавать
+                PDF, иначе в новом файле снова окажется старое имя.</p>
                 <button type="button" class="button button-secondary" data-zau-bulk-check-consistency>Проверить расхождения</button>
                 <div data-zau-bulk-consistency-result></div>
             </div>
@@ -568,6 +572,37 @@ final class ZAU_Bulk_Regeneration {
             'sample_shown' => count($sample),
             'document_ids' => $ids,
         ]);
+    }
+
+    /** Пересоздание PDF само по себе НЕ чинит расхождение из ajax_check_consistency — оно
+     *  просто заново рисует картинку из того, что УЖЕ хранится в документе (колонка full_name
+     *  в базе), а не из текущего имени аккаунта. Поэтому перед пересозданием нужно сначала
+     *  обновить саму запись документа — эта функция делает именно это (и только это: только
+     *  ФИО, только для документов, где сейчас точно найден владелец с другим именем). */
+    public function ajax_fix_consistency() {
+        $this->require_ajax();
+        global $wpdb;
+        $rawIds = is_array($_POST['document_ids'] ?? null) ? $_POST['document_ids'] : explode(',', (string)($_POST['document_ids'] ?? ''));
+        $ids = array_values(array_unique(array_filter(array_map('absint', $rawIds))));
+        if (!$ids) { wp_send_json_error(['message'=>'Не передан список документов.'], 400); }
+        $fixed = 0;
+        $skipped = 0;
+        foreach (array_chunk($ids, 200) as $chunk) {
+            $placeholders = implode(',', array_fill(0, count($chunk), '%d'));
+            $rows = $wpdb->get_results($wpdb->prepare(
+                "SELECT d.id, d.full_name AS doc_name, d.user_id, u.display_name AS account_name
+                 FROM {$this->docs_table} d
+                 INNER JOIN {$wpdb->users} u ON u.ID = d.user_id
+                 WHERE d.id IN ($placeholders)",
+                $chunk
+            ));
+            foreach ($rows as $row) {
+                if ((string)$row->doc_name === (string)$row->account_name || trim((string)$row->account_name) === '') { $skipped++; continue; }
+                $wpdb->update($this->docs_table, ['full_name' => $row->account_name, 'updated_at' => current_time('mysql')], ['id' => (int)$row->id]);
+                $fixed++;
+            }
+        }
+        wp_send_json_success(['fixed' => $fixed, 'skipped' => $skipped]);
     }
 
     public function download_report() {

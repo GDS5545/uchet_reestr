@@ -739,8 +739,10 @@
                     return;
                 }
                 let html = `<div class="notice notice-warning inline"><p>Найдено документов с расхождением: <strong>${data.total}</strong>`
-                    + (data.truncated ? ` (показаны и подставлены в фильтр первые ${ids.length})` : '') + `.</p>`
-                    + `<p><button type="button" class="button button-primary" data-zau-bulk-consistency-fill>Подставить эти ID в фильтр ниже</button></p></div>`;
+                    + (data.truncated ? ` (обработаны первые ${ids.length})` : '') + `.</p>`
+                    + `<p><button type="button" class="button button-primary" data-zau-bulk-consistency-fix>Исправить ФИО в документах и подставить в фильтр ниже</button></p>`
+                    + `<p class="description">Сначала обновит ФИО в самой записи документа (на текущее имя аккаунта-владельца), потом подставит эти ID в поле «ID документов» ниже — останется нажать «Проверить выборку» → «Создать очередь и начать», чтобы перерисовать сами PDF-файлы уже с верным именем.</p>`
+                    + `<p data-zau-bulk-consistency-fix-status></p></div>`;
                 html += '<div class="zau-ui-table-wrap"><table class="widefat striped"><thead><tr><th>ID</th><th>ФИО в документе</th><th>Организация в документе</th><th>Текущее имя в аккаунте</th></tr></thead><tbody>';
                 data.sample.forEach(row => {
                     const accountText = row.orphan ? '<em>аккаунт не найден (ID ' + esc(row.user_id) + ')</em>' : esc(row.account_name);
@@ -749,9 +751,21 @@
                 html += '</tbody></table></div>';
                 if (data.sample_shown < ids.length) { html += `<p class="description">В таблице показаны первые ${data.sample_shown} из ${ids.length}.</p>`; }
                 checkResult.innerHTML = html;
-                checkResult.querySelector('[data-zau-bulk-consistency-fill]')?.addEventListener('click', () => {
-                    const field = form.querySelector('[name="document_ids"]');
-                    if (field) { field.value = ids.join(','); field.scrollIntoView({behavior:'smooth', block:'center'}); field.focus(); }
+                const fixStatus = checkResult.querySelector('[data-zau-bulk-consistency-fix-status]');
+                checkResult.querySelector('[data-zau-bulk-consistency-fix]')?.addEventListener('click', async (ev) => {
+                    const btn = ev.currentTarget;
+                    btn.disabled = true;
+                    fixStatus.textContent = 'Исправляем…';
+                    try {
+                        const fixData = await ajaxTimeout('zau_cert_bulk_fix_consistency', {document_ids: ids.join(',')}, 60000);
+                        fixStatus.textContent = `Исправлено ФИО в документах: ${fixData.fixed}` + (fixData.skipped ? `, пропущено (владелец не найден или уже совпадало): ${fixData.skipped}` : '') + '.';
+                        const field = form.querySelector('[name="document_ids"]');
+                        if (field) { field.value = ids.join(','); field.scrollIntoView({behavior:'smooth', block:'center'}); field.focus(); }
+                    } catch (err) {
+                        fixStatus.textContent = 'Ошибка: ' + (err.message || 'не удалось исправить.');
+                    } finally {
+                        btn.disabled = false;
+                    }
                 });
             } catch (err) {
                 checkResult.innerHTML = `<div class="notice notice-error inline"><p>${esc(err.message || 'Не удалось проверить.')}</p></div>`;
