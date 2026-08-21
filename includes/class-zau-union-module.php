@@ -2166,6 +2166,23 @@ final class ZAU_Union_Module {
         $saved=get_user_meta($user->ID,'zau_profile_'.$key,true); return $saved!==''?$saved:$default;
     }
 
+    private function latest_user_submissions($uid) {
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT s.*,f.name form_name FROM {$this->submissions_table} s LEFT JOIN {$this->forms_table} f ON f.id=s.form_id WHERE s.user_id=%d ORDER BY s.id DESC", $uid));
+        $latest = [];
+        foreach ($rows as $row) {
+            $key = (int) $row->form_id;
+            if (isset($latest[$key])) continue;
+            $latest[$key] = $row;
+        }
+        return array_values($latest);
+    }
+
+    private function member_form_url() {
+        $designSettings = $this->settings();
+        return $designSettings['form_page_id'] ? get_permalink((int) $designSettings['form_page_id']) : home_url('/registraciya-v-profsoyuz/');
+    }
+
     public function cabinet_shortcode($atts=[]) {
         if(!is_user_logged_in())return $this->auth_shortcode($atts);
         if(!defined('DONOTCACHEPAGE')){ define('DONOTCACHEPAGE', true); }
@@ -2184,7 +2201,7 @@ final class ZAU_Union_Module {
         $user=wp_get_current_user();
         $status=get_user_meta($uid,'zau_member_status',true)?:'Заявление ещё не рассмотрено';
         $phone=get_user_meta($uid,'zau_phone',true);
-        $submissions=$wpdb->get_results($wpdb->prepare("SELECT s.*,f.name form_name FROM {$this->submissions_table} s LEFT JOIN {$this->forms_table} f ON f.id=s.form_id WHERE s.user_id=%d ORDER BY s.id DESC",$uid));
+        $submissions=$this->latest_user_submissions($uid);
         $docs=$wpdb->get_results($wpdb->prepare("SELECT d.*,t.name template_name FROM {$this->docs_table} d LEFT JOIN {$this->templates_table} t ON t.id=d.template_id WHERE d.user_id=%d ORDER BY d.id DESC",$uid));
         foreach((array)$docs as $index=>$doc){$docs[$index]=$this->normalize_document_for_display($doc,false);}
         $docsBySubmission=[];
@@ -2317,7 +2334,7 @@ final class ZAU_Union_Module {
 
             <?php if(in_array('submissions',$enabledTabs,true)):?>
             <section id="zau-submissions" class="zau-cabinet-section zau-cabinet-tab-panel" role="tabpanel" aria-labelledby="zau-tab-submissions" data-zau-tab-panel="submissions"<?php echo $activeTab==='submissions'?'':' hidden';?>>
-                <div class="zau-section-head"><div><h3>Мои заявления</h3><p>Здесь показываются только отправленные заявления и состояние их документов.</p></div></div>
+                <div class="zau-section-head"><div><h3>Мои заявления</h3><p>Показывается только последнее заявление по каждой форме и состояние его документов.</p></div><a class="zau-union-button zau-secondary-button" href="<?php echo esc_url($formUrl);?>">Пересдать / подать новое заявление</a></div>
                 <div class="zau-cabinet-generation" data-zau-cabinet-generation hidden><span data-zau-cabinet-progress></span><div data-zau-cabinet-result></div></div>
                 <?php if(!$submissions):?><div class="zau-empty-state">Отправленных форм пока нет.</div><?php endif;?>
                 <div class="zau-submission-list">
@@ -2450,7 +2467,7 @@ final class ZAU_Union_Module {
             <nav class="zau-cabinet-nav" aria-label="Разделы личного кабинета"><?php foreach($items as $item): if(!isset($labels[$item]))continue; if($item==='members'&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_ORG_MANAGE)&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE)&&!current_user_can('manage_options'))continue;?><a href="#zau-<?php echo esc_attr($item);?>"><?php echo esc_html($labels[$item]);?></a><?php endforeach;?></nav>
         <?php elseif ($section === 'stats'):
             $docCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->docs_table} WHERE user_id=%d",$uid));
-            $submissionCount=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->submissions_table} WHERE user_id=%d",$uid));
+            $submissionCount=count($this->latest_user_submissions($uid));
             $orgId=$this->member_org_id($uid); $organization=$orgId?$wpdb->get_row($wpdb->prepare("SELECT name,bin FROM {$this->orgs_table} WHERE id=%d",$orgId)):null;
             $lastLogin=$wpdb->get_var($wpdb->prepare("SELECT created_at FROM {$this->logs_table} WHERE user_id=%d AND action IN ('otp_login','pin_login','password_login','pin_reset_login') ORDER BY id DESC LIMIT 1",$uid));
             ?>
@@ -2468,10 +2485,11 @@ final class ZAU_Union_Module {
             <?php endforeach;?></div></section>
             <div class="zau-document-modal" data-zau-document-modal hidden><div class="zau-document-modal-backdrop" data-zau-modal-close></div><div class="zau-document-modal-dialog" role="dialog" aria-modal="true"><div class="zau-document-modal-head"><strong data-zau-modal-title>Предпросмотр документа</strong><button type="button" data-zau-modal-close aria-label="Закрыть">×</button></div><div class="zau-document-modal-body"><div class="zau-preview-loading" data-zau-preview-loading>Загружаем документ…</div><img data-zau-modal-image alt="Предпросмотр документа" hidden><iframe data-zau-modal-pdf title="Предпросмотр PDF" hidden></iframe></div></div></div><div data-zau-cabinet-render-holder aria-hidden="true"></div>
         <?php elseif ($section === 'submissions'):
-            $submissions=$wpdb->get_results($wpdb->prepare("SELECT s.*,f.name form_name FROM {$this->submissions_table} s LEFT JOIN {$this->forms_table} f ON f.id=s.form_id WHERE s.user_id=%d ORDER BY s.id DESC",$uid));
+            $submissions=$this->latest_user_submissions($uid);
             $docs=$wpdb->get_results($wpdb->prepare("SELECT source_submission_id,pdf_url FROM {$this->docs_table} WHERE user_id=%d",$uid));$docsBySubmission=[];foreach($docs as $doc){$docsBySubmission[(int)$doc->source_submission_id][]=$doc;}$autoAssigned=false;
+            $formUrl=$this->member_form_url();
             ?>
-            <section id="zau-submissions" class="zau-cabinet-section"><?php if($showHeading):?><div class="zau-section-head"><div><h3><?php echo esc_html($heading);?></h3><?php if($subtitle):?><p><?php echo esc_html($subtitle);?></p><?php endif;?></div></div><?php endif;?><div class="zau-cabinet-generation" data-zau-cabinet-generation hidden><span data-zau-cabinet-progress></span><div data-zau-cabinet-result></div></div><?php if(!$submissions):?><div class="zau-empty-state">Отправленных форм пока нет.</div><?php endif;?><div class="zau-submission-list">
+            <section id="zau-submissions" class="zau-cabinet-section"><?php if($showHeading):?><div class="zau-section-head"><div><h3><?php echo esc_html($heading);?></h3><?php if($subtitle):?><p><?php echo esc_html($subtitle);?></p><?php endif;?></div><a class="zau-union-button zau-secondary-button" href="<?php echo esc_url($formUrl);?>">Пересдать / подать новое заявление</a></div><?php endif;?><div class="zau-cabinet-generation" data-zau-cabinet-generation hidden><span data-zau-cabinet-progress></span><div data-zau-cabinet-result></div></div><?php if(!$submissions):?><div class="zau-empty-state">Отправленных форм пока нет.</div><?php endif;?><div class="zau-submission-list">
             <?php foreach($submissions as $row):$submissionDocs=$docsBySubmission[(int)$row->id]??[];$needsPdf=!$submissionDocs;foreach($submissionDocs as $submissionDoc){if(empty($submissionDoc->pdf_url)){$needsPdf=true;break;}}$auto=$needsPdf&&!$autoAssigned;if($auto)$autoAssigned=true;?><article class="zau-submission-row"><div><strong>#<?php echo (int)$row->id;?> — <?php echo esc_html($row->form_name);?></strong><small><?php echo esc_html($row->created_at);?></small></div><span class="zau-submission-status"><?php echo esc_html($row->status==='submitted'?'Отправлено':$row->status);?></span><?php if($needsPdf):?><button type="button" class="zau-union-button zau-small-button" data-zau-recover-submission="<?php echo (int)$row->id;?>" data-auto="<?php echo $auto?'1':'0';?>">Сформировать PDF</button><?php endif;?></article><?php endforeach;?></div></section><div data-zau-cabinet-render-holder aria-hidden="true"></div>
         <?php elseif ($section === 'card'): ?>
             <section id="zau-card" class="zau-cabinet-section"><?php echo $this->member_card_shortcode();?></section>
