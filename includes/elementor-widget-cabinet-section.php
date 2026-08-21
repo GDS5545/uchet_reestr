@@ -50,9 +50,15 @@ if (!defined('ABSPATH')) { exit; }
             ]);
             $this->add_control('nav_items', [
                 'label'=>'Пункты навигации',
-                'type'=>\Elementor\Controls_Manager::TEXT,
-                'default'=>'documents,submissions,card,benefits,members,info,logins',
-                'description'=>'Допустимо: documents, submissions, card, benefits, members, info, logins. Можно менять порядок и удалять пункты.',
+                'type'=>\Elementor\Controls_Manager::SELECT2,
+                'multiple'=>true,
+                'default'=>['documents','submissions','card','benefits','members','info','logins'],
+                'options'=>[
+                    'documents'=>'Документы','submissions'=>'Заявления','card'=>'Личная карточка',
+                    'benefits'=>'Акции и скидки','members'=>'Участники','info'=>'Материалы','logins'=>'Входы',
+                ],
+                'label_block'=>true,
+                'description'=>'Порядок пунктов — как выбираете. Пункт также скрывается автоматически, если запрещён для роли пользователя на странице «Оформление и данные → Вход, PIN и дизайн → Видимость вкладок кабинета по ролям».',
                 'condition'=>['section_type'=>'navigation'],
             ]);
             $this->end_controls_section();
@@ -80,6 +86,42 @@ if (!defined('ABSPATH')) { exit; }
             $this->add_group_control(\Elementor\Group_Control_Typography::get_type(), ['name'=>'heading_typography','selector'=>'{{WRAPPER}} .zau-section-head h3']);
             $this->add_control('subtitle_color', ['label'=>'Цвет описания','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-section-head p'=>'color: {{VALUE}};']]);
             $this->end_controls_section();
+
+            $this->start_controls_section('style_nav', ['label'=>'Навигация','tab'=>\Elementor\Controls_Manager::TAB_STYLE,'condition'=>['section_type'=>'navigation']]);
+            $this->add_control('nav_gap', ['label'=>'Промежуток между пунктами, px','type'=>\Elementor\Controls_Manager::SLIDER,'range'=>['px'=>['min'=>0,'max'=>40]],'selectors'=>['{{WRAPPER}} .zau-cabinet-nav'=>'gap: {{SIZE}}{{UNIT}};']]);
+            $this->add_control('nav_color', ['label'=>'Цвет текста','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-cabinet-nav a'=>'color: {{VALUE}};']]);
+            $this->add_control('nav_active_color', ['label'=>'Цвет активного пункта','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-cabinet-nav a.is-active'=>'color: {{VALUE}} !important;']]);
+            $this->add_control('nav_active_background', ['label'=>'Фон активного пункта','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-cabinet-nav a.is-active'=>'background-color: {{VALUE}};']]);
+            $this->add_group_control(\Elementor\Group_Control_Typography::get_type(), ['name'=>'nav_typography','selector'=>'{{WRAPPER}} .zau-cabinet-nav a']);
+            $this->end_controls_section();
+
+            $this->start_controls_section('style_benefits', ['label'=>'Оформление акций и скидок','tab'=>\Elementor\Controls_Manager::TAB_STYLE,'condition'=>['section_type'=>'benefits']]);
+            $this->add_responsive_control('benefit_columns', [
+                'label'=>'Колонок в сетке','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'3',
+                'options'=>['1'=>'1','2'=>'2','3'=>'3','4'=>'4'],
+                'selectors'=>['{{WRAPPER}} .zau-benefit-grid'=>'grid-template-columns: repeat({{VALUE}}, minmax(0, 1fr));'],
+            ]);
+            $this->add_responsive_control('benefit_gap', ['label'=>'Промежуток между карточками, px','type'=>\Elementor\Controls_Manager::SLIDER,'range'=>['px'=>['min'=>0,'max'=>60]],'selectors'=>['{{WRAPPER}} .zau-benefit-grid'=>'gap: {{SIZE}}{{UNIT}};']]);
+            $this->add_control('benefit_card_heading', ['type'=>\Elementor\Controls_Manager::HEADING,'label'=>'Карточка']);
+            $this->add_control('benefit_card_background', ['label'=>'Фон карточки','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-benefit-card'=>'background-color: {{VALUE}};']]);
+            $this->add_group_control(\Elementor\Group_Control_Border::get_type(), ['name'=>'benefit_card_border','selector'=>'{{WRAPPER}} .zau-benefit-card']);
+            $this->add_responsive_control('benefit_card_radius', ['label'=>'Скругление','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','%'],'selectors'=>['{{WRAPPER}} .zau-benefit-card'=>'border-radius: {{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+            $this->add_responsive_control('benefit_card_padding', ['label'=>'Внутренние отступы','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','em','%'],'selectors'=>['{{WRAPPER}} .zau-benefit-content'=>'padding: {{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+            $this->add_group_control(\Elementor\Group_Control_Box_Shadow::get_type(), ['name'=>'benefit_card_shadow','selector'=>'{{WRAPPER}} .zau-benefit-card']);
+            $this->add_control('benefit_badge_heading', ['type'=>\Elementor\Controls_Manager::HEADING,'label'=>'Бейдж скидки','separator'=>'before']);
+            $this->add_control('benefit_badge_background', ['label'=>'Фон бейджа','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-benefit-badge'=>'background-color: {{VALUE}};']]);
+            $this->add_control('benefit_badge_color', ['label'=>'Цвет текста бейджа','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-benefit-badge'=>'color: {{VALUE}};']]);
+            $this->add_control('benefit_title_heading', ['type'=>\Elementor\Controls_Manager::HEADING,'label'=>'Название и текст','separator'=>'before']);
+            $this->add_control('benefit_title_color', ['label'=>'Цвет названия','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-benefit-card h4'=>'color: {{VALUE}};']]);
+            $this->add_group_control(\Elementor\Group_Control_Typography::get_type(), ['name'=>'benefit_title_typography','selector'=>'{{WRAPPER}} .zau-benefit-card h4']);
+            $this->add_control('benefit_partner_color', ['label'=>'Цвет партнёра','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-benefit-partner'=>'color: {{VALUE}};']]);
+            $this->add_control('benefit_description_color', ['label'=>'Цвет описания','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-benefit-description'=>'color: {{VALUE}};']]);
+            $this->add_group_control(\Elementor\Group_Control_Typography::get_type(), ['name'=>'benefit_description_typography','selector'=>'{{WRAPPER}} .zau-benefit-description']);
+            $this->add_control('benefit_button_heading', ['type'=>\Elementor\Controls_Manager::HEADING,'label'=>'Кнопка','separator'=>'before']);
+            $this->add_control('benefit_button_background', ['label'=>'Фон кнопки','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-benefit-card .zau-union-button'=>'background-color: {{VALUE}} !important;']]);
+            $this->add_control('benefit_button_color', ['label'=>'Цвет текста кнопки','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-benefit-card .zau-union-button'=>'color: {{VALUE}} !important;']]);
+            $this->add_responsive_control('benefit_button_radius', ['label'=>'Скругление кнопки','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','%'],'selectors'=>['{{WRAPPER}} .zau-benefit-card .zau-union-button'=>'border-radius: {{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+            $this->end_controls_section();
         }
 
         protected function render() {
@@ -92,12 +134,14 @@ if (!defined('ABSPATH')) { exit; }
                 echo do_shortcode('[zau_union_org_registry]');
                 return;
             }
+            $navItems = $s['nav_items'] ?? [];
+            $navItems = is_array($navItems) ? implode(',', array_map('sanitize_key', $navItems)) : sanitize_text_field((string) $navItems);
             $attrs = [
                 'section' => sanitize_key($s['section_type'] ?? 'profile'),
                 'title' => sanitize_text_field($s['custom_title'] ?? ''),
                 'subtitle' => sanitize_text_field($s['custom_subtitle'] ?? ''),
                 'show_heading' => (($s['show_heading'] ?? 'yes') === 'yes') ? 'yes' : 'no',
-                'nav_items' => sanitize_text_field($s['nav_items'] ?? ''),
+                'nav_items' => $navItems,
             ];
             $shortcode = '[zau_union_cabinet_section';
             foreach ($attrs as $key=>$value) { $shortcode .= ' '.$key.'="'.esc_attr($value).'"'; }
