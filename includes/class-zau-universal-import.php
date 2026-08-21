@@ -57,7 +57,7 @@ final class ZAU_Universal_Import {
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             import_token varchar(64) NOT NULL,
             source_hash varchar(64) NOT NULL,
-            row_number bigint(20) unsigned NOT NULL DEFAULT 0,
+            `row_number` bigint(20) unsigned NOT NULL DEFAULT 0,
             legacy_user_id varchar(100) NULL,
             legacy_entry_id varchar(100) NULL,
             target_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
