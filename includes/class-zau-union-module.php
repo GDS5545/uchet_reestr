@@ -76,6 +76,7 @@ final class ZAU_Union_Module {
         add_action('admin_post_zau_union_save_branch_order', [$this, 'save_branch_order']);
         add_action('admin_post_zau_union_export_org_registry_excel', [$this, 'export_org_registry_excel']);
         add_action('admin_post_zau_union_download_org_documents_zip', [$this, 'download_org_documents_zip']);
+        add_action('admin_post_zau_union_download_org_mismatch_report', [$this, 'download_org_mismatch_report']);
 
         add_action('wp_ajax_nopriv_zau_union_send_otp', [$this, 'ajax_send_otp']);
         add_action('wp_ajax_zau_union_send_otp', [$this, 'ajax_send_otp']);
@@ -855,6 +856,7 @@ final class ZAU_Union_Module {
         add_submenu_page('zau-certificates', 'Участники и доступ', 'Участники и доступ', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-members', [$this, 'page_members_access']);
         add_submenu_page('zau-certificates', 'Статусы и одобрение', 'Статусы и одобрение', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-member-statuses', [$this, 'page_member_statuses']);
         add_submenu_page('zau-certificates', 'Организации и БИН', 'Организации и БИН', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-organizations', [$this, 'page_organizations']);
+        add_submenu_page('zau-certificates', 'Проверка организаций', 'Проверка организаций', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-org-audit', [$this, 'page_organization_audit']);
         add_submenu_page('zau-certificates', 'Филиалы и реквизиты', 'Филиалы и реквизиты', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-branches', [$this, 'page_branches']);
         add_submenu_page('zau-certificates', 'История входов', 'История входов', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-login-history', [$this, 'page_login_history']);
         add_submenu_page('zau-certificates', 'Вход, PIN и API', 'Вход, PIN и API', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-settings', [$this, 'page_settings']);
@@ -1825,6 +1827,117 @@ final class ZAU_Union_Module {
         $row=['bin'=>$bin,'name'=>$name,'director'=>sanitize_text_field($data['director']??''),'address'=>sanitize_textarea_field($data['address']??''),'region'=>sanitize_text_field($data['region']??''),'source'=>sanitize_key($data['source']??'local'),'updated_at'=>current_time('mysql')];
         $existing=(int)$wpdb->get_var($wpdb->prepare("SELECT id FROM {$this->orgs_table} WHERE bin=%s",$bin));
         if($existing){$wpdb->update($this->orgs_table,$row,['id'=>$existing]);return $existing;} $wpdb->insert($this->orgs_table,$row); return (int)$wpdb->insert_id;
+    }
+
+    private function organization_mismatch_rows($limit = 3000) {
+        global $wpdb;
+        $limit = max(1, min(20000, (int) $limit));
+        $userIds = $wpdb->get_col($wpdb->prepare(
+            "SELECT DISTINCT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_organization_id' AND meta_value<>'' AND meta_value<>'0' LIMIT %d",
+            $limit
+        ));
+        $userIds = array_values(array_unique(array_filter(array_map('absint', (array) $userIds))));
+        if (!$userIds) { return []; }
+        $placeholders = implode(',', array_fill(0, count($userIds), '%d'));
+
+        $orgIdByUser = [];
+        foreach ($wpdb->get_results($wpdb->prepare("SELECT user_id,meta_value FROM {$wpdb->usermeta} WHERE meta_key='zau_organization_id' AND user_id IN ($placeholders)", $userIds)) as $row) {
+            $orgIdByUser[(int) $row->user_id] = absint($row->meta_value);
+        }
+        $orgIds = array_values(array_unique(array_filter($orgIdByUser)));
+        $orgById = [];
+        if ($orgIds) {
+            $orgPlaceholders = implode(',', array_fill(0, count($orgIds), '%d'));
+            foreach ($wpdb->get_results($wpdb->prepare("SELECT id,name,bin FROM {$this->orgs_table} WHERE id IN ($orgPlaceholders)", $orgIds)) as $org) {
+                $orgById[(int) $org->id] = $org;
+            }
+        }
+
+        // For each user, find the newest submission that actually carries an
+        // organization name — some forms (e.g. dues-only) have no such field.
+        $declaredByUser = [];
+        $subRows = $wpdb->get_results($wpdb->prepare(
+            "SELECT user_id,data_json,created_at,id FROM {$this->submissions_table} WHERE user_id IN ($placeholders) ORDER BY user_id ASC,id DESC",
+            $userIds
+        ));
+        foreach ($subRows as $row) {
+            $uid = (int) $row->user_id;
+            if (isset($declaredByUser[$uid])) { continue; }
+            $data = json_decode((string) $row->data_json, true);
+            if (!is_array($data) || empty($data['organization'])) { continue; }
+            $declaredByUser[$uid] = [
+                'organization' => sanitize_text_field((string) $data['organization']),
+                'organization_bin' => sanitize_text_field((string) ($data['organization_bin'] ?? '')),
+                'submission_id' => (int) $row->id,
+                'submission_date' => (string) $row->created_at,
+            ];
+        }
+
+        $userById = [];
+        foreach (get_users(['include' => $userIds, 'fields' => ['ID', 'display_name', 'user_email']]) as $u) {
+            $userById[(int) $u->ID] = $u;
+        }
+
+        $rows = [];
+        foreach ($userIds as $uid) {
+            $declared = $declaredByUser[$uid] ?? null;
+            if (!$declared) { continue; }
+            $orgId = $orgIdByUser[$uid] ?? 0;
+            $org = $orgId ? ($orgById[$orgId] ?? null) : null;
+            if (!$org || $org->name === '') { continue; }
+            $registryNorm = $this->normalize_audience_text($org->name);
+            $declaredNorm = $this->normalize_audience_text($declared['organization']);
+            if ($registryNorm === '' || $declaredNorm === '' || $registryNorm === $declaredNorm) { continue; }
+            $user = $userById[$uid] ?? null;
+            $rows[] = [
+                'user_id' => $uid,
+                'display_name' => $user ? $user->display_name : ('#' . $uid),
+                'email' => $user ? $user->user_email : '',
+                'registry_org' => $org->name,
+                'registry_bin' => (string) $org->bin,
+                'declared_org' => $declared['organization'],
+                'declared_bin' => $declared['organization_bin'],
+                'submission_id' => $declared['submission_id'],
+                'submission_date' => $declared['submission_date'],
+            ];
+        }
+        usort($rows, function ($a, $b) { return strcasecmp($a['display_name'], $b['display_name']); });
+        return $rows;
+    }
+
+    public function page_organization_audit() {
+        $this->require_cap(ZAU_Certificate_PDF_Generator::CAP_MANAGE);
+        $limit = max(200, min(20000, absint($_GET['scan_limit'] ?? 3000)));
+        $rows = $this->organization_mismatch_rows($limit);
+        ?>
+        <div class="wrap zau-union-admin">
+        <div class="zau-union-head"><div><h1>Проверка организаций</h1><p>Сравнивает организацию, назначенную участнику в реестре, с организацией из его последнего заявления. Расхождение возможно, если несколько разных учреждений используют один и тот же БИН (например, подчинены одному управлению здравоохранения) — тогда автоматическая привязка по БИН может выбрать не то учреждение, и в реестре покажется чужая организация. Инструмент ничего не меняет — только показывает расхождения, чтобы вы могли поправить нужных участников вручную на странице «Участники и доступ».</p></div>
+        <a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=zau_union_download_org_mismatch_report&scan_limit='.$limit),self::NONCE));?>">Скачать CSV</a></div>
+        <form method="get" class="zau-union-search"><input type="hidden" name="page" value="zau-union-org-audit"><label>Проверить участников (максимум): <select name="scan_limit"><?php foreach([1000,3000,5000,10000,20000] as $option):?><option value="<?php echo (int)$option;?>" <?php selected($limit,$option);?>><?php echo number_format_i18n($option);?></option><?php endforeach;?></select></label><button class="button">Проверить</button></form>
+        <p><strong>Найдено расхождений: <?php echo number_format_i18n(count($rows));?></strong> среди проверенных участников с назначенной организацией (проверено не более <?php echo number_format_i18n($limit);?>).</p>
+        <table class="widefat striped"><thead><tr><th>Участник</th><th>Организация в реестре</th><th>Организация в последнем заявлении</th><th>Заявление</th><th></th></tr></thead><tbody>
+        <?php if(!$rows):?><tr><td colspan="5">Расхождений не найдено.</td></tr><?php endif;?>
+        <?php foreach($rows as $row):?><tr><td><strong><?php echo esc_html($row['display_name']);?></strong><br><small><?php echo esc_html($row['email']);?></small></td><td><?php echo esc_html($row['registry_org']);?><?php if($row['registry_bin']):?><br><small>БИН <?php echo esc_html($row['registry_bin']);?></small><?php endif;?></td><td><?php echo esc_html($row['declared_org']);?><?php if($row['declared_bin']):?><br><small>БИН <?php echo esc_html($row['declared_bin']);?></small><?php endif;?></td><td>#<?php echo (int)$row['submission_id'];?><br><small><?php echo esc_html($row['submission_date']);?></small></td><td><a class="button" href="<?php echo esc_url(admin_url('user-edit.php?user_id='.(int)$row['user_id']));?>">Открыть профиль</a></td></tr><?php endforeach;?>
+        </tbody></table></div>
+        <?php
+    }
+
+    public function download_org_mismatch_report() {
+        $this->require_cap(ZAU_Certificate_PDF_Generator::CAP_MANAGE);
+        check_admin_referer(self::NONCE);
+        $limit = max(200, min(20000, absint($_GET['scan_limit'] ?? 3000)));
+        $rows = $this->organization_mismatch_rows($limit);
+        nocache_headers();
+        header('Content-Type: text/csv; charset=UTF-8');
+        header('Content-Disposition: attachment; filename="'.sanitize_file_name('zau-org-mismatch-'.wp_date('Y-m-d-H-i').'.csv').'"');
+        echo "\xEF\xBB\xBF";
+        $out = fopen('php://output', 'w');
+        fputcsv($out, ['User ID','ФИО','Email','Организация в реестре','БИН в реестре','Организация в заявлении','БИН в заявлении','ID заявления','Дата заявления'], ';');
+        foreach ($rows as $row) {
+            fputcsv($out, [$row['user_id'],$row['display_name'],$row['email'],$row['registry_org'],$row['registry_bin'],$row['declared_org'],$row['declared_bin'],$row['submission_id'],$row['submission_date']], ';');
+        }
+        fclose($out);
+        exit;
     }
 
     public function page_settings() {
