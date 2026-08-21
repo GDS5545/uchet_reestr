@@ -19,6 +19,7 @@ if (!defined('ABSPATH')) { exit; }
                     'profile'=>'Шапка профиля и статус',
                     'navigation'=>'Навигация по разделам',
                     'stats'=>'Карточки статистики',
+                    'home'=>'Главная (быстрые действия)',
                     'documents'=>'Мои документы',
                     'submissions'=>'Мои заявления',
                     'card'=>'Личная карточка',
@@ -34,27 +35,27 @@ if (!defined('ABSPATH')) { exit; }
                 'label'=>'Свой заголовок',
                 'type'=>\Elementor\Controls_Manager::TEXT,
                 'placeholder'=>'Оставьте пустым для стандартного',
-                'condition'=>['section_type'=>['documents','submissions','card','benefits','members','info','logins']],
+                'condition'=>['section_type'=>['home','documents','submissions','card','benefits','members','info','logins']],
             ]);
             $this->add_control('custom_subtitle', [
                 'label'=>'Своё описание',
                 'type'=>\Elementor\Controls_Manager::TEXTAREA,
                 'rows'=>3,
-                'condition'=>['section_type'=>['documents','submissions','card','benefits','members','info','logins']],
+                'condition'=>['section_type'=>['home','documents','submissions','card','benefits','members','info','logins']],
             ]);
             $this->add_control('show_heading', [
                 'label'=>'Показывать заголовок',
                 'type'=>\Elementor\Controls_Manager::SWITCHER,
                 'label_on'=>'Да','label_off'=>'Нет','return_value'=>'yes','default'=>'yes',
-                'condition'=>['section_type'=>['documents','submissions','card','benefits','members','info','logins']],
+                'condition'=>['section_type'=>['home','documents','submissions','card','benefits','members','info','logins']],
             ]);
             $this->add_control('nav_items', [
                 'label'=>'Пункты навигации',
                 'type'=>\Elementor\Controls_Manager::SELECT2,
                 'multiple'=>true,
-                'default'=>['documents','submissions','card','benefits','members','info','logins'],
+                'default'=>['home','documents','submissions','card','benefits','members','info','logins'],
                 'options'=>[
-                    'documents'=>'Документы','submissions'=>'Заявления','card'=>'Личная карточка',
+                    'home'=>'Главная','documents'=>'Документы','submissions'=>'Заявления','card'=>'Личная карточка',
                     'benefits'=>'Акции и скидки','members'=>'Участники','info'=>'Материалы','logins'=>'Входы',
                 ],
                 'label_block'=>true,
@@ -88,11 +89,23 @@ if (!defined('ABSPATH')) { exit; }
             $this->end_controls_section();
 
             $this->start_controls_section('style_nav', ['label'=>'Навигация','tab'=>\Elementor\Controls_Manager::TAB_STYLE,'condition'=>['section_type'=>'navigation']]);
-            $this->add_control('nav_gap', ['label'=>'Промежуток между пунктами, px','type'=>\Elementor\Controls_Manager::SLIDER,'range'=>['px'=>['min'=>0,'max'=>40]],'selectors'=>['{{WRAPPER}} .zau-cabinet-nav'=>'gap: {{SIZE}}{{UNIT}};']]);
+            $this->add_responsive_control('nav_gap', ['label'=>'Промежуток между пунктами, px','type'=>\Elementor\Controls_Manager::SLIDER,'range'=>['px'=>['min'=>0,'max'=>40]],'selectors'=>['{{WRAPPER}} .zau-cabinet-nav'=>'gap: {{SIZE}}{{UNIT}};']]);
             $this->add_control('nav_color', ['label'=>'Цвет текста','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-cabinet-nav a'=>'color: {{VALUE}};']]);
             $this->add_control('nav_active_color', ['label'=>'Цвет активного пункта','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-cabinet-nav a.is-active'=>'color: {{VALUE}} !important;']]);
             $this->add_control('nav_active_background', ['label'=>'Фон активного пункта','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-cabinet-nav a.is-active'=>'background-color: {{VALUE}};']]);
             $this->add_group_control(\Elementor\Group_Control_Typography::get_type(), ['name'=>'nav_typography','selector'=>'{{WRAPPER}} .zau-cabinet-nav a']);
+            $this->end_controls_section();
+
+            $this->start_controls_section('style_nav_mobile', ['label'=>'Навигация на телефоне','tab'=>\Elementor\Controls_Manager::TAB_STYLE,'condition'=>['section_type'=>'navigation']]);
+            $this->add_control('nav_mobile_fixed', [
+                'label'=>'Закрепить внизу экрана на телефоне','type'=>\Elementor\Controls_Manager::SWITCHER,
+                'label_on'=>'Да','label_off'=>'Нет','return_value'=>'yes',
+                'prefix_class'=>'zau-nav-mobile-fixed-',
+                'description'=>'На телефоне панель станет нижним меню, как в мобильных приложениях, с иконкой и коротким названием у каждого пункта.',
+            ]);
+            $this->add_control('nav_mobile_icon_size', ['label'=>'Размер иконки на телефоне, px','type'=>\Elementor\Controls_Manager::SLIDER,'range'=>['px'=>['min'=>12,'max'=>32]],'selectors'=>['{{WRAPPER}} .zau-cabinet-nav-icon'=>'font-size: {{SIZE}}{{UNIT}};'],'condition'=>['nav_mobile_fixed'=>'yes']]);
+            $this->add_control('nav_mobile_background', ['label'=>'Фон нижнего меню','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}} .zau-cabinet-nav'=>'background-color: {{VALUE}};'],'condition'=>['nav_mobile_fixed'=>'yes']]);
+            $this->add_group_control(\Elementor\Group_Control_Box_Shadow::get_type(), ['name'=>'nav_mobile_shadow','selector'=>'{{WRAPPER}} .zau-cabinet-nav','condition'=>['nav_mobile_fixed'=>'yes']]);
             $this->end_controls_section();
 
             $this->start_controls_section('style_benefits', ['label'=>'Оформление акций и скидок','tab'=>\Elementor\Controls_Manager::TAB_STYLE,'condition'=>['section_type'=>'benefits']]);

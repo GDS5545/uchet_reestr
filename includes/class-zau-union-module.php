@@ -2493,7 +2493,8 @@ final class ZAU_Union_Module {
             if(!$this->tab_allowed_for_current_user($tab))continue;
             $enabledTabs[]=$tab;
         }
-        if(!$enabledTabs)$enabledTabs=['home','documents','submissions','card','benefits','info','logins'];
+        if(!$enabledTabs)$enabledTabs=array_values(array_filter(['home','documents','submissions','card','benefits','info','logins'],[$this,'tab_allowed_for_current_user']));
+        if(!$enabledTabs)$enabledTabs=['home'];
         $requestedActive=sanitize_key((string)wp_unslash($_GET['zau_tab']??$atts['default_tab']));
         $activeTab=in_array($requestedActive,$enabledTabs,true)?$requestedActive:$enabledTabs[0];
         $currentUrl=remove_query_arg('zau_tab',home_url(wp_unslash($_SERVER['REQUEST_URI']??'/')));
@@ -2504,7 +2505,8 @@ final class ZAU_Union_Module {
         $mobileBottomNav=$this->shortcode_switch($atts['mobile_bottom_nav']??'inherit',!empty($designSettings['design_mobile_bottom_nav']));
         $showMemberCard=$this->shortcode_switch($atts['member_card']??'inherit',!empty($designSettings['member_card_tab_enabled']));
         if(!$showMemberCard)$enabledTabs=array_values(array_diff($enabledTabs,['card']));
-        if(!$enabledTabs)$enabledTabs=['home','documents','submissions','info','logins'];
+        if(!$enabledTabs)$enabledTabs=array_values(array_filter(['home','documents','submissions','info','logins'],[$this,'tab_allowed_for_current_user']));
+        if(!$enabledTabs)$enabledTabs=['home'];
         if(!in_array($activeTab,$enabledTabs,true))$activeTab=$enabledTabs[0];
         $formUrl=$designSettings['form_page_id']?get_permalink((int)$designSettings['form_page_id']):home_url('/registraciya-v-profsoyuz/');
         ob_start(); ?>
@@ -2671,6 +2673,7 @@ final class ZAU_Union_Module {
 
     private function cabinet_section_heading($section, $title = '', $subtitle = '') {
         $defaults = [
+            'home'=>['Главная','Краткая информация о членстве и быстрые действия.'],
             'documents'=>['Мои документы','Предпросмотр открывается в личном кабинете. Проверка QR не показывает сам PDF.'],
             'submissions'=>['Мои заявления','Сохранённые отправки форм и состояние сформированных документов.'],
             'card'=>['Личная карточка','Персональные и служебные данные члена профсоюза.'],
@@ -2695,9 +2698,9 @@ final class ZAU_Union_Module {
             'nav_items'=>'documents,submissions,card,benefits,members,info,logins',
         ], $atts, 'zau_union_cabinet_section');
         $section = sanitize_key($a['section']);
-        $allowed = ['profile','navigation','stats','documents','submissions','card','benefits','members','info','logins','logout'];
+        $allowed = ['profile','navigation','stats','home','documents','submissions','card','benefits','members','info','logins','logout'];
         if (!in_array($section, $allowed, true)) { $section = 'documents'; }
-        if (in_array($section, ['documents','submissions','card','benefits','members','registry','info','logins'], true) && !$this->tab_allowed_for_current_user($section)) { return ''; }
+        if (in_array($section, ['home','documents','submissions','card','benefits','members','registry','info','logins'], true) && !$this->tab_allowed_for_current_user($section)) { return ''; }
         global $wpdb;
         $uid = get_current_user_id();
         $user = wp_get_current_user();
@@ -2714,10 +2717,41 @@ final class ZAU_Union_Module {
                 <div class="zau-cabinet-hero-actions"><div class="zau-member-status"><span>Статус членства</span><strong><?php echo esc_html($status);?></strong></div><a class="zau-cabinet-logout" href="<?php echo esc_url(wp_logout_url(home_url('/')));?>">Выйти</a></div>
             </header>
         <?php elseif ($section === 'navigation'):
-            $labels=['documents'=>'Документы','submissions'=>'Заявления','card'=>'Личная карточка','benefits'=>'Акции и скидки','members'=>'Участники','info'=>'Материалы','logins'=>'Входы'];
+            $navMeta=[
+                'home'=>['label'=>'Главная','short'=>'Главная','icon'=>'⌂'],
+                'documents'=>['label'=>'Документы','short'=>'Файлы','icon'=>'▤'],
+                'submissions'=>['label'=>'Заявления','short'=>'Заявки','icon'=>'✓'],
+                'card'=>['label'=>'Личная карточка','short'=>'Карточка','icon'=>'▣'],
+                'benefits'=>['label'=>'Акции и скидки','short'=>'Акции','icon'=>'%'],
+                'members'=>['label'=>'Участники','short'=>'Участники','icon'=>'◎'],
+                'info'=>['label'=>'Материалы','short'=>'Материалы','icon'=>'ℹ'],
+                'logins'=>['label'=>'Входы','short'=>'Входы','icon'=>'⏱'],
+            ];
             $items=array_filter(array_map('sanitize_key',explode(',',(string)$a['nav_items'])));
             ?>
-            <nav class="zau-cabinet-nav" aria-label="Разделы личного кабинета" data-zau-section-nav><?php foreach($items as $item): if(!isset($labels[$item]))continue; if($item==='members'&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_ORG_MANAGE)&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE)&&!current_user_can('manage_options'))continue; if(!$this->tab_allowed_for_current_user($item))continue;?><a href="#zau-<?php echo esc_attr($item);?>" data-zau-tab="<?php echo esc_attr($item);?>"><?php echo esc_html($labels[$item]);?></a><?php endforeach;?></nav>
+            <nav class="zau-cabinet-nav zau-cabinet-nav-mobile" aria-label="Разделы личного кабинета" data-zau-section-nav><?php foreach($items as $item): if(!isset($navMeta[$item]))continue; if($item==='members'&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_ORG_MANAGE)&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE)&&!current_user_can('manage_options'))continue; if(!$this->tab_allowed_for_current_user($item))continue; $meta=$navMeta[$item];?><a href="#zau-<?php echo esc_attr($item);?>" data-zau-tab="<?php echo esc_attr($item);?>"><span class="zau-cabinet-nav-icon" aria-hidden="true"><?php echo esc_html($meta['icon']);?></span><span class="zau-cabinet-nav-label-full"><?php echo esc_html($meta['label']);?></span><span class="zau-cabinet-nav-label-short"><?php echo esc_html($meta['short']);?></span></a><?php endforeach;?></nav>
+        <?php elseif ($section === 'home'):
+            $docCount=count($this->latest_user_documents($uid));
+            $submissionCount=count($this->latest_user_submissions($uid));
+            $orgId=$this->member_org_id($uid); $organization=$orgId?$wpdb->get_row($wpdb->prepare("SELECT name,bin FROM {$this->orgs_table} WHERE id=%d",$orgId)):null;
+            $lastLogin=$wpdb->get_var($wpdb->prepare("SELECT created_at FROM {$this->logs_table} WHERE user_id=%d AND action IN ('otp_login','pin_login','password_login','pin_reset_login') ORDER BY id DESC LIMIT 1",$uid));
+            $formUrl=$this->member_form_url();
+            ?>
+            <section id="zau-home" class="zau-cabinet-section zau-cabinet-tab-panel" data-zau-tab-panel="home">
+            <?php if($showHeading):?><div class="zau-section-head"><div><h3><?php echo esc_html($heading);?></h3><?php if($subtitle):?><p><?php echo esc_html($subtitle);?></p><?php endif;?></div></div><?php endif;?>
+            <div class="zau-aqniet-quick-actions" aria-label="Быстрые действия">
+                <a class="zau-aqniet-action-card is-primary" href="<?php echo esc_url($formUrl);?>"><span class="zau-aqniet-action-icon">＋</span><strong>Подать заявление</strong><small>Новая регистрация или форма</small></a>
+                <a class="zau-aqniet-action-card" href="#zau-documents" data-zau-tab="documents"><span class="zau-aqniet-action-icon">▤</span><strong>Мои документы</strong><small><?php echo $docCount;?> файлов</small></a>
+                <a class="zau-aqniet-action-card" href="#zau-submissions" data-zau-tab="submissions"><span class="zau-aqniet-action-icon">✓</span><strong>Мои заявления</strong><small>Статусы и формирование PDF</small></a>
+                <a class="zau-aqniet-action-card" href="#zau-benefits" data-zau-tab="benefits"><span class="zau-aqniet-action-icon">%</span><strong>Акции и скидки</strong><small>Предложения профсоюза</small></a>
+            </div>
+            <div class="zau-cabinet-stats">
+                <div><span>Документов</span><strong><?php echo $docCount;?></strong></div>
+                <div><span>Заявлений</span><strong><?php echo $submissionCount;?></strong></div>
+                <div><span>Организация</span><strong><?php echo esc_html($organization?$organization->name:'Не назначена');?></strong><?php if($organization):?><small>БИН <?php echo esc_html($organization->bin);?></small><?php endif;?></div>
+                <div><span>Последний вход</span><strong><?php echo esc_html($lastLogin?:'Нет данных');?></strong></div>
+            </div>
+            </section>
         <?php elseif ($section === 'stats'):
             $docCount=count($this->latest_user_documents($uid));
             $submissionCount=count($this->latest_user_submissions($uid));
@@ -4487,8 +4521,8 @@ $xref
         if(!is_user_logged_in())return $this->auth_shortcode(['return_url'=>home_url(wp_unslash($_SERVER['REQUEST_URI']??'/'))]);
         $userId=get_current_user_id();$benefits=$this->available_benefits($userId);ob_start();?>
         <section class="zau-benefits"><div class="zau-benefits-head"><h3>Акции и скидки</h3><p>Предложения партнёров и Профсоюза, доступные вам.</p></div><?php if(!$benefits):?><div class="zau-empty-state"><strong>Актуальных предложений пока нет</strong><span>Проверьте срок действия и ограничения акции.</span></div><?php echo $this->benefit_admin_diagnostics($userId);?><?php endif;?><div class="zau-benefit-grid">
-        <?php foreach($benefits as $post):$discount=get_post_meta($post->ID,'_zau_benefit_discount',true);$partner=get_post_meta($post->ID,'_zau_benefit_partner',true);$promo=get_post_meta($post->ID,'_zau_benefit_promo',true);$button=get_post_meta($post->ID,'_zau_benefit_button',true)?:'Подробнее';$url=get_post_meta($post->ID,'_zau_benefit_url',true);$to=get_post_meta($post->ID,'_zau_benefit_to',true);$context=$this->benefit_render_context[(int)$post->ID]??['preview'=>false,'reasons'=>[]];?>
-            <article class="zau-benefit-card"><?php if(has_post_thumbnail($post)):?><div class="zau-benefit-image"><?php echo get_the_post_thumbnail($post,'medium_large');?></div><?php endif;?><div class="zau-benefit-content"><?php if(!empty($context['preview'])):?><div class="zau-benefit-admin-preview"><strong>Предпросмотр администратора</strong><span><?php echo esc_html(implode(' ',(array)$context['reasons']));?></span></div><?php endif;?><?php if($discount):?><span class="zau-benefit-badge"><?php echo esc_html($discount);?></span><?php endif;?><h4><?php echo esc_html(get_the_title($post));?></h4><?php if($partner):?><p class="zau-benefit-partner"><?php echo esc_html($partner);?></p><?php endif;?><div class="zau-benefit-description"><?php echo wp_kses_post(apply_filters('the_content',$post->post_content));?></div><?php if($promo):?><div class="zau-benefit-promo">Промокод: <strong><?php echo esc_html($promo);?></strong></div><?php endif;?><?php if($to):?><small>Действует до <?php echo esc_html(mysql2date('d.m.Y',$to));?></small><?php endif;?><?php if($url):?><a class="zau-union-button" href="<?php echo esc_url($url);?>" target="_blank" rel="noopener"><?php echo esc_html($button);?></a><?php endif;?></div></article>
+        <?php foreach($benefits as $post):$discount=get_post_meta($post->ID,'_zau_benefit_discount',true);$partner=get_post_meta($post->ID,'_zau_benefit_partner',true);$promo=get_post_meta($post->ID,'_zau_benefit_promo',true);$button=get_post_meta($post->ID,'_zau_benefit_button',true)?:'Подробнее';$url=get_post_meta($post->ID,'_zau_benefit_url',true);$to=get_post_meta($post->ID,'_zau_benefit_to',true);$context=$this->benefit_render_context[(int)$post->ID]??['preview'=>false,'reasons'=>[]];$descHtml=wp_kses_post(apply_filters('the_content',$post->post_content));$descIsLong=(function_exists('mb_strlen')?mb_strlen(wp_strip_all_tags($descHtml),'UTF-8'):strlen(wp_strip_all_tags($descHtml)))>220;?>
+            <article class="zau-benefit-card"><?php if(has_post_thumbnail($post)):?><div class="zau-benefit-image"><?php echo get_the_post_thumbnail($post,'medium_large');?></div><?php endif;?><div class="zau-benefit-content"><?php if(!empty($context['preview'])):?><div class="zau-benefit-admin-preview"><strong>Предпросмотр администратора</strong><span><?php echo esc_html(implode(' ',(array)$context['reasons']));?></span></div><?php endif;?><?php if($discount):?><span class="zau-benefit-badge"><?php echo esc_html($discount);?></span><?php endif;?><h4><?php echo esc_html(get_the_title($post));?></h4><?php if($partner):?><p class="zau-benefit-partner"><?php echo esc_html($partner);?></p><?php endif;?><div class="zau-benefit-description-wrap<?php echo $descIsLong?' has-toggle':'';?>"><div class="zau-benefit-description" data-zau-benefit-desc><?php echo $descHtml;?></div><?php if($descIsLong):?><button type="button" class="zau-benefit-desc-toggle" data-zau-benefit-desc-toggle>Читать полностью</button><?php endif;?></div><?php if($promo):?><div class="zau-benefit-promo">Промокод: <strong><?php echo esc_html($promo);?></strong></div><?php endif;?><?php if($to):?><small>Действует до <?php echo esc_html(mysql2date('d.m.Y',$to));?></small><?php endif;?><?php if($url):?><a class="zau-union-button" href="<?php echo esc_url($url);?>" target="_blank" rel="noopener"><?php echo esc_html($button);?></a><?php endif;?></div></article>
         <?php endforeach;?></div></section><?php return ob_get_clean();
     }
 

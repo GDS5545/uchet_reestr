@@ -311,3 +311,19 @@
 .zau-register-flow>.zau-union-form{margin:0;max-width:none;border:0;box-shadow:none;padding:0;background:transparent}
 .zau-register-flow>.zau-union-form .zau-direct-registration-note [data-zau-open-auth-flow]{display:inline;padding:0;margin-left:4px;border:0;background:none;color:#1565c0;text-decoration:underline;cursor:pointer}
 @media(max-width:650px){.zau-auth-choice-intro{text-align:left}.zau-auth-back{width:auto!important}}
+.zau-benefit-description-wrap{display:flex;flex-direction:column;gap:6px}
+.zau-benefit-description-wrap.has-toggle .zau-benefit-description{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
+.zau-benefit-description-wrap.has-toggle .zau-benefit-description.is-expanded{display:block;-webkit-line-clamp:unset;overflow:visible}
+.zau-benefit-desc-toggle{align-self:flex-start;padding:0;border:0;background:none;color:#0878b8;font-weight:700;font-size:13px;cursor:pointer;text-decoration:underline}
+.zau-benefit-desc-toggle:hover,.zau-benefit-desc-toggle:focus{color:#0a5a8a}
+.zau-cabinet-nav-mobile a{display:inline-flex;align-items:center;gap:7px}
+.zau-cabinet-nav-icon{font-size:15px;line-height:1}
+.zau-cabinet-nav-label-short{display:none}
+@media(max-width:768px){
+.zau-cabinet-nav-mobile a{flex-direction:column;gap:3px;padding:8px 6px;font-size:11px;text-align:center}
+.zau-cabinet-nav-icon{font-size:18px}
+.zau-cabinet-nav-label-full{display:none}
+.zau-cabinet-nav-label-short{display:block;white-space:nowrap}
+[class*="zau-nav-mobile-fixed-yes"] .zau-cabinet-nav-mobile{position:fixed;left:0;right:0;bottom:0;top:auto;z-index:9999;margin:0;border-radius:16px 16px 0 0;justify-content:space-around;padding:6px 8px calc(6px + env(safe-area-inset-bottom))}
+body:has([class*="zau-nav-mobile-fixed-yes"] .zau-cabinet-nav-mobile){padding-bottom:78px}
+}

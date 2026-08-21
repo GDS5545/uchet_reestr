@@ -219,7 +219,7 @@ function initCabinetSectionTabs(){
  const panels=[...document.querySelectorAll('[data-zau-tab-panel]')];
  if(!navs.length||panels.length<2)return;
  document.documentElement.dataset.zauSectionTabsReady='1';
- const tabs=navs.flatMap(nav=>[...nav.querySelectorAll('[data-zau-tab]')]);
+ const tabs=[...document.querySelectorAll('[data-zau-tab]')];
  if(!tabs.length)return;
  const activate=(key,updateUrl)=>{
   let active=tabs.find(t=>t.dataset.zauTab===key);
@@ -238,10 +238,23 @@ function initCabinetSectionTabs(){
  activate(fromHash()||tabs[0].dataset.zauTab,false);
  window.addEventListener('popstate',()=>activate(fromHash()||tabs[0].dataset.zauTab,false));
 }
+function initBenefitCards(scope=document){
+ scope.querySelectorAll?.('[data-zau-benefit-desc-toggle]').forEach(toggle=>{
+  if(toggle.dataset.zauReady==='1')return;
+  toggle.dataset.zauReady='1';
+  const desc=toggle.previousElementSibling;
+  if(!desc)return;
+  toggle.addEventListener('click',()=>{
+   const expanded=desc.classList.toggle('is-expanded');
+   toggle.textContent=expanded?'Свернуть':'Читать полностью';
+  });
+ });
+}
 function initAll(scope=document){
  initAuth(scope);
  initCabinetTabs(scope);
  initCabinetSectionTabs();
+ initBenefitCards(scope);
  initForms();
  initCabinetRecovery();
  initCabinetDocumentsRefresh();
