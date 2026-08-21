@@ -525,7 +525,7 @@ final class ZAU_Union_Module {
                 'name'=>'Материалы для кабинета', 'singular_name'=>'Материал',
                 'add_new_item'=>'Добавить материал', 'edit_item'=>'Редактировать материал'
             ],
-            'public'=>false, 'show_ui'=>true, 'show_in_menu'=>'zau-certificates',
+            'public'=>false, 'show_ui'=>true, 'show_in_menu'=>false,
             'supports'=>['title','editor','thumbnail'], 'menu_icon'=>'dashicons-media-document',
             'capability_type'=>'post', 'map_meta_cap'=>true,
         ]);
@@ -540,7 +540,7 @@ final class ZAU_Union_Module {
                 'edit_item'=>'Редактировать акцию или скидку', 'new_item'=>'Новая акция',
                 'search_items'=>'Найти акцию', 'not_found'=>'Акции и скидки не найдены',
             ],
-            'public'=>false, 'show_ui'=>true, 'show_in_menu'=>'zau-certificates',
+            'public'=>false, 'show_ui'=>true, 'show_in_menu'=>false,
             'show_in_rest'=>true, 'supports'=>['title','editor','excerpt','thumbnail','page-attributes'],
             'menu_icon'=>'dashicons-tickets-alt', 'capability_type'=>'post', 'map_meta_cap'=>true,
         ]);
@@ -612,7 +612,7 @@ final class ZAU_Union_Module {
                 'edit_item'=>'Редактировать вкладку', 'new_item'=>'Новая вкладка',
                 'search_items'=>'Найти вкладку', 'not_found'=>'Вкладки не найдены',
             ],
-            'public'=>false, 'show_ui'=>true, 'show_in_menu'=>'zau-certificates',
+            'public'=>false, 'show_ui'=>true, 'show_in_menu'=>false,
             'show_in_rest'=>true, 'supports'=>['title','editor','page-attributes'],
             'menu_icon'=>'dashicons-index-card', 'capability_type'=>'post', 'map_meta_cap'=>true,
         ]);
@@ -809,7 +809,43 @@ final class ZAU_Union_Module {
             'member_card_sensitive_fields'=>'iin,birth_date,address,emergency_contact',
             'sensitive_reveal_seconds'=>30,
             'benefits_tab_enabled'=>1,
+            'tab_role_hidden'=>'{}',
         ]);
+    }
+
+    /**
+     * Cabinet tabs that admins can restrict per role, and the roles they can
+     * restrict them for. Administrators always see every tab regardless of
+     * this setting, so they can never lock themselves out.
+     */
+    private function tab_visibility_matrix_options() {
+        $tabs = [
+            'home'=>'Главная','documents'=>'Документы','submissions'=>'Заявления','card'=>'Личная карточка',
+            'benefits'=>'Акции и скидки','members'=>'Участники','registry'=>'Реестр организации',
+            'info'=>'Материалы','logins'=>'История входов',
+        ];
+        $roles = [];
+        foreach ((array) get_editable_roles() as $slug=>$role) {
+            if ($slug==='administrator') { continue; }
+            $roles[$slug] = translate_user_role($role['name']);
+        }
+        return [$tabs, $roles];
+    }
+
+    private function tab_role_hidden_map() {
+        $decoded = json_decode((string) $this->settings()['tab_role_hidden'], true);
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    private function tab_allowed_for_current_user($tab) {
+        if (current_user_can('manage_options')) { return true; }
+        $hidden = $this->tab_role_hidden_map();
+        if (empty($hidden[$tab]) || !is_array($hidden[$tab])) { return true; }
+        $user = wp_get_current_user();
+        foreach ((array) $user->roles as $role) {
+            if (!empty($hidden[$tab][$role])) { return false; }
+        }
+        return true;
     }
 
     public function filter_admin_bar($show) {
@@ -852,15 +888,19 @@ final class ZAU_Union_Module {
     }
 
     public function admin_menu() {
-        add_submenu_page('zau-certificates', 'Формы регистрации', 'Формы регистрации', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-forms', [$this, 'page_forms']);
-        add_submenu_page('zau-certificates', 'Заявки участников', 'Заявки участников', ZAU_Certificate_PDF_Generator::CAP_CREATE, 'zau-union-submissions', [$this, 'page_submissions']);
-        add_submenu_page('zau-certificates', 'Участники и доступ', 'Участники и доступ', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-members', [$this, 'page_members_access']);
-        add_submenu_page('zau-certificates', 'Статусы и одобрение', 'Статусы и одобрение', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-member-statuses', [$this, 'page_member_statuses']);
-        add_submenu_page('zau-certificates', 'Организации и БИН', 'Организации и БИН', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-organizations', [$this, 'page_organizations']);
-        add_submenu_page('zau-certificates', 'Проверка организаций', 'Проверка организаций', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-org-audit', [$this, 'page_organization_audit']);
-        add_submenu_page('zau-certificates', 'Филиалы и реквизиты', 'Филиалы и реквизиты', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-branches', [$this, 'page_branches']);
-        add_submenu_page('zau-certificates', 'История входов', 'История входов', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-login-history', [$this, 'page_login_history']);
-        add_submenu_page('zau-certificates', 'Вход, PIN и API', 'Вход, PIN и API', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-settings', [$this, 'page_settings']);
+        // Consolidated hubs (visible): each is the landing tab of its group,
+        // the rest of the group is registered with a null parent below so
+        // it stays reachable at the same URL without cluttering the menu.
+        add_submenu_page('zau-certificates', 'Пользователи и доступ', 'Пользователи', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-members', [$this, 'page_members_access']);
+        add_submenu_page('zau-certificates', 'Оформление и данные', 'Оформление и данные', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-settings', [$this, 'page_settings']);
+
+        add_submenu_page(null, 'Формы регистрации', 'Формы регистрации', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-forms', [$this, 'page_forms']);
+        add_submenu_page(null, 'Заявки участников', 'Заявки участников', ZAU_Certificate_PDF_Generator::CAP_CREATE, 'zau-union-submissions', [$this, 'page_submissions']);
+        add_submenu_page(null, 'Статусы и одобрение', 'Статусы и одобрение', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-member-statuses', [$this, 'page_member_statuses']);
+        add_submenu_page(null, 'Организации и БИН', 'Организации и БИН', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-organizations', [$this, 'page_organizations']);
+        add_submenu_page(null, 'Проверка организаций', 'Проверка организаций', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-org-audit', [$this, 'page_organization_audit']);
+        add_submenu_page(null, 'Филиалы и реквизиты', 'Филиалы и реквизиты', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-branches', [$this, 'page_branches']);
+        add_submenu_page(null, 'История входов', 'История входов', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-union-login-history', [$this, 'page_login_history']);
     }
 
     public function admin_assets($hook) {
@@ -1351,6 +1391,7 @@ final class ZAU_Union_Module {
         $items = $this->branch_rows(false);
         ?>
         <div class="wrap zau-union-admin">
+            <?php zau_admin_hub_nav('design'); ?>
             <div class="zau-union-head"><div><h1>Филиалы и реквизиты</h1><p>При выборе филиала в форме все данные автоматически подставляются в заявку и становятся доступными в PDF-шаблоне.</p></div></div>
             <form class="zau-union-card zau-branch-text-import" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <?php wp_nonce_field(self::NONCE); ?><input type="hidden" name="action" value="zau_union_import_branches_text">
@@ -1637,7 +1678,7 @@ final class ZAU_Union_Module {
         if ($params) { $sql = $wpdb->prepare($sql, ...$params); }
         $items = $wpdb->get_results($sql);
         ?>
-        <div class="wrap zau-union-admin"><div class="zau-union-head"><div><h1>История входов</h1><p>Входы по одноразовому коду и выходы из личного кабинета.</p></div></div>
+        <div class="wrap zau-union-admin"><?php zau_admin_hub_nav('users'); ?><div class="zau-union-head"><div><h1>История входов</h1><p>Входы по одноразовому коду и выходы из личного кабинета.</p></div></div>
         <form method="get" class="zau-union-search"><input type="hidden" name="page" value="zau-union-login-history"><input type="search" name="s" value="<?php echo esc_attr($search); ?>" placeholder="ФИО, email или IP"><button class="button">Найти</button></form>
         <table class="widefat striped"><thead><tr><th>Дата</th><th>Пользователь</th><th>Событие</th><th>Устройство / канал</th><th>IP</th></tr></thead><tbody>
         <?php if (!$items): ?><tr><td colspan="5">Записей пока нет.</td></tr><?php endif; ?>
@@ -1652,7 +1693,7 @@ final class ZAU_Union_Module {
         if ($edit_id || isset($_GET['new'])) { $this->render_form_editor($edit_id); return; }
         $items = $this->get_forms();
         ?>
-        <div class="wrap zau-union-admin"><div class="zau-union-head"><div><h1>Формы регистрации и заявлений</h1><p>Создавайте разные наборы полей и привязывайте к одной форме несколько PDF-шаблонов.</p></div><a class="button button-primary" href="<?php echo esc_url(admin_url('admin.php?page=zau-union-forms&new=1')); ?>">Добавить форму</a></div>
+        <div class="wrap zau-union-admin"><?php zau_admin_hub_nav('design'); ?><div class="zau-union-head"><div><h1>Формы регистрации и заявлений</h1><p>Создавайте разные наборы полей и привязывайте к одной форме несколько PDF-шаблонов.</p></div><a class="button button-primary" href="<?php echo esc_url(admin_url('admin.php?page=zau-union-forms&new=1')); ?>">Добавить форму</a></div>
         <table class="widefat striped"><thead><tr><th>ID</th><th>Название</th><th>Шорткод</th><th>Полей</th><th>PDF-шаблонов</th><th>Статус</th><th></th></tr></thead><tbody>
         <?php if (!$items): ?><tr><td colspan="7">Форм пока нет.</td></tr><?php endif; ?>
         <?php foreach ($items as $item): $fields=$this->decode_form_fields($item->fields_json); $templates=json_decode($item->template_ids_json,true) ?: []; ?>
@@ -1729,7 +1770,7 @@ final class ZAU_Union_Module {
         $query=new WP_User_Query($args);$users=$query->get_results();$total=(int)$query->get_total();$pages=max(1,(int)ceil($total/$perPage));
         $organizations=$this->organization_rows();$branches=$this->branch_rows(false);
         $pagination=paginate_links(['base'=>add_query_arg(['page'=>'zau-union-members','s'=>$search,'per_page'=>$perPage,'paged'=>'%#%'],admin_url('admin.php')),'format'=>'','current'=>$paged,'total'=>$pages,'type'=>'list','prev_text'=>'‹ Назад','next_text'=>'Вперёд ›']);?>
-        <div class="wrap zau-union-admin"><div class="zau-union-head"><div><h1>Участники и доступ организаций/филиалов</h1><p>Привязка участника и назначение ответственных. Ответственный может работать по организации, по филиалу или по обоим условиям.</p></div></div>
+        <div class="wrap zau-union-admin"><?php zau_admin_hub_nav('users'); ?><div class="zau-union-head"><div><h1>Участники и доступ организаций/филиалов</h1><p>Привязка участника и назначение ответственных. Ответственный может работать по организации, по филиалу или по обоим условиям.</p></div></div>
         <form method="get" class="zau-union-search"><input type="hidden" name="page" value="zau-union-members"><input type="search" name="s" value="<?php echo esc_attr($search);?>" placeholder="ФИО или email"><select name="per_page"><option value="50" <?php selected($perPage,50);?>>50</option><option value="100" <?php selected($perPage,100);?>>100</option><option value="200" <?php selected($perPage,200);?>>200</option></select><button class="button">Найти</button></form>
         <p><strong>Всего участников: <?php echo number_format_i18n($total);?></strong> · показано <?php echo number_format_i18n(count($users));?> · страница <?php echo (int)$paged;?> из <?php echo (int)$pages;?></p>
         <?php if($pagination):?><div class="tablenav"><div class="tablenav-pages"><?php echo wp_kses_post($pagination);?></div></div><?php endif;?>
@@ -1767,7 +1808,7 @@ final class ZAU_Union_Module {
         $queryArgs=array_merge($args,[$perPage,$offset]);$items=$wpdb->get_results($wpdb->prepare($sql,$queryArgs));
         $pagination=paginate_links(['base'=>add_query_arg(['page'=>'zau-union-submissions','s'=>$search,'per_page'=>$perPage,'paged'=>'%#%'],admin_url('admin.php')),'format'=>'','current'=>$paged,'total'=>$pages,'type'=>'list','prev_text'=>'‹ Назад','next_text'=>'Вперёд ›']);
         ?>
-        <div class="wrap zau-union-admin"><div class="zau-union-head"><div><h1>Заявки участников</h1><p>Данные формы, связанные документы и изображения подписей.</p></div></div><form method="get" class="zau-union-search"><input type="hidden" name="page" value="zau-union-submissions"><input type="search" name="s" value="<?php echo esc_attr($search); ?>" placeholder="ФИО, email, БИН, организация"><select name="per_page"><option value="50" <?php selected($perPage,50);?>>50</option><option value="100" <?php selected($perPage,100);?>>100</option><option value="200" <?php selected($perPage,200);?>>200</option></select><button class="button">Найти</button></form>
+        <div class="wrap zau-union-admin"><?php zau_admin_hub_nav('users'); ?><div class="zau-union-head"><div><h1>Заявки участников</h1><p>Данные формы, связанные документы и изображения подписей.</p></div></div><form method="get" class="zau-union-search"><input type="hidden" name="page" value="zau-union-submissions"><input type="search" name="s" value="<?php echo esc_attr($search); ?>" placeholder="ФИО, email, БИН, организация"><select name="per_page"><option value="50" <?php selected($perPage,50);?>>50</option><option value="100" <?php selected($perPage,100);?>>100</option><option value="200" <?php selected($perPage,200);?>>200</option></select><button class="button">Найти</button></form>
         <p><strong>Всего заявлений: <?php echo number_format_i18n($total);?></strong> · показано <?php echo number_format_i18n(count($items));?> · страница <?php echo (int)$paged;?> из <?php echo (int)$pages;?></p><?php if($pagination):?><div class="tablenav"><div class="tablenav-pages"><?php echo wp_kses_post($pagination);?></div></div><?php endif;?>
         <table class="widefat striped"><thead><tr><th>ID/дата</th><th>Форма</th><th>Участник</th><th>Организация</th><th>Статус</th><th>Документы</th><th>Данные</th></tr></thead><tbody>
         <?php if(!$items):?><tr><td colspan="7">Заявок пока нет.</td></tr><?php endif;?>
@@ -1788,7 +1829,7 @@ final class ZAU_Union_Module {
         $importedNoOrg=(int)$wpdb->get_var("SELECT COUNT(DISTINCT imported.user_id) FROM {$wpdb->usermeta} imported LEFT JOIN {$wpdb->usermeta} org ON org.user_id=imported.user_id AND org.meta_key='zau_organization_id' AND org.meta_value<>'' AND org.meta_value<>'0' WHERE imported.meta_key='zau_imported_from_legacy_site' AND imported.meta_value='1' AND org.umeta_id IS NULL");
         $pagination=paginate_links(['base'=>add_query_arg(['page'=>'zau-union-organizations','s'=>$search,'per_page'=>$perPage,'paged'=>'%#%'],admin_url('admin.php')),'format'=>'','current'=>$paged,'total'=>$pages,'type'=>'list','prev_text'=>'‹ Назад','next_text'=>'Вперёд ›']);
         ?>
-        <div class="wrap zau-union-admin"><div class="zau-union-head"><div><h1>Организации и поиск по БИН</h1><p>Справочник теперь выводится постранично. Ранее страница показывала только первые 500 записей, из-за чего казалось, что большая часть организаций отсутствует.</p></div></div>
+        <div class="wrap zau-union-admin"><?php zau_admin_hub_nav('design'); ?><div class="zau-union-head"><div><h1>Организации и поиск по БИН</h1><p>Справочник теперь выводится постранично. Ранее страница показывала только первые 500 записей, из-за чего казалось, что большая часть организаций отсутствует.</p></div></div>
         <div class="zau-union-columns"><form class="zau-union-card" method="post" action="<?php echo esc_url(admin_url('admin-post.php'));?>"><?php wp_nonce_field(self::NONCE);?><input type="hidden" name="action" value="zau_union_save_org"><h2>Добавить организацию</h2><label>БИН<input name="bin" required maxlength="20"></label><label>Наименование<input name="name" required></label><label>Руководитель<input name="director"></label><label>Адрес<textarea name="address"></textarea></label><label>Регион<input name="region"></label><?php submit_button('Сохранить');?></form>
         <form class="zau-union-card" method="post" enctype="multipart/form-data" action="<?php echo esc_url(admin_url('admin-post.php'));?>"><?php wp_nonce_field(self::NONCE);?><input type="hidden" name="action" value="zau_union_import_orgs"><h2>Импорт CSV</h2><p>Колонки: <code>БИН;Наименование;Руководитель;Адрес;Регион</code>.</p><input type="file" name="org_file" accept=".csv,text/csv" required><?php submit_button('Импортировать');?></form></div>
         <div class="notice notice-info inline"><p><strong>Всего организаций в справочнике: <?php echo number_format_i18n($total);?>.</strong> Пользователей с назначенной организацией: <?php echo number_format_i18n($linkedUsers);?>. Перенесённых пользователей без назначенной организации: <?php echo number_format_i18n($importedNoOrg);?>.</p><?php if($importedNoOrg>0):?><p><a class="button button-primary" href="<?php echo esc_url(admin_url('admin.php?page=zau-remote-profile-repair'));?>">Открыть «Исправить профили»</a> — этот инструмент создаёт недостающие организации из всех перенесённых заявлений и привязывает к ним аккаунты без дублей.</p><?php endif;?></div>
@@ -1930,6 +1971,7 @@ final class ZAU_Union_Module {
         $fixed = isset($_GET['fixed']) ? absint($_GET['fixed']) : null;
         ?>
         <div class="wrap zau-union-admin">
+        <?php zau_admin_hub_nav('import'); ?>
         <div class="zau-union-head"><div><h1>Проверка организаций</h1><p>Сравнивает организацию, назначенную участнику в реестре, с организацией из его последнего заявления. Расхождение возможно, если несколько разных учреждений используют один и тот же БИН (например, подчинены одному управлению здравоохранения) — тогда автоматическая привязка по БИН могла выбрать не то учреждение, и в реестре показывалась чужая организация. Начиная с этой версии новые и пересданные заявления с общим БИН больше не привязываются к чужому учреждению автоматически — но уже возникшие расхождения нужно поправить здесь вручную.</p></div>
         <a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=zau_union_download_org_mismatch_report&scan_limit='.$limit),self::NONCE));?>">Скачать CSV</a></div>
         <?php if($fixed!==null):?><div class="notice notice-success is-dismissible"><p>Исправлено участников: <strong><?php echo (int)$fixed;?></strong>.</p></div><?php endif;?>
@@ -2009,7 +2051,7 @@ final class ZAU_Union_Module {
     public function page_settings() {
         $this->require_cap(ZAU_Certificate_PDF_Generator::CAP_MANAGE); $s=$this->settings();
         ?>
-        <div class="wrap zau-union-admin"><h1>Вход, постоянный PIN и API поиска БИН</h1><form method="post" action="<?php echo esc_url(admin_url('admin-post.php'));?>" class="zau-union-card"><?php wp_nonce_field(self::NONCE);?><input type="hidden" name="action" value="zau_union_save_settings">
+        <div class="wrap zau-union-admin"><?php zau_admin_hub_nav('design'); ?><h1>Вход, PIN, дизайн и доступ к вкладкам</h1><form method="post" action="<?php echo esc_url(admin_url('admin-post.php'));?>" class="zau-union-card"><?php wp_nonce_field(self::NONCE);?><input type="hidden" name="action" value="zau_union_save_settings">
         <h2>Страницы</h2><table class="form-table"><tr><th>Форма по умолчанию</th><td><select name="default_form_id"><?php foreach($this->get_forms() as $f):?><option value="<?php echo (int)$f->id;?>" <?php selected($s['default_form_id'],$f->id);?>><?php echo esc_html($f->name);?></option><?php endforeach;?></select></td></tr><tr><th>Страница входа</th><td><?php wp_dropdown_pages(['name'=>'login_page_id','selected'=>(int)$s['login_page_id'],'show_option_none'=>'— выберите —']);?></td></tr><tr><th>Страница формы</th><td><?php wp_dropdown_pages(['name'=>'form_page_id','selected'=>(int)$s['form_page_id'],'show_option_none'=>'— выберите —']);?></td></tr><tr><th>Личный кабинет</th><td><?php wp_dropdown_pages(['name'=>'cabinet_page_id','selected'=>(int)$s['cabinet_page_id'],'show_option_none'=>'— выберите —']);?></td></tr><tr><th>Реестр организации</th><td><?php wp_dropdown_pages(['name'=>'org_registry_page_id','selected'=>(int)$s['org_registry_page_id'],'show_option_none'=>'— выберите —']);?><p class="description">Страница с шорткодом <code>[zau_union_org_registry]</code> для ответственных организаций.</p></td></tr></table>
         <h2>Регистрация новых участников</h2><table class="form-table">
         <tr><th>Сценарий регистрации</th><td><select name="registration_mode"><option value="direct" <?php selected($s['registration_mode'],'direct');?>>Сразу показывать форму — без подтверждающего кода</option><option value="otp" <?php selected($s['registration_mode'],'otp');?>>Сначала подтверждать email или телефон одноразовым кодом</option></select><p class="description">В прямом режиме аккаунт создаётся после отправки анкеты, пользователь автоматически входит в личный кабинет. Одноразовый код остаётся доступен только для входа и восстановления, если соответствующие способы включены ниже.</p></td></tr>
@@ -2062,6 +2104,12 @@ final class ZAU_Union_Module {
         <tr><th>Язык данных</th><td><select name="dadata_language"><option value="ru" <?php selected($s['dadata_language'],'ru');?>>Русский, при отсутствии — казахский</option><option value="kz" <?php selected($s['dadata_language'],'kz');?>>Казахский, при отсутствии — русский</option></select></td></tr>
         <tr><th>Кэширование</th><td><input type="number" min="1" max="168" name="dadata_cache_hours" value="<?php echo (int)$s['dadata_cache_hours'];?>"> часов<p class="description">Уменьшает количество запросов к API. Найденная организация также сохраняется во внутренний справочник.</p></td></tr></table>
         <details class="zau-union-card" style="padding:14px;margin:18px 0"><summary><strong>Резервный универсальный API поиска БИН</strong></summary><p>Используется, если DaData отключена или не вернула результат. Укажите URL с заменителем <code>{bin}</code> и пути к значениям в JSON.</p><table class="form-table"><tr><th>URL API</th><td><input type="text" class="large-text" name="bin_api_url" value="<?php echo esc_attr($s['bin_api_url']);?>" placeholder="https://api.example.kz/company/{bin}"></td></tr><tr><th>HTTP-заголовки JSON</th><td><textarea class="large-text code" rows="4" name="bin_api_headers"><?php echo esc_textarea($s['bin_api_headers']);?></textarea></td></tr><tr><th>Путь к объекту данных</th><td><input class="regular-text" name="bin_api_data_path" value="<?php echo esc_attr($s['bin_api_data_path']);?>" placeholder="data.company"></td></tr><tr><th>Путь к названию</th><td><input class="regular-text" name="bin_api_name_path" value="<?php echo esc_attr($s['bin_api_name_path']);?>"></td></tr><tr><th>Путь к руководителю</th><td><input class="regular-text" name="bin_api_director_path" value="<?php echo esc_attr($s['bin_api_director_path']);?>"></td></tr><tr><th>Путь к адресу</th><td><input class="regular-text" name="bin_api_address_path" value="<?php echo esc_attr($s['bin_api_address_path']);?>"></td></tr><tr><th>Путь к региону</th><td><input class="regular-text" name="bin_api_region_path" value="<?php echo esc_attr($s['bin_api_region_path']);?>"></td></tr></table></details>
+        <h2>Видимость вкладок кабинета по ролям</h2>
+        <?php [$tabOptions,$roleOptions]=$this->tab_visibility_matrix_options(); $hiddenMap=$this->tab_role_hidden_map(); ?>
+        <p class="description">По умолчанию вкладка видна всем. Снимите галочку, чтобы скрыть вкладку кабинета для конкретной роли. Администраторы всегда видят все вкладки, независимо от этих настроек.</p>
+        <div class="zau-tab-visibility-scroll" style="overflow-x:auto"><table class="widefat striped"><thead><tr><th>Вкладка</th><?php foreach($roleOptions as $roleSlug=>$roleLabel):?><th><?php echo esc_html($roleLabel);?></th><?php endforeach;?></tr></thead><tbody>
+        <?php foreach($tabOptions as $tabSlug=>$tabLabel):?><tr><td><strong><?php echo esc_html($tabLabel);?></strong></td><?php foreach($roleOptions as $roleSlug=>$roleLabel):$isHidden=!empty($hiddenMap[$tabSlug][$roleSlug]);?><td><label><input type="checkbox" name="tab_visible[<?php echo esc_attr($tabSlug);?>][<?php echo esc_attr($roleSlug);?>]" value="1" <?php checked(!$isHidden);?>></label></td><?php endforeach;?></tr><?php endforeach;?>
+        </tbody></table></div>
         <?php submit_button('Сохранить настройки');?></form></div>
         <?php
     }
@@ -2097,6 +2145,15 @@ final class ZAU_Union_Module {
         $s['bin_api_url']=sanitize_text_field(wp_unslash($_POST['bin_api_url']??''));
         $headers=wp_unslash($_POST['bin_api_headers']??'{}'); json_decode($headers,true); $s['bin_api_headers']=json_last_error()===JSON_ERROR_NONE?$headers:'{}';
         foreach(['bin_api_data_path','bin_api_name_path','bin_api_director_path','bin_api_address_path','bin_api_region_path'] as $k)$s[$k]=sanitize_text_field(wp_unslash($_POST[$k]??''));
+        [$tabOptions,$roleOptions]=$this->tab_visibility_matrix_options();
+        $submittedVisible=(array)($_POST['tab_visible']??[]);
+        $hiddenMap=[];
+        foreach($tabOptions as $tabSlug=>$tabLabel){
+            foreach($roleOptions as $roleSlug=>$roleLabel){
+                if(empty($submittedVisible[$tabSlug][$roleSlug]))$hiddenMap[$tabSlug][$roleSlug]=1;
+            }
+        }
+        $s['tab_role_hidden']=wp_json_encode($hiddenMap,JSON_UNESCAPED_UNICODE);
         update_option(self::OPT_SETTINGS,$s,false); $this->ensure_pages();
         wp_safe_redirect(admin_url('admin.php?page=zau-union-settings&zau_notice='.rawurlencode('Настройки сохранены.'))); exit;
     }
@@ -2433,6 +2490,7 @@ final class ZAU_Union_Module {
             if($tab==='benefits'&&empty($this->settings()['benefits_tab_enabled']))continue;
             if($tab==='card'&&empty($this->settings()['member_card_tab_enabled'])&&($atts['member_card']??'inherit')==='inherit')continue;
             if(in_array($tab,['members','registry'],true)&&!$canManageOrg)continue;
+            if(!$this->tab_allowed_for_current_user($tab))continue;
             $enabledTabs[]=$tab;
         }
         if(!$enabledTabs)$enabledTabs=['home','documents','submissions','card','benefits','info','logins'];
@@ -2639,6 +2697,7 @@ final class ZAU_Union_Module {
         $section = sanitize_key($a['section']);
         $allowed = ['profile','navigation','stats','documents','submissions','card','benefits','members','info','logins','logout'];
         if (!in_array($section, $allowed, true)) { $section = 'documents'; }
+        if (in_array($section, ['documents','submissions','card','benefits','members','registry','info','logins'], true) && !$this->tab_allowed_for_current_user($section)) { return ''; }
         global $wpdb;
         $uid = get_current_user_id();
         $user = wp_get_current_user();
@@ -4443,7 +4502,7 @@ $xref
         $organizations=$this->organization_rows();$branches=$this->branch_rows(false);global $wpdb;$orgMap=[];foreach($organizations as $org)$orgMap[(int)$org->id]=$org;$branchMap=[];foreach($branches as $branch)$branchMap[(int)$branch->id]=$branch;
         $pagination=paginate_links(['base'=>add_query_arg(['page'=>'zau-union-member-statuses','s'=>$search,'status'=>$status,'organization_id'=>$orgId,'branch_id'=>$branchId,'per_page'=>$perPage,'paged'=>'%#%'],admin_url('admin.php')),'format'=>'','current'=>$paged,'total'=>$pages,'type'=>'list','prev_text'=>'‹ Назад','next_text'=>'Вперёд ›']);
         ?>
-        <div class="wrap zau-union-admin"><div class="zau-union-head"><div><h1>Статусы и одобрение членства</h1><p>Ручное и массовое изменение статусов. Решение «Одобрить» автоматически переводит участника в статус «Состоит в профсоюзе».</p></div><form method="post" action="<?php echo esc_url(admin_url('admin-post.php'));?>"><?php wp_nonce_field(self::NONCE);?><input type="hidden" name="action" value="zau_union_repair_exit_documents"><button class="button button-secondary">Пересчитать статусы документов</button></form></div>
+        <div class="wrap zau-union-admin"><?php zau_admin_hub_nav('users'); ?><div class="zau-union-head"><div><h1>Статусы и одобрение членства</h1><p>Ручное и массовое изменение статусов. Решение «Одобрить» автоматически переводит участника в статус «Состоит в профсоюзе».</p></div><form method="post" action="<?php echo esc_url(admin_url('admin-post.php'));?>"><?php wp_nonce_field(self::NONCE);?><input type="hidden" name="action" value="zau_union_repair_exit_documents"><button class="button button-secondary">Пересчитать статусы документов</button></form></div>
         <form method="get" class="zau-union-search"><input type="hidden" name="page" value="zau-union-member-statuses"><input type="search" name="s" value="<?php echo esc_attr($search);?>" placeholder="ФИО или email"><select name="status"><option value="">Все статусы</option><?php foreach($this->membership_statuses() as $item):?><option <?php selected($status,$item);?>><?php echo esc_html($item);?></option><?php endforeach;?></select><select name="organization_id"><option value="0">Все организации</option><?php foreach($organizations as $org):?><option value="<?php echo (int)$org->id;?>" <?php selected($orgId,$org->id);?>><?php echo esc_html($org->name);?></option><?php endforeach;?></select><select name="branch_id"><option value="0">Все филиалы</option><?php foreach($branches as $branch):?><option value="<?php echo (int)$branch->id;?>" <?php selected($branchId,$branch->id);?>><?php echo esc_html($branch->name);?></option><?php endforeach;?></select><select name="per_page"><option value="50" <?php selected($perPage,50);?>>50</option><option value="100" <?php selected($perPage,100);?>>100</option><option value="200" <?php selected($perPage,200);?>>200</option></select><button class="button">Фильтровать</button></form>
         <p><strong>Найдено участников: <?php echo number_format_i18n($total);?></strong> · показано <?php echo number_format_i18n(count($users));?> · страница <?php echo (int)$paged;?> из <?php echo (int)$pages;?></p><?php if($pagination):?><div class="tablenav"><div class="tablenav-pages"><?php echo wp_kses_post($pagination);?></div></div><?php endif;?>
         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php'));?>"><?php wp_nonce_field(self::NONCE);?><input type="hidden" name="action" value="zau_union_bulk_member_status"><div class="zau-bulk-status-bar"><select name="bulk_action"><option value="set_status">Установить статус</option><option value="approve">Одобрить вступление</option><option value="revision">Вернуть на доработку</option><option value="reject">Отклонить</option></select><select name="bulk_status"><?php foreach($this->membership_statuses() as $item):?><option><?php echo esc_html($item);?></option><?php endforeach;?></select><input name="note" placeholder="Комментарий к изменению"><button class="button button-primary">Применить к выбранным</button></div>

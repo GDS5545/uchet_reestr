@@ -106,7 +106,7 @@ final class ZAU_Remote_Profile_Repair {
 
     public function admin_menu() {
         add_submenu_page(
-            'zau-certificates',
+            null,
             'Исправить перенесённые профили',
             'Исправить профили',
             ZAU_Certificate_PDF_Generator::CAP_MANAGE,
@@ -767,6 +767,7 @@ final class ZAU_Remote_Profile_Repair {
         $total=$this->imported_user_total();
         ?>
         <div class="wrap zau-rpr-wrap">
+            <?php zau_admin_hub_nav('import'); ?>
             <h1>Исправление перенесённых профилей</h1>
             <?php if (!empty($_GET['saved'])): ?><div class="notice notice-success is-dismissible"><p>Настройки восстановления сохранены.</p></div><?php endif; ?>
             <div class="notice notice-info inline"><p>На снимке статус уже установлен как «Состоит в профсоюзе». Пустыми остались связи с организацией и филиалом. Этот инструмент повторно читает промежуточный архив переноса и старые заявления, но <strong>не создаёт новые аккаунты</strong>.</p></div>

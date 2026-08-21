@@ -82,7 +82,7 @@ final class ZAU_Remote_Bridge_Import {
 
     public function admin_menu() {
         add_submenu_page(
-            'zau-certificates',
+            null,
             'Перенос со старого сайта',
             'Перенос старого сайта',
             ZAU_Certificate_PDF_Generator::CAP_MANAGE,
@@ -699,6 +699,7 @@ final class ZAU_Remote_Bridge_Import {
         $pdfJob=(array)get_option(self::PDF_JOB_OPT,[]);
         ?>
         <div class="wrap zau-remote-wrap">
+            <?php zau_admin_hub_nav('import'); ?>
             <h1>Перенос со старого сайта — ФИО + email и точная связь заявлений</h1>
             <?php if (!empty($_GET['saved'])): ?><div class="notice notice-success is-dismissible"><p>Настройки подключения сохранены.</p></div><?php endif; ?>
             <div class="notice notice-warning inline"><p><strong>Перед настоящим переносом сделайте резервные копии обеих баз и каталогов uploads.</strong> Сначала выполните полный пробный анализ и проверьте строки «требуется проверка».</p></div>

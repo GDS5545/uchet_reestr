@@ -73,7 +73,7 @@ final class ZAU_Legacy_Migration {
 
     public function admin_menu() {
         add_submenu_page(
-            'zau-certificates',
+            null,
             'Перенос старых данных',
             'Перенос старых данных',
             ZAU_Certificate_PDF_Generator::CAP_MANAGE,
@@ -133,6 +133,7 @@ final class ZAU_Legacy_Migration {
         $state = (array)get_option(self::OPT_STATE, []);
         ?>
         <div class="wrap zau-legacy-wrap">
+            <?php zau_admin_hub_nav('import'); ?>
             <h1>Перенос старых пользователей, заявлений и PDF</h1>
             <div class="notice notice-warning inline"><p><strong>Сначала сделайте полную резервную копию базы и папки <code>wp-content/uploads</code>.</strong> Импортёр не удаляет старые записи и файлы, но перенос на рабочем сайте следует сначала проверить в режиме «Только анализ».</p></div>
 

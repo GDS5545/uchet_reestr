@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Профсоюз — регистрация, документы и QR
  * Description: Единый реестр профсоюза с AQNIET Blue UX: регистрация, статусы, филиалы единым текстом, защищённая личная карточка, скрытый wp-admin для участников, акции и скидки, документы/PDF/QR, кабинеты организаций и Elementor.
- * Version: 2.19.1
+ * Version: 2.20.0
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -12,7 +12,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Certificate_PDF_Generator {
-    const VERSION = '2.19.1';
+    const VERSION = '2.20.0';
     const DB_VERSION = '2.18.2';
     const OPT_DB_VERSION = 'zau_cert_db_version';
     const OPT_SETTINGS = 'zau_cert_settings';
@@ -221,7 +221,7 @@ final class ZAU_Certificate_PDF_Generator {
         add_menu_page('Профсоюз', 'Профсоюз', self::CAP_CREATE, 'zau-certificates', [$this, 'page_create'], 'dashicons-groups', 56);
         add_submenu_page('zau-certificates', 'Создать документ', 'Создать документ', self::CAP_CREATE, 'zau-certificates', [$this, 'page_create']);
         add_submenu_page('zau-certificates', 'Шаблоны', 'Шаблоны', self::CAP_MANAGE, 'zau-cert-templates', [$this, 'page_templates']);
-        add_submenu_page('zau-certificates', 'Массовый импорт', 'Массовый импорт', self::CAP_CREATE, 'zau-cert-import', [$this, 'page_import']);
+        add_submenu_page(null, 'Массовый импорт сертификатов', 'Массовый импорт сертификатов', self::CAP_CREATE, 'zau-cert-import', [$this, 'page_import']);
         add_submenu_page('zau-certificates', 'Реестр', 'Реестр', self::CAP_CREATE, 'zau-cert-registry', [$this, 'page_registry']);
         add_submenu_page('zau-certificates', 'Настройки', 'Настройки', self::CAP_MANAGE, 'zau-cert-settings', [$this, 'page_settings']);
         add_submenu_page('zau-certificates', 'Журнал', 'Журнал', self::CAP_MANAGE, 'zau-cert-logs', [$this, 'page_logs']);
@@ -614,7 +614,8 @@ final class ZAU_Certificate_PDF_Generator {
         $templates = $this->get_templates();
         ?>
         <div class="wrap zau-wrap">
-            <div class="zau-page-head"><div><h1>Массовый импорт</h1><p>Загрузите CSV или XLSX. Документы будут последовательно сформированы в браузере с выбранной ориентацией шаблона.</p></div></div>
+            <?php zau_admin_hub_nav('import'); ?>
+            <div class="zau-page-head"><div><h1>Массовый импорт сертификатов</h1><p>Загрузите CSV или XLSX. Документы будут последовательно сформированы в браузере с выбранной ориентацией шаблона.</p></div></div>
             <?php if (!$templates): ?><div class="notice notice-warning inline"><p>Сначала создайте шаблон.</p></div><?php return; endif; ?>
             <form id="zau-import-form" class="zau-card" enctype="multipart/form-data">
                 <div class="zau-form-grid">
@@ -1279,6 +1280,68 @@ final class ZAU_Certificate_PDF_Generator {
         ob_start(); ?><div class="zau-my-docs"><?php if(!$items):?><p>Документов пока нет.</p><?php endif;?><?php foreach($items as $i):$effective_status=$this->document_is_member_exit_revoked($i)?'revoked':$i->record_status;?><div class="zau-my-doc"><strong><?php echo esc_html($i->template_name?:$i->document_title);?></strong><div><?php echo esc_html($i->document_no.' · '.$i->issue_date);?></div><div><?php echo esc_html($this->status_label($effective_status));?></div><?php if($i->pdf_url&&!empty($settings['owner_pdf_view'])):?><a target="_blank" rel="noopener" href="<?php echo esc_url($this->secure_document_url($i));?>">Защищённый просмотр PDF</a><?php endif;?> <a target="_blank" rel="noopener" href="<?php echo esc_url($this->verify_url($i->verify_token));?>">Проверить QR</a></div><?php endforeach;?></div><style>.zau-my-doc{padding:16px;margin:0 0 12px;border:1px solid #D9E2EF;border-radius:12px}.zau-my-doc a{margin-right:10px}</style><?php return ob_get_clean();
     }
 
+}
+
+if (!function_exists('zau_admin_hub_nav')) {
+    /**
+     * Shared tab strip for the consolidated admin screens ("Импорт и
+     * перенос данных", "Пользователи и доступ", "Оформление и данные").
+     * Each merged tool keeps its own page callback and URL — this just
+     * prints a common WordPress nav-tab bar above the tool's own content
+     * so switching between them feels like one screen instead of a long
+     * flat submenu.
+     */
+    function zau_admin_hub_nav($group) {
+        $groups = [
+            'import' => [
+                'title' => 'Импорт и перенос данных',
+                'tabs' => [
+                    'zau-universal-import' => 'Импорт аккаунтов',
+                    'zau-remote-bridge-import' => 'Перенос со старого сайта',
+                    'zau-legacy-migration' => 'Перенос старых данных (WPForms)',
+                    'zau-remote-profile-repair' => 'Исправить профили',
+                    'zau-union-org-audit' => 'Проверка организаций',
+                    'zau-cert-import' => 'Массовый импорт сертификатов',
+                ],
+            ],
+            'users' => [
+                'title' => 'Пользователи и доступ',
+                'tabs' => [
+                    'zau-union-members' => 'Участники и доступ',
+                    'zau-union-submissions' => 'Заявки участников',
+                    'zau-union-member-statuses' => 'Статусы и одобрение',
+                    'zau-union-login-history' => 'История входов',
+                ],
+            ],
+            'design' => [
+                'title' => 'Оформление и данные',
+                'tabs' => [
+                    'zau-union-settings' => 'Вход, PIN и дизайн',
+                    'zau-union-forms' => 'Формы регистрации',
+                    'zau-union-organizations' => 'Организации и БИН',
+                    'zau-union-branches' => 'Филиалы и реквизиты',
+                ],
+                'links' => [
+                    'edit.php?post_type=zau_union_info' => 'Материалы',
+                    'edit.php?post_type=zau_union_benefit' => 'Акции и скидки',
+                    'edit.php?post_type=zau_union_tab' => 'Вкладки кабинета',
+                ],
+            ],
+        ];
+        if (empty($groups[$group])) { return; }
+        $g = $groups[$group];
+        $current = sanitize_key((string) ($_GET['page'] ?? ''));
+        echo '<h1 class="zau-hub-title">' . esc_html($g['title']) . '</h1>';
+        echo '<h2 class="nav-tab-wrapper zau-hub-tabs">';
+        foreach ($g['tabs'] as $slug => $label) {
+            $active = $current === $slug ? ' nav-tab-active' : '';
+            echo '<a class="nav-tab' . esc_attr($active) . '" href="' . esc_url(admin_url('admin.php?page=' . $slug)) . '">' . esc_html($label) . '</a>';
+        }
+        foreach ((array) ($g['links'] ?? []) as $path => $label) {
+            echo '<a class="nav-tab" href="' . esc_url(admin_url($path)) . '">' . esc_html($label) . '</a>';
+        }
+        echo '</h2>';
+    }
 }
 
 require_once __DIR__ . '/includes/class-zau-union-module.php';
