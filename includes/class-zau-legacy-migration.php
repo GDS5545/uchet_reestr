@@ -529,12 +529,59 @@ final class ZAU_Legacy_Migration {
         if(!empty($data['organization_bin'])&&!empty($data['organization'])){$org_id=$this->upsert_organization($data);if($org_id){update_user_meta($user_id,'zau_organization_id',$org_id);update_user_meta($user_id,'zau_organization_bin',preg_replace('/\D/','',$data['organization_bin']));}}
     }
 
+    private function normalize_org_text($value) {
+        $value=wp_strip_all_tags((string)$value);
+        $value=trim(preg_replace('/\s+/u',' ',$value));
+        $value=function_exists('mb_strtolower')?mb_strtolower($value,'UTF-8'):strtolower($value);
+        $value=str_replace(['ё','«','»','„','“','”','"',"'"],['е','','','','','','',''],$value);
+        return trim(preg_replace('/[^\p{L}\p{N}]+/u',' ',$value));
+    }
+
+    private function org_names_plausibly_match($a,$b) {
+        $normA=$this->normalize_org_text($a); $normB=$this->normalize_org_text($b);
+        if($normA===''||$normB==='')return false;
+        if($normA===$normB)return true;
+        $stop=['гккп','гкп','кгп','кгу','гу','ргп','ргу','тоо','ао','ип','на','праве','хозяйственного','ведения','оперативного','управления','акимата','города','коммунальное','государственное','предприятие','учреждение','общественное','объединение'];
+        $tokA=array_values(array_diff(array_filter(explode(' ',$normA),function($w){return (function_exists('mb_strlen')?mb_strlen($w,'UTF-8'):strlen($w))>2;}),$stop));
+        $tokB=array_values(array_diff(array_filter(explode(' ',$normB),function($w){return (function_exists('mb_strlen')?mb_strlen($w,'UTF-8'):strlen($w))>2;}),$stop));
+        if(!$tokA||!$tokB)return false;
+        $intersect=count(array_intersect($tokA,$tokB)); $union=count(array_unique(array_merge($tokA,$tokB)));
+        return $union>0 && ($intersect/$union)>=0.6;
+    }
+
+    private function find_or_create_name_only_organization($name,$director='',$address='',$region='') {
+        global $wpdb;
+        $name=sanitize_text_field($name); if($name==='')return 0;
+        $exact=(int)$wpdb->get_var($wpdb->prepare("SELECT id FROM {$this->orgs_table} WHERE name=%s LIMIT 1",$name));
+        if($exact)return $exact;
+        foreach((array)$wpdb->get_results("SELECT id,name FROM {$this->orgs_table} ORDER BY id ASC LIMIT 5000") as $row){
+            if($this->org_names_plausibly_match($name,$row->name))return (int)$row->id;
+        }
+        $wpdb->query($wpdb->prepare(
+            "INSERT INTO {$this->orgs_table} (bin,name,director,address,region,source,updated_at) VALUES (NULL,%s,%s,%s,%s,'legacy_migration_name_only',%s)",
+            $name,sanitize_text_field($director),sanitize_textarea_field($address),sanitize_text_field($region),current_time('mysql')
+        ));
+        return (int)$wpdb->insert_id;
+    }
+
     private function upsert_organization($data) {
         global $wpdb;
         $bin=preg_replace('/\D/','',(string)($data['organization_bin']??''));if(strlen($bin)<8)return 0;
-        $id=(int)$wpdb->get_var($wpdb->prepare("SELECT id FROM {$this->orgs_table} WHERE bin=%s LIMIT 1",$bin));
-        $row=['bin'=>$bin,'name'=>sanitize_text_field($data['organization']??''),'director'=>sanitize_text_field($data['organization_director']??''),'address'=>sanitize_textarea_field($data['organization_address']??''),'region'=>sanitize_text_field($data['region']??''),'source'=>'legacy_migration','updated_at'=>current_time('mysql')];
-        if($id){$wpdb->update($this->orgs_table,$row,['id'=>$id]);return $id;}
+        $name=sanitize_text_field($data['organization']??'');
+        $existing=$wpdb->get_row($wpdb->prepare("SELECT id,name FROM {$this->orgs_table} WHERE bin=%s LIMIT 1",$bin));
+        $row=['bin'=>$bin,'name'=>$name,'director'=>sanitize_text_field($data['organization_director']??''),'address'=>sanitize_textarea_field($data['organization_address']??''),'region'=>sanitize_text_field($data['region']??''),'source'=>'legacy_migration','updated_at'=>current_time('mysql')];
+        if($existing){
+            if($name===''||$this->org_names_plausibly_match($name,$existing->name)){
+                $wpdb->update($this->orgs_table,$row,['id'=>(int)$existing->id]);
+                return (int)$existing->id;
+            }
+            // This BIN is legitimately shared by a different institution (e.g.
+            // several facilities under one health department). Renaming the
+            // existing row would misattribute every other member already
+            // linked to it, so find or create a separate name-only record
+            // instead of overwriting it.
+            return $this->find_or_create_name_only_organization($name,$row['director'],$row['address'],$row['region']);
+        }
         if($row['name']==='')$row['name']='Организация БИН '.$bin;$wpdb->insert($this->orgs_table,$row);return (int)$wpdb->insert_id;
     }
 

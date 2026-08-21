@@ -77,6 +77,7 @@ final class ZAU_Union_Module {
         add_action('admin_post_zau_union_export_org_registry_excel', [$this, 'export_org_registry_excel']);
         add_action('admin_post_zau_union_download_org_documents_zip', [$this, 'download_org_documents_zip']);
         add_action('admin_post_zau_union_download_org_mismatch_report', [$this, 'download_org_mismatch_report']);
+        add_action('admin_post_zau_union_apply_org_fix', [$this, 'apply_organization_fix']);
 
         add_action('wp_ajax_nopriv_zau_union_send_otp', [$this, 'ajax_send_otp']);
         add_action('wp_ajax_zau_union_send_otp', [$this, 'ajax_send_otp']);
@@ -1889,6 +1890,9 @@ final class ZAU_Union_Module {
             $declaredNorm = $this->normalize_audience_text($declared['organization']);
             if ($registryNorm === '' || $declaredNorm === '' || $registryNorm === $declaredNorm) { continue; }
             $user = $userById[$uid] ?? null;
+            $proposed = class_exists('ZAU_Remote_Profile_Repair')
+                ? ZAU_Remote_Profile_Repair::instance()->resolve_organization_by_name($declared['organization'], true, true)
+                : ['id' => 0, 'name' => $declared['organization'], 'action' => 'unresolved'];
             $rows[] = [
                 'user_id' => $uid,
                 'display_name' => $user ? $user->display_name : ('#' . $uid),
@@ -1899,27 +1903,89 @@ final class ZAU_Union_Module {
                 'declared_bin' => $declared['organization_bin'],
                 'submission_id' => $declared['submission_id'],
                 'submission_date' => $declared['submission_date'],
+                'proposed_org_id' => (int) ($proposed['id'] ?? 0),
+                'proposed_org_name' => (string) ($proposed['name'] ?? $declared['organization']),
+                'proposed_action' => (string) ($proposed['action'] ?? 'unresolved'),
             ];
         }
         usort($rows, function ($a, $b) { return strcasecmp($a['display_name'], $b['display_name']); });
         return $rows;
     }
 
+    private function organization_mismatch_action_label($action) {
+        $labels = [
+            'matched_name' => 'Найдена существующая организация',
+            'would_create_bin' => 'Будет создана новая организация с этим БИН',
+            'would_create_name' => 'Будет создана отдельная запись без БИН (БИН уже занят другим учреждением)',
+            'ambiguous' => 'Несколько похожих организаций — нужно выбрать вручную',
+            'unresolved' => 'Не удалось подобрать — потребуется ручное исправление',
+        ];
+        return $labels[$action] ?? $action;
+    }
+
     public function page_organization_audit() {
         $this->require_cap(ZAU_Certificate_PDF_Generator::CAP_MANAGE);
         $limit = max(200, min(20000, absint($_GET['scan_limit'] ?? 3000)));
         $rows = $this->organization_mismatch_rows($limit);
+        $fixed = isset($_GET['fixed']) ? absint($_GET['fixed']) : null;
         ?>
         <div class="wrap zau-union-admin">
-        <div class="zau-union-head"><div><h1>Проверка организаций</h1><p>Сравнивает организацию, назначенную участнику в реестре, с организацией из его последнего заявления. Расхождение возможно, если несколько разных учреждений используют один и тот же БИН (например, подчинены одному управлению здравоохранения) — тогда автоматическая привязка по БИН может выбрать не то учреждение, и в реестре покажется чужая организация. Инструмент ничего не меняет — только показывает расхождения, чтобы вы могли поправить нужных участников вручную на странице «Участники и доступ».</p></div>
+        <div class="zau-union-head"><div><h1>Проверка организаций</h1><p>Сравнивает организацию, назначенную участнику в реестре, с организацией из его последнего заявления. Расхождение возможно, если несколько разных учреждений используют один и тот же БИН (например, подчинены одному управлению здравоохранения) — тогда автоматическая привязка по БИН могла выбрать не то учреждение, и в реестре показывалась чужая организация. Начиная с этой версии новые и пересданные заявления с общим БИН больше не привязываются к чужому учреждению автоматически — но уже возникшие расхождения нужно поправить здесь вручную.</p></div>
         <a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=zau_union_download_org_mismatch_report&scan_limit='.$limit),self::NONCE));?>">Скачать CSV</a></div>
+        <?php if($fixed!==null):?><div class="notice notice-success is-dismissible"><p>Исправлено участников: <strong><?php echo (int)$fixed;?></strong>.</p></div><?php endif;?>
         <form method="get" class="zau-union-search"><input type="hidden" name="page" value="zau-union-org-audit"><label>Проверить участников (максимум): <select name="scan_limit"><?php foreach([1000,3000,5000,10000,20000] as $option):?><option value="<?php echo (int)$option;?>" <?php selected($limit,$option);?>><?php echo number_format_i18n($option);?></option><?php endforeach;?></select></label><button class="button">Проверить</button></form>
         <p><strong>Найдено расхождений: <?php echo number_format_i18n(count($rows));?></strong> среди проверенных участников с назначенной организацией (проверено не более <?php echo number_format_i18n($limit);?>).</p>
-        <table class="widefat striped"><thead><tr><th>Участник</th><th>Организация в реестре</th><th>Организация в последнем заявлении</th><th>Заявление</th><th></th></tr></thead><tbody>
-        <?php if(!$rows):?><tr><td colspan="5">Расхождений не найдено.</td></tr><?php endif;?>
-        <?php foreach($rows as $row):?><tr><td><strong><?php echo esc_html($row['display_name']);?></strong><br><small><?php echo esc_html($row['email']);?></small></td><td><?php echo esc_html($row['registry_org']);?><?php if($row['registry_bin']):?><br><small>БИН <?php echo esc_html($row['registry_bin']);?></small><?php endif;?></td><td><?php echo esc_html($row['declared_org']);?><?php if($row['declared_bin']):?><br><small>БИН <?php echo esc_html($row['declared_bin']);?></small><?php endif;?></td><td>#<?php echo (int)$row['submission_id'];?><br><small><?php echo esc_html($row['submission_date']);?></small></td><td><a class="button" href="<?php echo esc_url(admin_url('user-edit.php?user_id='.(int)$row['user_id']));?>">Открыть профиль</a></td></tr><?php endforeach;?>
-        </tbody></table></div>
+        <?php if($rows):?>
+        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php'));?>">
+        <?php wp_nonce_field(self::NONCE);?>
+        <input type="hidden" name="action" value="zau_union_apply_org_fix">
+        <input type="hidden" name="scan_limit" value="<?php echo (int)$limit;?>">
+        <p><button type="submit" class="button button-primary" onclick="return confirm('Применить предложенное исправление для отмеченных участников? Для каждого будет подобрана или создана организация по названию из его заявления.');">Исправить отмеченные</button></p>
+        <table class="widefat striped"><thead><tr><th style="width:24px"><input type="checkbox" onclick="jQuery(this).closest('table').find('tbody input[type=checkbox]').prop('checked',this.checked);"></th><th>Участник</th><th>Организация в реестре (сейчас)</th><th>Организация в последнем заявлении</th><th>Предлагаемое исправление</th><th>Заявление</th><th></th></tr></thead><tbody>
+        <?php foreach($rows as $row):?><tr>
+            <td><input type="checkbox" name="user_ids[]" value="<?php echo (int)$row['user_id'];?>" checked></td>
+            <td><strong><?php echo esc_html($row['display_name']);?></strong><br><small><?php echo esc_html($row['email']);?></small></td>
+            <td><?php echo esc_html($row['registry_org']);?><?php if($row['registry_bin']):?><br><small>БИН <?php echo esc_html($row['registry_bin']);?> (общий на несколько учреждений)</small><?php endif;?></td>
+            <td><?php echo esc_html($row['declared_org']);?><?php if($row['declared_bin']):?><br><small>БИН <?php echo esc_html($row['declared_bin']);?></small><?php endif;?></td>
+            <td><?php echo esc_html($row['proposed_org_name']);?><br><small><?php echo esc_html($this->organization_mismatch_action_label($row['proposed_action']));?></small></td>
+            <td>#<?php echo (int)$row['submission_id'];?><br><small><?php echo esc_html($row['submission_date']);?></small></td>
+            <td><a class="button" href="<?php echo esc_url(admin_url('user-edit.php?user_id='.(int)$row['user_id']));?>">Открыть профиль</a></td>
+        </tr><?php endforeach;?>
+        </tbody></table>
+        <p><button type="submit" class="button button-primary" onclick="return confirm('Применить предложенное исправление для отмеченных участников? Для каждого будет подобрана или создана организация по названию из его заявления.');">Исправить отмеченные</button></p>
+        </form>
+        <?php else: ?>
+        <table class="widefat striped"><thead><tr><th>Участник</th><th>Организация в реестре</th><th>Организация в последнем заявлении</th><th>Заявление</th><th></th></tr></thead><tbody><tr><td colspan="5">Расхождений не найдено.</td></tr></tbody></table>
+        <?php endif;?>
+        </div>
         <?php
+    }
+
+    public function apply_organization_fix() {
+        $this->require_cap(ZAU_Certificate_PDF_Generator::CAP_MANAGE);
+        check_admin_referer(self::NONCE);
+        $limit = max(200, min(20000, absint($_POST['scan_limit'] ?? 3000)));
+        $requestedIds = array_values(array_unique(array_filter(array_map('absint', (array) ($_POST['user_ids'] ?? [])))));
+        $count = 0;
+        if ($requestedIds) {
+            // Re-derive the mismatch set fresh rather than trusting hidden
+            // form values, so a fix always reflects the member's current data.
+            $currentRows = $this->organization_mismatch_rows($limit);
+            $selected = array_flip($requestedIds);
+            foreach ($currentRows as $row) {
+                if (!isset($selected[$row['user_id']])) { continue; }
+                if ($row['declared_org'] === '') { continue; }
+                $match = class_exists('ZAU_Remote_Profile_Repair')
+                    ? ZAU_Remote_Profile_Repair::instance()->resolve_organization_by_name($row['declared_org'], true, false)
+                    : ['id' => $this->resolve_organization_by_name($row['declared_org'])];
+                if (empty($match['id'])) { continue; }
+                update_user_meta($row['user_id'], 'zau_organization_id', (int) $match['id']);
+                if (!empty($match['name'])) { update_user_meta($row['user_id'], 'zau_organization_name', (string) $match['name']); }
+                $count++;
+            }
+        }
+        wp_safe_redirect(admin_url('admin.php?page=zau-union-org-audit&scan_limit='.$limit.'&fixed='.$count));
+        exit;
     }
 
     public function download_org_mismatch_report() {
@@ -1932,9 +1998,9 @@ final class ZAU_Union_Module {
         header('Content-Disposition: attachment; filename="'.sanitize_file_name('zau-org-mismatch-'.wp_date('Y-m-d-H-i').'.csv').'"');
         echo "\xEF\xBB\xBF";
         $out = fopen('php://output', 'w');
-        fputcsv($out, ['User ID','ФИО','Email','Организация в реестре','БИН в реестре','Организация в заявлении','БИН в заявлении','ID заявления','Дата заявления'], ';');
+        fputcsv($out, ['User ID','ФИО','Email','Организация в реестре','БИН в реестре','Организация в заявлении','БИН в заявлении','ID заявления','Дата заявления','Предлагаемое исправление','Действие'], ';');
         foreach ($rows as $row) {
-            fputcsv($out, [$row['user_id'],$row['display_name'],$row['email'],$row['registry_org'],$row['registry_bin'],$row['declared_org'],$row['declared_bin'],$row['submission_id'],$row['submission_date']], ';');
+            fputcsv($out, [$row['user_id'],$row['display_name'],$row['email'],$row['registry_org'],$row['registry_bin'],$row['declared_org'],$row['declared_bin'],$row['submission_id'],$row['submission_date'],$row['proposed_org_name'],$this->organization_mismatch_action_label($row['proposed_action'])], ';');
         }
         fclose($out);
         exit;
@@ -3154,14 +3220,31 @@ final class ZAU_Union_Module {
         $uid=get_current_user_id(); $update=['ID'=>$uid]; if(!empty($data['first_name']))$update['first_name']=$data['first_name']; if(!empty($data['last_name']))$update['last_name']=$data['last_name']; if(!empty($data['full_name']))$update['display_name']=$data['full_name']; if(!empty($data['email'])&&is_email($data['email'])){$existing=email_exists($data['email']);if(!$existing||$existing==$uid)$update['user_email']=$data['email'];} wp_update_user($update);
         if(!empty($data['phone']))update_user_meta($uid,'zau_phone',$data['phone']);
         foreach($data as $key=>$value){if(is_scalar($value)&&strlen((string)$value)<10000)update_user_meta($uid,'zau_profile_'.$this->sanitize_field_key($key),(string)$value);}
+        $declaredOrgName=sanitize_text_field((string)($data['organization']??''));
+        $orgIdAssigned=0;
         if(!empty($data['organization_bin'])){
             $bin=preg_replace('/\D/','',(string)$data['organization_bin']);
             update_user_meta($uid,'zau_organization_bin',$bin);
             global $wpdb;
-            $orgId=(int)$wpdb->get_var($wpdb->prepare("SELECT id FROM {$this->orgs_table} WHERE bin=%s LIMIT 1",$bin));
-            if($orgId)update_user_meta($uid,'zau_organization_id',$orgId);
+            $org=$wpdb->get_row($wpdb->prepare("SELECT id,name FROM {$this->orgs_table} WHERE bin=%s LIMIT 1",$bin));
+            if($org){
+                if($declaredOrgName===''||$this->org_names_plausibly_match($declaredOrgName,$org->name)){
+                    update_user_meta($uid,'zau_organization_id',(int)$org->id);
+                    $orgIdAssigned=(int)$org->id;
+                }
+                // Names clearly differ: this BIN is legitimately shared by a
+                // different institution (e.g. several facilities under one
+                // health department). Do not misattribute this member to it —
+                // fall back to matching/creating by name below instead.
+            }
         }
-        if(!empty($data['organization']))update_user_meta($uid,'zau_organization_name',sanitize_text_field($data['organization']));
+        if($declaredOrgName!==''){
+            update_user_meta($uid,'zau_organization_name',$declaredOrgName);
+            if(!$orgIdAssigned){
+                $orgId=$this->resolve_organization_by_name($declaredOrgName);
+                if($orgId)update_user_meta($uid,'zau_organization_id',$orgId);
+            }
+        }
         update_user_meta($uid,'zau_member_status','Заявление подано');
         update_user_meta($uid,'zau_membership_approval_status','pending');
         update_user_meta($uid,'zau_membership_approval_date','');
@@ -3398,6 +3481,37 @@ $xref
         if(function_exists('mb_strtolower'))$value=mb_strtolower($value,'UTF-8');else $value=strtolower($value);
         $value=str_replace(['ё','«','»','„','“','”','"',"'"],['е','','','','','','',''],$value);
         return trim(preg_replace('/[^\p{L}\p{N}]+/u',' ',$value));
+    }
+
+    private function org_names_plausibly_match($a,$b) {
+        $normA=$this->normalize_audience_text($a); $normB=$this->normalize_audience_text($b);
+        if($normA===''||$normB==='')return false;
+        if($normA===$normB)return true;
+        $stop=['гккп','гкп','кгп','кгу','гу','ргп','ргу','тоо','ао','ип','на','праве','хозяйственного','ведения','оперативного','управления','акимата','города','коммунальное','государственное','предприятие','учреждение','общественное','объединение'];
+        $tokA=array_values(array_diff(array_filter(explode(' ',$normA),function($w){return (function_exists('mb_strlen')?mb_strlen($w,'UTF-8'):strlen($w))>2;}),$stop));
+        $tokB=array_values(array_diff(array_filter(explode(' ',$normB),function($w){return (function_exists('mb_strlen')?mb_strlen($w,'UTF-8'):strlen($w))>2;}),$stop));
+        if(!$tokA||!$tokB)return false;
+        $intersect=count(array_intersect($tokA,$tokB)); $union=count(array_unique(array_merge($tokA,$tokB)));
+        return $union>0 && ($intersect/$union)>=0.6;
+    }
+
+    private function resolve_organization_by_name($name) {
+        global $wpdb;
+        $name=sanitize_text_field((string)$name); if($name==='')return 0;
+        if(class_exists('ZAU_Remote_Profile_Repair')){
+            $match=ZAU_Remote_Profile_Repair::instance()->resolve_organization_by_name($name,true,false);
+            if(!empty($match['id']))return (int)$match['id'];
+        }
+        $exact=(int)$wpdb->get_var($wpdb->prepare("SELECT id FROM {$this->orgs_table} WHERE name=%s LIMIT 1",$name));
+        if($exact)return $exact;
+        foreach((array)$wpdb->get_results("SELECT id,name FROM {$this->orgs_table} ORDER BY id ASC LIMIT 5000") as $row){
+            if($this->org_names_plausibly_match($name,$row->name))return (int)$row->id;
+        }
+        $wpdb->query($wpdb->prepare(
+            "INSERT INTO {$this->orgs_table} (bin,name,director,address,region,source,updated_at) VALUES (NULL,%s,'','','','submission_name_only',%s)",
+            $name,current_time('mysql')
+        ));
+        return (int)$wpdb->insert_id;
     }
 
     private function member_org_id($user_id) {

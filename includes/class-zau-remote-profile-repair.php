@@ -412,6 +412,16 @@ final class ZAU_Remote_Profile_Repair {
         }
     }
 
+    /**
+     * Public entry point for callers outside this class that already know a
+     * BIN-based lookup is not trustworthy for a given member (e.g. because
+     * several distinct institutions share one BIN) and want this class's
+     * name/fuzzy matching and name-only organization creation instead.
+     */
+    public function resolve_organization_by_name($name, $allowCreate = true, $dryRun = false) {
+        return $this->organization_match($name, '', $allowCreate, $dryRun);
+    }
+
     private function organization_match($name,$bin,$allowCreate,$dryRun) {
         global $wpdb;
         $name=trim((string)$name);
@@ -419,7 +429,12 @@ final class ZAU_Remote_Profile_Repair {
         $cache=$this->organization_rows_cached();
         if ($bin && !empty($cache['bin'][$bin])) {
             $row=$cache['bin'][$bin];
-            return ['id'=>(int)$row->id,'name'=>(string)$row->name,'bin'=>(string)$row->bin,'action'=>'matched_bin'];
+            if ($name==='' || $this->core_org_name($name)===$this->core_org_name($row->name) || $this->token_similarity($name,$row->name)>=0.6) {
+                return ['id'=>(int)$row->id,'name'=>(string)$row->name,'bin'=>(string)$row->bin,'action'=>'matched_bin'];
+            }
+            // Names clearly differ: this BIN is legitimately shared by another
+            // institution. Do not misattribute this member to it — fall
+            // through to name-based matching/creation below instead.
         }
         $norm=$this->core_org_name($name);
         if ($norm!=='' && !empty($cache['name'][$norm]) && count($cache['name'][$norm])===1) {
@@ -441,12 +456,16 @@ final class ZAU_Remote_Profile_Repair {
             $row=$matches[0]['row'];
             return ['id'=>(int)$row->id,'name'=>(string)$row->name,'bin'=>(string)$row->bin,'action'=>'matched_name'];
         }
-        if ($name==='' || (!$bin && !$allowCreate)) {
+        // A BIN already claimed by a different (name-mismatched) organization
+        // cannot be reused for a new row without violating the unique BIN
+        // index, so only treat the BIN as usable here if it is still free.
+        $binAvailable = $bin!=='' && empty($cache['bin'][$bin]);
+        if ($name==='' || (!$binAvailable && !$allowCreate)) {
             return ['id'=>0,'name'=>$name,'bin'=>$bin,'action'=>$matches?'ambiguous':'unresolved'];
         }
-        if ($dryRun) { return ['id'=>0,'name'=>$name,'bin'=>$bin,'action'=>$bin?'would_create_bin':'would_create_name']; }
+        if ($dryRun) { return ['id'=>0,'name'=>$name,'bin'=>$bin,'action'=>$binAvailable?'would_create_bin':'would_create_name']; }
         $now=current_time('mysql');
-        if ($bin) {
+        if ($binAvailable) {
             $wpdb->insert($this->orgs_table,[
                 'bin'=>$bin,'name'=>$name,'director'=>'','address'=>'','region'=>'','source'=>'legacy_profile_repair','updated_at'=>$now
             ]);
@@ -460,7 +479,7 @@ final class ZAU_Remote_Profile_Repair {
         if (!$id) { return ['id'=>0,'name'=>$name,'bin'=>$bin,'action'=>'create_failed']; }
         $row=$wpdb->get_row($wpdb->prepare("SELECT id,bin,name,source FROM {$this->orgs_table} WHERE id=%d",$id));
         $this->add_org_cache_row($row);
-        return ['id'=>$id,'name'=>$name,'bin'=>$bin,'action'=>$bin?'created_bin':'created_name'];
+        return ['id'=>$id,'name'=>$name,'bin'=>$binAvailable?$bin:'','action'=>$binAvailable?'created_bin':'created_name'];
     }
 
     private function branch_code_from_text($value) {
