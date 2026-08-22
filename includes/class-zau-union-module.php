@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.24.2';
+    const VERSION = '2.25.0';
     const DB_VERSION = '2.18.2';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
@@ -745,6 +745,7 @@ final class ZAU_Union_Module {
     }
 
     public function custom_tab_shortcode($atts=[]) {
+        if($this->is_elementor_background_save())return $this->elementor_save_placeholder('Своя вкладка — содержимое обновится после сохранения страницы.');
         if(!is_user_logged_in())return $this->auth_shortcode($atts);
         $atts=shortcode_atts(['slug'=>''],(array)$atts,'zau_union_custom_tab');
         $slug=sanitize_title((string)$atts['slug']);
@@ -2433,6 +2434,26 @@ final class ZAU_Union_Module {
         return $designSettings['form_page_id'] ? get_permalink((int) $designSettings['form_page_id']) : home_url('/registraciya-v-profsoyuz/');
     }
 
+    /**
+     * True while Elementor is rebuilding a page's static post_content copy
+     * in the background (it does this on every save/autosave, for every
+     * widget on the page, in addition to storing the editable JSON tree —
+     * separate from the live editor iframe preview, which loads normally
+     * and is not affected by this guard). Our cabinet/registry shortcodes
+     * run several real DB queries, which is fine for an actual page view
+     * but adds up across every widget on every save; skipping that work
+     * here avoids turning a slow query into a save-time timeout.
+     */
+    private function is_elementor_background_save() {
+        if (!defined('DOING_AJAX') || !DOING_AJAX) { return false; }
+        if ((string) ($_REQUEST['action'] ?? '') !== 'elementor_ajax') { return false; }
+        return strpos((string) ($_REQUEST['actions'] ?? ''), 'save_builder') !== false;
+    }
+
+    private function elementor_save_placeholder($label) {
+        return '<div class="zau-cabinet zau-elementor-save-placeholder"><p>' . esc_html($label) . '</p></div>';
+    }
+
     private function nav_item_defaults() {
         return [
             'home'=>['label'=>'Главная','short'=>'Главная','icon'=>'⌂'],
@@ -2467,6 +2488,7 @@ final class ZAU_Union_Module {
 
 
     public function cabinet_shortcode($atts=[]) {
+        if($this->is_elementor_background_save())return $this->elementor_save_placeholder('Личный кабинет — содержимое обновится после сохранения страницы.');
         if(!is_user_logged_in())return $this->auth_shortcode($atts);
         if(!defined('DONOTCACHEPAGE')){ define('DONOTCACHEPAGE', true); }
         nocache_headers();
@@ -2728,6 +2750,7 @@ final class ZAU_Union_Module {
     }
 
     public function cabinet_section_shortcode($atts = []) {
+        if ($this->is_elementor_background_save()) { return $this->elementor_save_placeholder('Раздел кабинета — содержимое обновится после сохранения страницы.'); }
         if (!is_user_logged_in()) { return $this->auth_shortcode($atts); }
         if(!defined('DONOTCACHEPAGE')){ define('DONOTCACHEPAGE', true); }
         nocache_headers();
@@ -3870,6 +3893,7 @@ $xref
     }
 
     public function organization_registry_shortcode($atts = []) {
+        if ($this->is_elementor_background_save()) { return $this->elementor_save_placeholder('Реестр организации — содержимое обновится после сохранения страницы.'); }
         $atts=shortcode_atts(['embedded'=>'no'],(array)$atts,'zau_union_org_registry');
         $embedded=$atts['embedded']==='yes';
         if (!is_user_logged_in()) { return $this->auth_shortcode(array_merge((array)$atts,['return_url'=>$this->organization_registry_url()])); }
@@ -4024,6 +4048,7 @@ $xref
     }
 
     public function organization_members_shortcode($atts=[]) {
+        if ($this->is_elementor_background_save()) { return $this->elementor_save_placeholder('Участники организации — содержимое обновится после сохранения страницы.'); }
         $atts=shortcode_atts([
             'show_heading'=>'yes','return_url'=>'','methods'=>'inherit','otp_channels'=>'inherit','default_method'=>'',
             'show_tabs'=>'inherit','show_recovery'=>'inherit','show_description'=>'yes','show_remember'=>'yes'
@@ -4362,6 +4387,7 @@ $xref
     }
 
     public function member_card_shortcode($atts=[]) {
+        if($this->is_elementor_background_save())return $this->elementor_save_placeholder('Личная карточка — содержимое обновится после сохранения страницы.');
         if(!is_user_logged_in())return $this->auth_shortcode(['return_url'=>home_url(wp_unslash($_SERVER['REQUEST_URI']??'/'))]);
         $viewer=get_current_user_id();$target=absint($atts['member_id']??($_GET['member_id']??0));if(!$target)$target=$viewer;
         if($target!==$viewer&&!$this->can_manage_member($viewer,$target)&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE)&&!current_user_can('manage_options'))return '<div class="zau-form-error">Нет доступа к личной карточке этого участника.</div>';
@@ -4555,6 +4581,7 @@ $xref
     }
 
     public function benefits_shortcode($atts=[]) {
+        if($this->is_elementor_background_save())return $this->elementor_save_placeholder('Акции и скидки — содержимое обновится после сохранения страницы.');
         if(!is_user_logged_in())return $this->auth_shortcode(['return_url'=>home_url(wp_unslash($_SERVER['REQUEST_URI']??'/'))]);
         $a=shortcode_atts([
             'order_by'=>'menu_order','order'=>'ASC','limit'=>0,

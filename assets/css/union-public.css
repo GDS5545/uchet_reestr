@@ -327,3 +327,6 @@
 [class*="zau-nav-mobile-fixed-yes"] .zau-cabinet-nav-mobile{position:fixed;left:0;right:0;bottom:0;top:auto;z-index:9999;margin:0;border-radius:16px 16px 0 0;justify-content:space-around;padding:6px 8px calc(6px + env(safe-area-inset-bottom))}
 body:has([class*="zau-nav-mobile-fixed-yes"] .zau-cabinet-nav-mobile){padding-bottom:78px}
 }
+
+/* 2.25 — лёгкая заглушка вместо тяжёлого рендера во время фонового сохранения Elementor */
+.zau-elementor-save-placeholder{padding:16px;border:1px dashed #c3c4c7;border-radius:10px;color:#667085;font-size:13px}
