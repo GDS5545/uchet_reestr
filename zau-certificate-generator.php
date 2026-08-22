@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Профсоюз — регистрация, документы и QR
  * Description: Единый реестр профсоюза с AQNIET Blue UX: регистрация, статусы, филиалы единым текстом, защищённая личная карточка, скрытый wp-admin для участников, акции и скидки, документы/PDF/QR, кабинеты организаций и Elementor.
- * Version: 2.24.1
+ * Version: 2.24.2
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -11,8 +11,33 @@
 
 if (!defined('ABSPATH')) { exit; }
 
+/*
+ * Temporary crash catcher: records the last PHP fatal error that happened
+ * anywhere in this plugin's files (e.g. while Elementor is saving a page)
+ * into a stored option, so it can be read on the "Оформление и данные"
+ * settings page without needing FTP/hosting-panel access to the PHP error
+ * log. Overhead is negligible — it only writes to the DB when an actual
+ * fatal is detected.
+ */
+register_shutdown_function(function () {
+    $error = error_get_last();
+    if (!$error) { return; }
+    if (!in_array($error['type'] ?? 0, [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true)) { return; }
+    if (strpos((string) ($error['file'] ?? ''), __DIR__) !== 0) { return; }
+    if (!function_exists('update_option')) { return; }
+    update_option('zau_last_fatal_error', [
+        'message' => (string) $error['message'],
+        'file' => (string) $error['file'],
+        'line' => (int) $error['line'],
+        'time' => function_exists('current_time') ? current_time('mysql') : date('Y-m-d H:i:s'),
+        'request_uri' => (string) ($_SERVER['REQUEST_URI'] ?? ''),
+        'request_method' => (string) ($_SERVER['REQUEST_METHOD'] ?? ''),
+        'action' => (string) ($_POST['action'] ?? $_GET['action'] ?? ''),
+    ], false);
+});
+
 final class ZAU_Certificate_PDF_Generator {
-    const VERSION = '2.24.1';
+    const VERSION = '2.24.2';
     const DB_VERSION = '2.18.2';
     const OPT_DB_VERSION = 'zau_cert_db_version';
     const OPT_SETTINGS = 'zau_cert_settings';
@@ -41,6 +66,7 @@ final class ZAU_Certificate_PDF_Generator {
         add_action('admin_menu', [$this, 'admin_menu']);
         add_action('admin_enqueue_scripts', [$this, 'admin_assets']);
         add_action('admin_notices', [$this, 'admin_notices']);
+        add_action('admin_post_zau_clear_fatal_log', [$this, 'clear_fatal_log']);
 
         add_action('admin_post_zau_cert_save_template', [$this, 'save_template']);
         add_action('wp_ajax_zau_cert_save_template_ajax', [$this, 'ajax_save_template']);
@@ -267,9 +293,27 @@ final class ZAU_Certificate_PDF_Generator {
             echo '<div class="notice notice-error is-dismissible"><p>' . esc_html($msg) . '</p></div>';
             return;
         }
-        if (empty($_GET['zau_notice'])) { return; }
-        $msg = sanitize_text_field(wp_unslash($_GET['zau_notice']));
-        echo '<div class="notice notice-success is-dismissible"><p>' . esc_html($msg) . '</p></div>';
+        if (!empty($_GET['zau_notice'])) {
+            $msg = sanitize_text_field(wp_unslash($_GET['zau_notice']));
+            echo '<div class="notice notice-success is-dismissible"><p>' . esc_html($msg) . '</p></div>';
+        }
+        if (current_user_can('manage_options')) {
+            $fatal = get_option('zau_last_fatal_error');
+            if (is_array($fatal) && !empty($fatal['message'])) {
+                $clearUrl = wp_nonce_url(admin_url('admin-post.php?action=zau_clear_fatal_log'), 'zau_clear_fatal_log');
+                echo '<div class="notice notice-error"><p><strong>ZAU Профсоюз: обнаружена ошибка PHP</strong> — время ' . esc_html($fatal['time'] ?? '') . ', адрес запроса ' . esc_html($fatal['request_uri'] ?? '') . ($fatal['action'] ? ' (action=' . esc_html($fatal['action']) . ')' : '') . '.</p>'
+                    . '<pre style="white-space:pre-wrap;background:#f6f7f7;padding:10px;border:1px solid #dcdcde;max-width:100%;overflow:auto;">' . esc_html($fatal['message'] . "\n" . ($fatal['file'] ?? '') . ':' . ($fatal['line'] ?? '')) . '</pre>'
+                    . '<p><a class="button" href="' . esc_url($clearUrl) . '">Скрыть это сообщение</a></p></div>';
+            }
+        }
+    }
+
+    public function clear_fatal_log() {
+        if (!current_user_can('manage_options')) { wp_die('Недостаточно прав.'); }
+        check_admin_referer('zau_clear_fatal_log');
+        delete_option('zau_last_fatal_error');
+        wp_safe_redirect(wp_get_referer() ?: admin_url());
+        exit;
     }
 
     private function require_cap($cap) {
