@@ -454,21 +454,6 @@ class ZAU_Union_Cabinet_Section_Widget extends ZAU_Union_Elementor_Widget_Base {
         $this->add_control('nav_items', ['label'=>'Пункты навигации','type'=>\Elementor\Controls_Manager::TEXT,'default'=>'home,documents,submissions,card,benefits,members,registry,info,logins','description'=>'Допустимо: home, documents, submissions, card, benefits, members, registry, info, logins.','condition'=>['section_type'=>'navigation']]);
         $this->end_controls_section();
 
-        $this->start_controls_section('content_nav_style', ['label'=>'Пункты меню: иконки и подписи','condition'=>['section_type'=>['full','navigation']]]);
-        $iconGlyphs=['' =>'По умолчанию','⌂'=>'⌂ Дом','▤'=>'▤ Документ','✓'=>'✓ Галочка','▣'=>'▣ Карточка','%'=>'% Процент','◎'=>'◎ Люди','☰'=>'☰ Список','ℹ'=>'ℹ Информация','⏱'=>'⏱ Часы','★'=>'★ Звезда','♥'=>'♥ Сердце','⚑'=>'⚑ Флаг','⚙'=>'⚙ Шестерня','✉'=>'✉ Конверт','custom'=>'Свой символ / эмодзи…'];
-        $repeater = new \Elementor\Repeater();
-        $repeater->add_control('tab_key', ['label'=>'Вкладка','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'home','options'=>$builtInTabs]);
-        $repeater->add_control('icon_choice', ['label'=>'Иконка','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'','options'=>$iconGlyphs]);
-        $repeater->add_control('icon_custom', ['label'=>'Свой символ / эмодзи','type'=>\Elementor\Controls_Manager::TEXT,'condition'=>['icon_choice'=>'custom']]);
-        $repeater->add_control('label_short', ['label'=>'Короткое название (телефон)','type'=>\Elementor\Controls_Manager::TEXT,'placeholder'=>'Например: Акции']);
-        $repeater->add_control('label_full', ['label'=>'Полное название (компьютер)','type'=>\Elementor\Controls_Manager::TEXT,'placeholder'=>'Оставьте пустым для стандартного']);
-        $this->add_control('nav_item_styles', [
-            'label'=>'Пункты меню','type'=>\Elementor\Controls_Manager::REPEATER,
-            'fields'=>$repeater->get_controls(),'title_field'=>'{{{ tab_key }}}',
-            'description'=>'Переопределяет иконку и подписи выбранной вкладки. Короткая подпись используется на телефоне, полная — на компьютере. Вкладки, не добавленные сюда, используют стандартный вид.',
-        ]);
-        $this->end_controls_section();
-
         $this->start_controls_section('content_benefits', ['label'=>'Акции: содержимое карточек','condition'=>['section_type'=>'benefits']]);
         $this->add_control('benefits_order_by', ['label'=>'Сортировка','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'menu_order','options'=>['menu_order'=>'Порядок в списке акций','date'=>'Дата публикации','title'=>'Название']]);
         $this->add_control('benefits_order', ['label'=>'Направление','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'ASC','options'=>['ASC'=>'По возрастанию','DESC'=>'По убыванию']]);
@@ -486,21 +471,11 @@ class ZAU_Union_Cabinet_Section_Widget extends ZAU_Union_Elementor_Widget_Base {
         $this->register_common_content_controls();
         $this->register_style_controls();
     }
-    protected function nav_style_json($s) {
-        $rows=is_array($s['nav_item_styles']??null)?$s['nav_item_styles']:[];
-        if(!$rows)return '';
-        $clean=[];
-        foreach($rows as $row){
-            if(empty($row['tab_key']))continue;
-            $clean[]=['tab_key'=>$row['tab_key'],'icon_choice'=>$row['icon_choice']??'','icon_custom'=>$row['icon_custom']??'','label_short'=>$row['label_short']??'','label_full'=>$row['label_full']??''];
-        }
-        return $clean?wp_json_encode($clean,JSON_UNESCAPED_UNICODE):'';
-    }
     protected function render() {
         $s = $this->get_settings_for_display();
         $auth = $this->auth_shortcode_attributes($s);
         $type = sanitize_key($s['section_type'] ?? 'full');
-        $navStyle = $this->nav_style_json($s);
+        $navStyle = '';
         if ($type === 'full') {
             $defaultTab=sanitize_key($s['cabinet_default_tab']??'home');
             $tabs=is_array($s['cabinet_tabs']??null)?array_values(array_filter(array_map('sanitize_key',$s['cabinet_tabs']))):['home','documents','submissions','members','registry','info','logins'];
