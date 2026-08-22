@@ -636,3 +636,6 @@
 
 /* 2.17.2 — акции: админ-предпросмотр и диагностика */
 .zau-benefit-admin-preview{display:grid;gap:3px;margin:0 0 12px;padding:10px 12px;border:1px solid #f0c36d;border-radius:12px;background:#fff8e8;color:#7a4b00;font-size:13px}.zau-benefit-admin-preview strong{font-size:13px}.zau-benefit-admin-preview span{line-height:1.35}.zau-benefit-diagnostics{margin-top:14px;padding:16px;border:1px solid #f0c36d;border-radius:14px;background:#fffaf0;color:#5f430d}.zau-benefit-diagnostics ul{margin:10px 0 0 20px}.zau-benefit-diagnostics li{margin:6px 0}.zau-benefit-diagnostics p{margin:10px 0 0}
+
+/* 2.24 — управляемое соотношение сторон изображения акции */
+.zau-benefit-image.zau-benefit-ratio-1-1{aspect-ratio:1/1}.zau-benefit-image.zau-benefit-ratio-4-3{aspect-ratio:4/3}.zau-benefit-image.zau-benefit-ratio-16-9{aspect-ratio:16/9}.zau-benefit-image[class*="zau-benefit-ratio-"] img{height:100%}
