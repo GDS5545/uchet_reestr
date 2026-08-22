@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Профсоюз — регистрация, документы и QR
  * Description: Единый реестр профсоюза с AQNIET Blue UX: регистрация, статусы, филиалы единым текстом, защищённая личная карточка, скрытый wp-admin для участников, акции и скидки, документы/PDF/QR, кабинеты организаций и Elementor.
- * Version: 2.22.0
+ * Version: 2.23.0
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -12,7 +12,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Certificate_PDF_Generator {
-    const VERSION = '2.22.0';
+    const VERSION = '2.23.0';
     const DB_VERSION = '2.18.2';
     const OPT_DB_VERSION = 'zau_cert_db_version';
     const OPT_SETTINGS = 'zau_cert_settings';
@@ -1331,11 +1331,13 @@ if (!function_exists('zau_admin_hub_nav')) {
         if (empty($groups[$group])) { return; }
         $g = $groups[$group];
         $current = sanitize_key((string) ($_GET['page'] ?? ''));
+        $ajaxTabs = in_array($group, ['users', 'design'], true);
         echo '<h1 class="zau-hub-title">' . esc_html($g['title']) . '</h1>';
-        echo '<h2 class="nav-tab-wrapper zau-hub-tabs">';
+        echo '<h2 class="nav-tab-wrapper zau-hub-tabs"' . ($ajaxTabs ? ' data-zau-admin-tabs="1"' : '') . '>';
         foreach ($g['tabs'] as $slug => $label) {
             $active = $current === $slug ? ' nav-tab-active' : '';
-            echo '<a class="nav-tab' . esc_attr($active) . '" href="' . esc_url(admin_url('admin.php?page=' . $slug)) . '">' . esc_html($label) . '</a>';
+            $attr = $ajaxTabs ? ' data-zau-tab-slug="' . esc_attr($slug) . '"' : '';
+            echo '<a class="nav-tab' . esc_attr($active) . '"' . $attr . ' href="' . esc_url(admin_url('admin.php?page=' . $slug)) . '">' . esc_html($label) . '</a>';
         }
         foreach ((array) ($g['links'] ?? []) as $path => $label) {
             echo '<a class="nav-tab" href="' . esc_url(admin_url($path)) . '">' . esc_html($label) . '</a>';

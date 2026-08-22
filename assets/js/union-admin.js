@@ -1,5 +1,6 @@
 (function(){
 'use strict';
+function initFormEditor(){
 const root=document.getElementById('zau-union-form-editor');
 if(!root)return;
 const holder=document.getElementById('zau-form-fields');
@@ -32,4 +33,47 @@ function render(){holder.innerHTML='';fields.forEach((f,i)=>{
 add.addEventListener('click',()=>{fields.push(newField());render();});
 root.querySelector('form').addEventListener('submit',()=>sync());
 render();
+}
+window.ZAUReinitFormEditor=initFormEditor;
+initFormEditor();
+})();
+
+/* Admin hub in-page tabs: swap the .wrap content via fetch() instead of a
+ * full page reload, mirroring the front-end cabinet tab behaviour. Only
+ * activated for nav bars the server marked with data-zau-admin-tabs (the
+ * "Пользователи" and "Оформление и данные" hubs today). */
+(function(){
+'use strict';
+function bindHubTabs(){
+ document.querySelectorAll('.zau-hub-tabs[data-zau-admin-tabs]').forEach(function(nav){
+  if(nav.dataset.zauBound)return;
+  nav.dataset.zauBound='1';
+  nav.addEventListener('click',function(e){
+   const a=e.target.closest('a[data-zau-tab-slug]');
+   if(!a||!nav.contains(a))return;
+   e.preventDefault();
+   loadTab(a.href,true);
+  });
+ });
+}
+function loadTab(url,pushState){
+ const wrap=document.querySelector('.wrap.zau-union-admin');
+ if(!wrap){window.location.href=url;return;}
+ wrap.classList.add('zau-hub-loading');
+ fetch(url,{credentials:'same-origin'}).then(function(r){return r.text();}).then(function(html){
+  const doc=new DOMParser().parseFromString(html,'text/html');
+  const newWrapSrc=doc.querySelector('.wrap.zau-union-admin');
+  if(!newWrapSrc){window.location.href=url;return;}
+  const newWrap=document.importNode(newWrapSrc,true);
+  wrap.replaceWith(newWrap);
+  bindHubTabs();
+  if(newWrap.querySelector('#zau-union-form-editor')&&window.ZAUReinitFormEditor){window.ZAUReinitFormEditor();}
+  if(pushState){history.pushState({zauHubUrl:url},'',url);}
+  const titleEl=doc.querySelector('title');
+  if(titleEl)document.title=titleEl.textContent;
+  window.scrollTo(0,0);
+ }).catch(function(){window.location.href=url;});
+}
+window.addEventListener('popstate',function(){loadTab(window.location.href,false);});
+if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',bindHubTabs);}else{bindHubTabs();}
 })();
