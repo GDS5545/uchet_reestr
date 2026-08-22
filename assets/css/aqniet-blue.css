@@ -565,7 +565,7 @@
     flex:1 0 68px;
     min-width:68px;
     min-height:58px;
-    padding:29px 5px 5px;
+    padding:8px 5px 5px;
     font-size:10px;
     line-height:1.05;
     text-align:center;
@@ -573,18 +573,12 @@
     color:#667085!important;
     box-shadow:none!important;
   }
-  .zau-aqniet-cabinet.has-mobile-bottom-nav .zau-cabinet-nav a::before{
-    position:absolute;top:6px;left:50%;transform:translateX(-50%);
-    display:grid;place-items:center;width:24px;height:24px;
-    color:currentColor;font-size:19px;font-weight:700;
-  }
-  .zau-aqniet-cabinet .zau-cabinet-nav a[data-zau-tab="home"]::before{content:"⌂"}
-  .zau-aqniet-cabinet .zau-cabinet-nav a[data-zau-tab="documents"]::before{content:"▤"}
-  .zau-aqniet-cabinet .zau-cabinet-nav a[data-zau-tab="submissions"]::before{content:"✓"}
-  .zau-aqniet-cabinet .zau-cabinet-nav a[data-zau-tab="members"]::before{content:"♙"}
-  .zau-aqniet-cabinet .zau-cabinet-nav a[data-zau-tab="registry"]::before{content:"☷"}
-  .zau-aqniet-cabinet .zau-cabinet-nav a[data-zau-tab="info"]::before{content:"i"}
-  .zau-aqniet-cabinet .zau-cabinet-nav a[data-zau-tab="logins"]::before{content:"↻"}
+  /* Значки этих вкладок теперь рисует span.zau-cabinet-nav-icon (см.
+     union-public.css) — настраивается через Elementor. Старый набор
+     ::before-иконок ниже удалён 2.27.1: он рисовался поверх нового
+     значка независимо от него, отсюда «задвоенные» иконки на телефоне
+     ровно у тех вкладок, что были в этом списке (Карточка и Акции в
+     него не входили и поэтому не дублировались). */
   .zau-aqniet-cabinet.has-mobile-bottom-nav .zau-cabinet-nav a.is-active,
   .zau-aqniet-cabinet.has-mobile-bottom-nav .zau-cabinet-nav a[aria-selected="true"]{color:var(--zau-brand)!important}
   .zau-aqniet-cabinet.has-mobile-bottom-nav .zau-cabinet-nav a.is-active::after{
