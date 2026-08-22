@@ -461,7 +461,7 @@ class ZAU_Union_Cabinet_Section_Widget extends ZAU_Union_Elementor_Widget_Base {
         $this->end_controls_section();
 
         $this->start_controls_section('content_nav_style', ['label'=>'Пункты меню: иконки и подписи','condition'=>['section_type'=>['full','navigation']]]);
-        $iconGlyphs=['' =>'По умолчанию','⌂'=>'⌂ Дом','▤'=>'▤ Документ','✓'=>'✓ Галочка','▣'=>'▣ Карточка','%'=>'% Процент','◎'=>'◎ Люди','☰'=>'☰ Список','ℹ'=>'ℹ Информация','⏱'=>'⏱ Часы','★'=>'★ Звезда','♥'=>'♥ Сердце','⚑'=>'⚑ Флаг','⚙'=>'⚙ Шестерня','✉'=>'✉ Конверт','custom'=>'Свой символ / эмодзи…'];
+        $iconGlyphs=['' =>'По умолчанию','dashicons-admin-home'=>'⌂ Дом','dashicons-media-document'=>'▤ Документ','dashicons-yes-alt'=>'✓ Галочка','dashicons-id-alt'=>'▣ Карточка','dashicons-tag'=>'% Процент/тег','dashicons-groups'=>'◎ Люди','dashicons-list-view'=>'☰ Список','dashicons-info'=>'ℹ Информация','dashicons-clock'=>'⏱ Часы','dashicons-star-filled'=>'★ Звезда','dashicons-heart'=>'♥ Сердце','dashicons-flag'=>'⚑ Флаг','dashicons-admin-generic'=>'⚙ Шестерня','dashicons-email-alt'=>'✉ Конверт','custom'=>'Свой символ / эмодзи… (может задваиваться на некоторых телефонах)'];
         $repeater = new \Elementor\Repeater();
         $repeater->add_control('tab_key', ['label'=>'Вкладка','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'home','options'=>$builtInTabs]);
         $repeater->add_control('icon_choice', ['label'=>'Иконка','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'','options'=>$iconGlyphs]);

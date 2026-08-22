@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.26.2';
+    const VERSION = '2.27.0';
     const DB_VERSION = '2.18.2';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
@@ -931,7 +931,8 @@ final class ZAU_Union_Module {
         $jsVersion=self::VERSION.(is_file($jsPath)?'.'.(string)filemtime($jsPath):'');
         $designCssVersion=self::VERSION.(is_file($designCssPath)?'.'.(string)filemtime($designCssPath):'');
         $designJsVersion=self::VERSION.(is_file($designJsPath)?'.'.(string)filemtime($designJsPath):'');
-        wp_enqueue_style('zau-union-public', plugins_url('../assets/css/union-public.css', __FILE__), [], $cssVersion);
+        wp_enqueue_style('dashicons');
+        wp_enqueue_style('zau-union-public', plugins_url('../assets/css/union-public.css', __FILE__), ['dashicons'], $cssVersion);
         wp_enqueue_style('zau-aqniet-blue', plugins_url('../assets/css/aqniet-blue.css', __FILE__), ['zau-union-public'], $designCssVersion);
         wp_enqueue_script('zau-union-qrcode', plugins_url('../assets/js/qrcode.min.js', __FILE__), [], '1.0.0', true);
         wp_enqueue_script('zau-union-public', plugins_url('../assets/js/union-public.js', __FILE__), ['zau-union-qrcode'], $jsVersion, true);
@@ -2456,16 +2457,34 @@ final class ZAU_Union_Module {
 
     private function nav_item_defaults() {
         return [
-            'home'=>['label'=>'Главная','short'=>'Главная','icon'=>'⌂'],
-            'documents'=>['label'=>'Документы','short'=>'Файлы','icon'=>'▤'],
-            'submissions'=>['label'=>'Заявления','short'=>'Заявки','icon'=>'✓'],
-            'card'=>['label'=>'Личная карточка','short'=>'Карточка','icon'=>'▣'],
-            'benefits'=>['label'=>'Акции и скидки','short'=>'Акции','icon'=>'%'],
-            'members'=>['label'=>'Участники','short'=>'Участники','icon'=>'◎'],
-            'registry'=>['label'=>'Реестр организации','short'=>'Реестр','icon'=>'☰'],
-            'info'=>['label'=>'Материалы','short'=>'Материалы','icon'=>'ℹ'],
-            'logins'=>['label'=>'Входы','short'=>'Входы','icon'=>'⏱'],
+            'home'=>['label'=>'Главная','short'=>'Главная','icon'=>'dashicons-admin-home'],
+            'documents'=>['label'=>'Документы','short'=>'Файлы','icon'=>'dashicons-media-document'],
+            'submissions'=>['label'=>'Заявления','short'=>'Заявки','icon'=>'dashicons-yes-alt'],
+            'card'=>['label'=>'Личная карточка','short'=>'Карточка','icon'=>'dashicons-id-alt'],
+            'benefits'=>['label'=>'Акции и скидки','short'=>'Акции','icon'=>'dashicons-tag'],
+            'members'=>['label'=>'Участники','short'=>'Участники','icon'=>'dashicons-groups'],
+            'registry'=>['label'=>'Реестр организации','short'=>'Реестр','icon'=>'dashicons-list-view'],
+            'info'=>['label'=>'Материалы','short'=>'Материалы','icon'=>'dashicons-info'],
+            'logins'=>['label'=>'Входы','short'=>'Входы','icon'=>'dashicons-clock'],
         ];
+    }
+
+    /**
+     * Unicode symbol/emoji characters can double-render on some phones (the
+     * OS paints both a color-emoji glyph and a text glyph for the same
+     * codepoint). Dashicons (WordPress core's own icon font, enqueued on
+     * the front end) render as a single reliable glyph via ::before, so
+     * every nav icon — built-in default, custom override, or a legacy
+     * custom-tab icon — goes through this one renderer.
+     */
+    private function render_nav_icon_span($icon, $extraClass = '') {
+        $icon = (string) $icon;
+        if ($icon === '') { return ''; }
+        $class = 'zau-cabinet-nav-icon' . ($extraClass !== '' ? ' ' . $extraClass : '');
+        if (strpos($icon, 'dashicons-') === 0) {
+            return '<span class="' . esc_attr($class) . ' dashicons ' . esc_attr($icon) . '" aria-hidden="true"></span>';
+        }
+        return '<span class="' . esc_attr($class) . '" aria-hidden="true">' . esc_html($icon) . '</span>';
     }
 
     private function apply_nav_overrides($defaults, $json) {
@@ -2587,9 +2606,9 @@ final class ZAU_Union_Module {
                     $meta=$navMeta[$tab]??null;
                 ?>
                     <a id="zau-tab-<?php echo esc_attr($tab);?>" role="tab" aria-selected="<?php echo $isActive?'true':'false';?>" aria-controls="zau-<?php echo esc_attr($tab);?>" tabindex="<?php echo $isActive?'0':'-1';?>" class="<?php echo $isActive?'is-active':'';?>" data-zau-tab="<?php echo esc_attr($tab);?>" href="<?php echo esc_url($url);?>">
-                        <?php if($meta):?><span class="zau-cabinet-nav-icon" aria-hidden="true"><?php echo esc_html($meta['icon']);?></span><span class="zau-cabinet-nav-label-full"><?php echo esc_html($meta['label']);?></span><span class="zau-cabinet-nav-label-short"><?php echo esc_html($meta['short']);?></span>
+                        <?php if($meta):?><?php echo $this->render_nav_icon_span($meta['icon']);?><span class="zau-cabinet-nav-label-full"><?php echo esc_html($meta['label']);?></span><span class="zau-cabinet-nav-label-short"><?php echo esc_html($meta['short']);?></span>
                         <?php else: $icon=$customTabIcons[$tab]??'';?>
-                        <?php if($icon):?><span class="zau-cabinet-nav-icon<?php echo strpos($icon,'dashicons-')===0?' dashicons '.esc_attr($icon):'';?>" aria-hidden="true"><?php if(strpos($icon,'dashicons-')!==0)echo esc_html($icon);?></span><?php endif;?><span class="zau-cabinet-nav-label-full"><?php echo esc_html($tabLabels[$tab]);?></span><span class="zau-cabinet-nav-label-short"><?php echo esc_html($tabLabels[$tab]);?></span>
+                        <?php echo $this->render_nav_icon_span($icon);?><span class="zau-cabinet-nav-label-full"><?php echo esc_html($tabLabels[$tab]);?></span><span class="zau-cabinet-nav-label-short"><?php echo esc_html($tabLabels[$tab]);?></span>
                         <?php endif;?>
                     </a>
                 <?php endforeach;?>
@@ -2786,7 +2805,7 @@ final class ZAU_Union_Module {
             $navMeta=$this->apply_nav_overrides($this->nav_item_defaults(),$a['nav_style']);
             $items=array_filter(array_map('sanitize_key',explode(',',(string)$a['nav_items'])));
             ?>
-            <nav class="zau-cabinet-nav zau-cabinet-nav-mobile" aria-label="Разделы личного кабинета" data-zau-section-nav><?php foreach($items as $item): if(!isset($navMeta[$item]))continue; if($item==='members'&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_ORG_MANAGE)&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE)&&!current_user_can('manage_options'))continue; if(!$this->tab_allowed_for_current_user($item))continue; $meta=$navMeta[$item];?><a href="#zau-<?php echo esc_attr($item);?>" data-zau-tab="<?php echo esc_attr($item);?>"><span class="zau-cabinet-nav-icon" aria-hidden="true"><?php echo esc_html($meta['icon']);?></span><span class="zau-cabinet-nav-label-full"><?php echo esc_html($meta['label']);?></span><span class="zau-cabinet-nav-label-short"><?php echo esc_html($meta['short']);?></span></a><?php endforeach;?></nav>
+            <nav class="zau-cabinet-nav zau-cabinet-nav-mobile" aria-label="Разделы личного кабинета" data-zau-section-nav><?php foreach($items as $item): if(!isset($navMeta[$item]))continue; if($item==='members'&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_ORG_MANAGE)&&!current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE)&&!current_user_can('manage_options'))continue; if(!$this->tab_allowed_for_current_user($item))continue; $meta=$navMeta[$item];?><a href="#zau-<?php echo esc_attr($item);?>" data-zau-tab="<?php echo esc_attr($item);?>"><?php echo $this->render_nav_icon_span($meta['icon']);?><span class="zau-cabinet-nav-label-full"><?php echo esc_html($meta['label']);?></span><span class="zau-cabinet-nav-label-short"><?php echo esc_html($meta['short']);?></span></a><?php endforeach;?></nav>
         <?php elseif ($section === 'home'):
             $docCount=count($this->latest_user_documents($uid));
             $submissionCount=count($this->latest_user_submissions($uid));

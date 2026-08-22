@@ -318,6 +318,7 @@
 .zau-benefit-desc-toggle:hover,.zau-benefit-desc-toggle:focus{color:#0a5a8a}
 .zau-cabinet-nav-mobile a{display:inline-flex;align-items:center;gap:7px}
 .zau-cabinet-nav-icon{font-size:15px;line-height:1}
+.zau-cabinet-nav-icon.dashicons{width:auto;height:auto;vertical-align:middle}
 .zau-cabinet-nav-label-short{display:none}
 @media(max-width:768px){
 .zau-cabinet-nav-mobile a{flex-direction:column;gap:3px;padding:8px 6px;font-size:11px;text-align:center}
