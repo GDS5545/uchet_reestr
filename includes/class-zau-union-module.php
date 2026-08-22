@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.26.0';
+    const VERSION = '2.26.1';
     const DB_VERSION = '2.18.2';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
@@ -2469,7 +2469,8 @@ final class ZAU_Union_Module {
     }
 
     private function apply_nav_overrides($defaults, $json) {
-        $rows = json_decode(html_entity_decode((string) $json, ENT_QUOTES), true);
+        $decoded = base64_decode((string) $json, true);
+        $rows = $decoded !== false ? json_decode($decoded, true) : null;
         if (!is_array($rows)) { return $defaults; }
         foreach ($rows as $row) {
             if (!is_array($row)) { continue; }

@@ -324,7 +324,7 @@
 .zau-cabinet-nav-icon{font-size:18px}
 .zau-cabinet-nav-label-full{display:none}
 .zau-cabinet-nav-label-short{display:block;white-space:nowrap}
-[class*="zau-nav-mobile-fixed-yes"] .zau-cabinet-nav-mobile{position:fixed;left:0;right:0;bottom:0;top:auto;z-index:9999;margin:0;border-radius:16px 16px 0 0;justify-content:space-around;padding:6px 8px calc(6px + env(safe-area-inset-bottom))}
+[class*="zau-nav-mobile-fixed-yes"] .zau-cabinet-nav-mobile{position:fixed!important;left:0!important;right:0!important;bottom:0!important;top:auto!important;z-index:999999;margin:0;border-radius:16px 16px 0 0;justify-content:space-around;padding:6px 8px calc(6px + env(safe-area-inset-bottom))}
 body:has([class*="zau-nav-mobile-fixed-yes"] .zau-cabinet-nav-mobile){padding-bottom:78px}
 }
 

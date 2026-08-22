@@ -25,8 +25,14 @@ abstract class ZAU_Union_Elementor_Widget_Base extends \Elementor\Widget_Base {
 
     protected function render_shortcode_in_wrapper($shortcode, $extra_classes = '') {
         $classes = trim('zau-elementor-interface zau-aqniet-blue zau-elementor-' . sanitize_html_class($this->get_name()) . ' ' . $extra_classes);
+        $output = do_shortcode($shortcode);
+        // Safety net: if a shortcode attribute ever contains characters that
+        // break WordPress's [tag] parsing, do_shortcode() leaves the raw,
+        // unparsed tag text in the output instead of real HTML — never show
+        // that broken text on the live page.
+        if (strpos($output, '[zau_union_') !== false) { $output = ''; }
         echo '<div class="' . esc_attr($classes) . '">';
-        echo do_shortcode($shortcode); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+        echo $output; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
         echo '</div>';
     }
 
@@ -495,10 +501,17 @@ class ZAU_Union_Cabinet_Section_Widget extends ZAU_Union_Elementor_Widget_Base {
     protected function register_mobile_nav_style_controls() {
         $this->start_controls_section('style_nav_mobile', ['label'=>'Навигация на телефоне','tab'=>\Elementor\Controls_Manager::TAB_STYLE,'condition'=>['section_type'=>'full']]);
         $this->add_control('nav_mobile_hint', ['type'=>\Elementor\Controls_Manager::RAW_HTML,'raw'=>'Действует, когда включено «Закреплённые вкладки на телефоне» на вкладке «Содержимое».']);
+        $this->add_control('nav_mobile_z_index', ['label'=>'Z-index (поверх других элементов)','type'=>\Elementor\Controls_Manager::NUMBER,'min'=>1,'max'=>2147483647,'placeholder'=>'999999','selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav'=>'z-index:{{VALUE}};'],'description'=>'Увеличьте, если футер или другой блок сайта перекрывает панель.']);
         $this->add_responsive_control('nav_mobile_icon_size', ['label'=>'Размер иконки, px','type'=>\Elementor\Controls_Manager::SLIDER,'range'=>['px'=>['min'=>12,'max'=>36]],'selectors'=>['{{WRAPPER}} .zau-cabinet-nav-icon'=>'font-size:{{SIZE}}{{UNIT}};']]);
+        $this->add_responsive_control('nav_mobile_label_size', ['label'=>'Размер подписи, px','type'=>\Elementor\Controls_Manager::SLIDER,'range'=>['px'=>['min'=>8,'max'=>18]],'selectors'=>['{{WRAPPER}} .zau-cabinet-nav-label-short, {{WRAPPER}} .zau-cabinet-nav-label-full'=>'font-size:{{SIZE}}{{UNIT}};']]);
+        $this->add_responsive_control('nav_mobile_gap', ['label'=>'Промежуток между пунктами, px','type'=>\Elementor\Controls_Manager::SLIDER,'range'=>['px'=>['min'=>0,'max'=>40]],'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav'=>'gap:{{SIZE}}{{UNIT}};']]);
+        $this->add_responsive_control('nav_mobile_padding', ['label'=>'Внутренние отступы панели','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','em'],'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav'=>'padding:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+        $this->add_responsive_control('nav_mobile_radius', ['label'=>'Скругление верхних углов','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','%'],'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav'=>'border-radius:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} 0 0;']]);
         $this->add_control('nav_mobile_background', ['label'=>'Фон нижнего меню','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav'=>'background-color:{{VALUE}};']]);
+        $this->add_control('nav_mobile_border_color', ['label'=>'Верхняя граница','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav'=>'border-top:1px solid {{VALUE}};']]);
         $this->add_control('nav_mobile_text_color', ['label'=>'Цвет текста и иконок','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav a'=>'color:{{VALUE}};']]);
         $this->add_control('nav_mobile_active_color', ['label'=>'Цвет активного пункта','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav a.is-active'=>'color:{{VALUE}}!important;']]);
+        $this->add_control('nav_mobile_active_background', ['label'=>'Фон-«таблетка» активного пункта','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav a.is-active'=>'background-color:{{VALUE}};border-radius:12px;']]);
         $this->add_group_control(\Elementor\Group_Control_Box_Shadow::get_type(), ['name'=>'nav_mobile_shadow','selector'=>'{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav']);
         $this->end_controls_section();
     }
@@ -537,7 +550,12 @@ class ZAU_Union_Cabinet_Section_Widget extends ZAU_Union_Elementor_Widget_Base {
             if(empty($row['tab_key']))continue;
             $clean[]=['tab_key'=>$row['tab_key'],'icon_choice'=>$row['icon_choice']??'','icon_custom'=>$row['icon_custom']??'','label_short'=>$row['label_short']??'','label_full'=>$row['label_full']??''];
         }
-        return $clean?wp_json_encode($clean,JSON_UNESCAPED_UNICODE):'';
+        if (!$clean) { return ''; }
+        // base64-wrapped: a raw JSON array contains literal [ and ] characters,
+        // which are also WordPress's shortcode tag delimiters — embedding that
+        // directly as a shortcode attribute value corrupts parsing of the
+        // whole tag (the browser then shows the unparsed shortcode as text).
+        return base64_encode(wp_json_encode($clean, JSON_UNESCAPED_UNICODE));
     }
     protected function render() {
         $s = $this->get_settings_for_display();
