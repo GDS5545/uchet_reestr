@@ -1,0 +1,5 @@
+/* Small supplementary rules that don't belong in the design-token layer. */
+.zaas-otp-step { margin-top: 8px; }
+.zaas-badge { display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--zaas-e-border); font-size: 12px; font-weight: 600; }
+[data-zaas-panel] { animation: zaas-fade .15s ease; }
+@keyframes zaas-fade { from { opacity: 0; } to { opacity: 1; } }

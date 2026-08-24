@@ -1,0 +1,95 @@
+/*
+ * Design-token layer. :root carries the site-wide defaults (kept in sync
+ * with ZAAS_Plugin::settings() defaults); assets/js/theme.js overrides
+ * these at runtime from the admin-configured colors, and any Elementor
+ * widget instance can further override the --zaas-e-* aliases scoped to
+ * just that widget (see includes/elementor-widgets.php).
+ */
+:root {
+    --zaas-accent: #1565C0;
+    --zaas-accent-dark: #0D47A1;
+    --zaas-surface: #FFFFFF;
+    --zaas-text: #152033;
+    --zaas-muted: #64748B;
+    --zaas-border: #E2E8F0;
+    --zaas-radius: 14px;
+    --zaas-shadow: 0 10px 30px rgba(21, 32, 51, 0.08);
+
+    --zaas-e-accent: var(--zaas-accent);
+    --zaas-e-accent-dark: var(--zaas-accent-dark);
+    --zaas-e-surface: var(--zaas-surface);
+    --zaas-e-text: var(--zaas-text);
+    --zaas-e-muted: var(--zaas-muted);
+    --zaas-e-border: var(--zaas-border);
+    --zaas-e-radius: var(--zaas-radius);
+}
+
+.zaas-interface {
+    --zaas-e-accent: var(--zaas-accent);
+    --zaas-e-accent-dark: var(--zaas-accent-dark);
+    --zaas-e-surface: var(--zaas-surface);
+    --zaas-e-text: var(--zaas-text);
+    --zaas-e-muted: var(--zaas-muted);
+    --zaas-e-border: var(--zaas-border);
+    --zaas-e-radius: var(--zaas-radius);
+
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    color: var(--zaas-e-text);
+    box-sizing: border-box;
+}
+
+.zaas-interface *, .zaas-interface *::before, .zaas-interface *::after { box-sizing: inherit; }
+
+.zaas-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 12px 22px; border-radius: var(--zaas-e-radius); border: 1px solid transparent;
+    font-weight: 600; font-size: 15px; text-decoration: none; cursor: pointer;
+    transition: background-color .15s ease, color .15s ease, border-color .15s ease;
+}
+.zaas-btn-primary { background: var(--zaas-e-accent); color: #fff; }
+.zaas-btn-primary:hover, .zaas-btn-primary:focus { background: var(--zaas-e-accent-dark); color: #fff; }
+.zaas-btn-secondary { background: var(--zaas-e-surface); color: var(--zaas-e-accent); border-color: var(--zaas-e-accent); }
+.zaas-btn-ghost { background: transparent; color: var(--zaas-e-muted); border-color: var(--zaas-e-border); }
+.zaas-btn-link { background: none; border: none; color: var(--zaas-e-accent); padding: 4px 0; font-weight: 500; text-decoration: underline; }
+
+.zaas-card, .zaas-library, .zaas-auth, .zaas-player, .zaas-kaspi-box {
+    background: var(--zaas-e-surface); border: 1px solid var(--zaas-e-border);
+    border-radius: var(--zaas-e-radius); padding: 24px; box-shadow: var(--zaas-shadow);
+}
+
+.zaas-muted { color: var(--zaas-e-muted); font-size: 14px; }
+
+.zaas-form { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+.zaas-form label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 500; }
+.zaas-form input[type="text"], .zaas-form input[type="email"], .zaas-form input[type="password"], .zaas-form input[type="tel"] {
+    padding: 12px 14px; border: 1px solid var(--zaas-e-border); border-radius: calc(var(--zaas-e-radius) - 6px); font-size: 15px;
+}
+.zaas-form-message { min-height: 18px; font-size: 14px; }
+.zaas-form-message.is-error { color: #C62828; }
+.zaas-form-message.is-success { color: #2E7D32; }
+
+.zaas-auth-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.zaas-tab { padding: 10px 16px; border-radius: 999px; border: 1px solid var(--zaas-e-border); background: transparent; cursor: pointer; font-weight: 600; }
+.zaas-tab.is-active { background: var(--zaas-e-accent); color: #fff; border-color: var(--zaas-e-accent); }
+.zaas-tab-panel { display: none; }
+.zaas-tab-panel.is-active { display: block; }
+
+.zaas-library-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; gap: 12px; flex-wrap: wrap; }
+.zaas-library-head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.zaas-library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 18px; }
+.zaas-book-card { display: block; text-decoration: none; color: inherit; border: 1px solid var(--zaas-e-border); border-radius: var(--zaas-e-radius); overflow: hidden; background: var(--zaas-e-surface); transition: transform .15s ease, box-shadow .15s ease; }
+.zaas-book-card:hover { transform: translateY(-2px); box-shadow: var(--zaas-shadow); }
+.zaas-book-card img { width: 100%; height: auto; display: block; }
+.zaas-book-title { padding: 12px 14px 4px; font-weight: 600; }
+.zaas-book-expiry { padding: 0 14px 14px; font-size: 13px; color: var(--zaas-e-muted); }
+
+.zaas-player-title { font-weight: 600; margin-bottom: 10px; }
+.zaas-audio-el { width: 100%; }
+
+.zaas-kaspi-qr { max-width: 260px; display: block; margin: 12px 0; border-radius: 10px; }
+.zaas-notice-success { color: #2E7D32; font-weight: 600; }
+
+@media (max-width: 640px) {
+    .zaas-library-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+    .zaas-card, .zaas-library, .zaas-auth, .zaas-player, .zaas-kaspi-box { padding: 16px; }
+}
