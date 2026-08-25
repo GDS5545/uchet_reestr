@@ -235,7 +235,53 @@ final class ZAAS_AmoCRM {
             add_action('woocommerce_checkout_order_processed', [$this, 'maybe_create_lead']);
             add_action('woocommerce_order_status_pending', [$this, 'maybe_create_lead']);
             add_action('woocommerce_order_status_on-hold', [$this, 'maybe_create_lead']);
+            add_action('zaas_order_metabox_extra', [$this, 'render_order_metabox_actions']);
+            add_action('admin_post_zaas_amo_send_order', [$this, 'handle_manual_send']);
+            add_action('admin_post_zaas_amo_mark_approved', [$this, 'handle_manual_approve']);
         }
+    }
+
+    /**
+     * Lead status + manual "send"/"mark approved" buttons in the order
+     * edit screen — parity with WAOA's order metabox and admin_post
+     * send_order/confirm_order actions.
+     */
+    public function render_order_metabox_actions($order) {
+        $lead_id = (int) $order->get_meta('_zaas_amo_lead_id');
+        echo '<p style="margin-top:10px;"><strong>amoCRM:</strong> ';
+        if ($lead_id) {
+            $s = $this->p()->settings();
+            $lead_url = !empty($s['amo_account_domain']) ? 'https://' . preg_replace('#^https?://#', '', $s['amo_account_domain']) . '/leads/detail/' . $lead_id : '';
+            echo $lead_url ? '<a href="' . esc_url($lead_url) . '" target="_blank" rel="noopener">сделка #' . $lead_id . '</a>' : 'сделка #' . $lead_id;
+        } else {
+            echo 'сделка не создана';
+        }
+        echo '</p><p>';
+        if (!$lead_id) {
+            echo '<a class="button" href="' . esc_url(wp_nonce_url(admin_url('admin-post.php?action=zaas_amo_send_order&order_id=' . $order->get_id()), ZAAS_Plugin::NONCE)) . '">Отправить в amoCRM</a> ';
+        }
+        if (!$order->has_status(['completed', 'cancelled', 'refunded'])) {
+            echo '<a class="button button-primary" href="' . esc_url(wp_nonce_url(admin_url('admin-post.php?action=zaas_amo_mark_approved&order_id=' . $order->get_id()), ZAAS_Plugin::NONCE)) . '">Подтвердить доступ вручную</a>';
+        }
+        echo '</p>';
+    }
+
+    public function handle_manual_send() {
+        if (!current_user_can(ZAAS_Plugin::CAP_MANAGE)) { wp_die('Недостаточно прав.'); }
+        check_admin_referer(ZAAS_Plugin::NONCE);
+        $this->create_lead_for_order_now(absint($_GET['order_id'] ?? 0), true);
+        wp_safe_redirect(wp_get_referer() ?: admin_url('edit.php?post_type=shop_order'));
+        exit;
+    }
+
+    public function handle_manual_approve() {
+        if (!current_user_can(ZAAS_Plugin::CAP_MANAGE)) { wp_die('Недостаточно прав.'); }
+        check_admin_referer(ZAAS_Plugin::NONCE);
+        if (class_exists('ZAAS_Kaspi')) {
+            ZAAS_Kaspi::instance()->approve_order(absint($_GET['order_id'] ?? 0), 'Подтверждено вручную (amoCRM)');
+        }
+        wp_safe_redirect(wp_get_referer() ?: admin_url('edit.php?post_type=shop_order'));
+        exit;
     }
 
     private function p() { return ZAAS_Plugin::instance(); }
@@ -266,15 +312,28 @@ final class ZAAS_AmoCRM {
 
     public function maybe_create_lead($order_id) {
         $s = $this->p()->settings();
-        if (empty($s['amo_auto_create_lead']) || empty($s['amo_access_token'])) { return; }
+        if (empty($s['amo_auto_create_lead'])) { return; }
+        $this->create_lead_for_order_now($order_id, false);
+    }
+
+    /**
+     * $force=true bypasses the amo_auto_create_lead toggle — used by the
+     * manual "Отправить в amoCRM" button so a shop manager can push one
+     * order even when automatic lead creation is switched off site-wide.
+     */
+    public function create_lead_for_order_now($order_id, $force = true) {
+        $s = $this->p()->settings();
+        if (empty($s['amo_access_token'])) { return; }
         $order = wc_get_order($order_id);
         if (!$order || $order->get_meta('_zaas_amo_lead_id')) { return; }
 
-        $has_protected_item = false;
-        foreach ($order->get_items() as $item) {
-            if (get_post_meta($item->get_product_id(), '_zaas_enabled', true)) { $has_protected_item = true; break; }
+        if (!$force) {
+            $has_protected_item = false;
+            foreach ($order->get_items() as $item) {
+                if (get_post_meta($item->get_product_id(), '_zaas_enabled', true)) { $has_protected_item = true; break; }
+            }
+            if (!$has_protected_item) { return; }
         }
-        if (!$has_protected_item) { return; }
 
         $lead_id = $this->client()->create_lead_for_order($order);
         if (is_wp_error($lead_id) || !$lead_id) { return; }

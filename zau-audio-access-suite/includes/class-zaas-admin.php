@@ -26,6 +26,7 @@ final class ZAAS_Admin {
         add_action('admin_post_zaas_revoke_grant', [$this, 'revoke_grant']);
         add_action('admin_post_zaas_revoke_device', [$this, 'revoke_device']);
         add_action('admin_post_zaas_revoke_passkey', [$this, 'revoke_passkey']);
+        add_action('admin_post_zaas_manual_grant', [$this, 'handle_manual_grant']);
     }
 
     private function p() { return ZAAS_Plugin::instance(); }
@@ -46,6 +47,7 @@ final class ZAAS_Admin {
         add_submenu_page('zaas-grants', 'Стили и виджеты', 'Стили', ZAAS_Plugin::CAP_MANAGE, 'zaas-styles', [$this, 'page_styles']);
         add_submenu_page('zaas-grants', 'Перенос старых данных', 'Импорт', ZAAS_Plugin::CAP_MANAGE, 'zaas-import', [$this, 'page_import']);
         add_submenu_page('zaas-grants', 'Журнал', 'Журнал', ZAAS_Plugin::CAP_MANAGE, 'zaas-log', [$this, 'page_log']);
+        add_submenu_page('zaas-grants', 'Проверка', 'Проверка', ZAAS_Plugin::CAP_MANAGE, 'zaas-health', [$this, 'page_health']);
     }
 
     public function admin_assets($hook) {
@@ -130,6 +132,7 @@ final class ZAAS_Admin {
                     'design_surface'     => sanitize_hex_color($_POST['design_surface'] ?? '') ?: '#FFFFFF',
                     'design_text'        => sanitize_hex_color($_POST['design_text'] ?? '') ?: '#152033',
                     'design_radius'      => max(0, min(40, absint($_POST['design_radius'] ?? 14))),
+                    'pwa_enabled'        => isset($_POST['pwa_enabled']) ? 1 : 0,
                 ];
                 break;
 
@@ -153,12 +156,26 @@ final class ZAAS_Admin {
         ?>
         <div class="wrap zaas-wrap">
             <h1>Гранты доступа</h1>
+
+            <details class="zaas-card">
+                <summary><strong>Выдать доступ вручную (без заказа)</strong></summary>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <input type="hidden" name="action" value="zaas_manual_grant">
+                    <?php wp_nonce_field(ZAAS_Plugin::NONCE); ?>
+                    <label>Email клиента<input type="email" name="customer_email" required></label>
+                    <label>ID товара WooCommerce<input type="number" name="product_id" min="1" required></label>
+                    <label><input type="checkbox" name="activate_immediately" checked> Сразу активировать (без перехода по ссылке)</label>
+                    <label><input type="checkbox" name="send_email" checked> Отправить письмо со ссылкой клиенту</label>
+                    <button type="submit" class="button button-primary">Выдать доступ</button>
+                </form>
+            </details>
+
             <table class="widefat striped">
                 <thead><tr><th>Email</th><th>Продукт</th><th>Статус</th><th>Активирован</th><th>До</th><th>Источник</th><th></th></tr></thead>
                 <tbody>
                 <?php if (!$rows): ?><tr><td colspan="7">Пока нет ни одного гранта.</td></tr><?php endif; ?>
                 <?php foreach ($rows as $row):
-                    $product = wc_get_product($row->product_id); ?>
+                    $product = function_exists('wc_get_product') ? wc_get_product($row->product_id) : null; ?>
                     <tr>
                         <td><?php echo esc_html($row->customer_email); ?></td>
                         <td><?php echo esc_html($product ? $product->get_name() : '#' . $row->product_id); ?></td>
@@ -193,6 +210,52 @@ final class ZAAS_Admin {
             ZAAS_WooCommerce::instance()->send_access_email($grant->order_id, [$id => $token]);
         }
         $this->redirect_back('zaas-grants', 'Ссылка пересоздана и отправлена на ' . $grant->customer_email . '.');
+    }
+
+    /**
+     * Grants a product to one email without a WooCommerce order — parity
+     * with wcsaa-legacy-access-migrator's manual grant form, for support
+     * cases (refund goodwill, gifted access, migrating a single VIP
+     * customer by hand).
+     */
+    public function handle_manual_grant() {
+        $this->require_cap();
+        check_admin_referer(ZAAS_Plugin::NONCE);
+
+        $email = sanitize_email(wp_unslash($_POST['customer_email'] ?? ''));
+        $product_id = absint($_POST['product_id'] ?? 0);
+        if (!is_email($email) || !$product_id) {
+            $this->redirect_back('zaas-grants', '', 'Укажите корректный email и ID товара.');
+        }
+
+        $result = ZAAS_Access::instance()->create_grant([
+            'order_id' => 0,
+            'order_item_id' => random_int(900000000, 999999999),
+            'product_id' => $product_id,
+            'customer_email' => $email,
+            'source' => 'manual',
+        ]);
+        if (is_wp_error($result)) { $this->redirect_back('zaas-grants', '', $result->get_error_message()); }
+
+        $token = $result['token'];
+        if (!empty($_POST['activate_immediately']) && $token) {
+            ZAAS_Access::instance()->activate_token($token);
+        }
+        if (!empty($_POST['send_email']) && $token) {
+            $this->send_manual_grant_email($email, $product_id, $token);
+        }
+
+        $this->p()->log('manual_grant', 'grant', $result['grant']->id, $email);
+        $this->redirect_back('zaas-grants', 'Доступ выдан: ' . $email . '.');
+    }
+
+    private function send_manual_grant_email($email, $product_id, $token) {
+        $product = function_exists('wc_get_product') ? wc_get_product($product_id) : null;
+        $url = ZAAS_Access::instance()->activation_url($token);
+        $body = '<div style="font-family:Arial,sans-serif;font-size:15px;color:#152033;">'
+            . '<p>Здравствуйте!</p><p>Вам открыт доступ к книге «' . esc_html($product ? $product->get_name() : 'аудиокнига') . '».</p>'
+            . '<p><a href="' . esc_url($url) . '" style="display:inline-block;padding:14px 28px;background:#1565C0;color:#fff;border-radius:10px;text-decoration:none;font-weight:600;">Перейти к книге</a></p></div>';
+        wp_mail($email, 'Вам открыт доступ к аудиокниге', $body, ['Content-Type: text/html; charset=UTF-8']);
     }
 
     public function revoke_grant() {
@@ -279,14 +342,18 @@ final class ZAAS_Admin {
         ?>
         <div class="wrap zaas-wrap">
             <h1>Аудиофайлы</h1>
-            <form class="zaas-card" method="post" enctype="multipart/form-data" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+            <form class="zaas-card" id="zaas-upload-form" method="post" enctype="multipart/form-data" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="zaas_upload_audio">
                 <?php wp_nonce_field(ZAAS_Plugin::NONCE); ?>
                 <label>Название<input type="text" name="title" required></label>
                 <label>Товар WooCommerce (ID)<input type="number" name="product_id" min="0"></label>
                 <label>Часть/глава<input type="text" name="part_title"></label>
+                <label>Автор/чтец<input type="text" name="author"></label>
+                <label>URL обложки<input type="url" name="cover_url" placeholder="https://..."></label>
                 <label>Файл (mp3/m4a/wav/ogg)<input type="file" name="audio_file" accept=".mp3,.m4a,.wav,.ogg" required></label>
                 <button type="submit" class="button button-primary">Загрузить и зашифровать</button>
+                <div id="zaas-upload-progress" hidden><progress value="0" max="100"></progress> <span></span></div>
+                <p class="description">Большие файлы загружаются частями по 5 МБ прямо в браузере — не нужно менять upload_max_filesize на сервере.</p>
             </form>
 
             <table class="widefat striped">
@@ -454,6 +521,7 @@ final class ZAAS_Admin {
                 <label>Фон карточек<input type="color" name="design_surface" value="<?php echo esc_attr($s['design_surface']); ?>"></label>
                 <label>Цвет текста<input type="color" name="design_text" value="<?php echo esc_attr($s['design_text']); ?>"></label>
                 <label>Радиус скругления, px<input type="number" name="design_radius" min="0" max="40" value="<?php echo (int) $s['design_radius']; ?>"></label>
+                <label><input type="checkbox" name="pwa_enabled" <?php checked($s['pwa_enabled']); ?>> Включить PWA (кнопка «Установить» на странице библиотеки, офлайн-оболочка)</label>
                 <button type="submit" class="button button-primary">Сохранить стили</button>
             </form>
 
@@ -479,6 +547,9 @@ final class ZAAS_Admin {
                 <li><code>[zaas_audio id="123"]</code> — плеер для конкретного файла</li>
                 <li><code>[zaas_protected product_id="45"]...[/zaas_protected]</code> — блок, видимый только владельцам продукта</li>
                 <li><code>[zaas_buy_button product_id="45"]</code> — кнопка покупки</li>
+                <li><code>[zaas_audio_cover id="123"]</code>, <code>[zaas_audio_title id="123"]</code>, <code>[zaas_audio_author id="123"]</code>, <code>[zaas_audio_part id="123"]</code>, <code>[zaas_audio_badge id="123"]</code> — отдельные поля метаданных для собственной вёрстки карточки</li>
+                <li><code>[zaas_audio_bundle product_id="45"]</code> — список всех частей книги с плеером</li>
+                <li><code>[kaspi_protected_content]</code>, <code>[kaspi_buy_button]</code>, <code>[kaspi_receipt_upload]</code> — алиасы для страниц, оформленных под старый Woo Kaspi QR amoCRM Access</li>
             </ul>
         </div>
         <?php
@@ -496,6 +567,70 @@ final class ZAAS_Admin {
             <p>Найдёт данные старых плагинов (WC Secure Audio Access, ZAU temp-access, Woo Kaspi QR amoCRM Access) и скопирует их в единую таблицу грантов этого плагина. Уже перенесённые записи не дублируются при повторном запуске.</p>
             <button type="button" class="button button-primary" id="zaas-import-scan">Проверить источники</button>
             <div id="zaas-import-sources"></div>
+        </div>
+        <?php
+    }
+
+    /* ------------------------------------------------------------------ *
+     *  Diagnostics ("Проверка Suite" parity from zau-audiobook-suite)
+     * ------------------------------------------------------------------ */
+
+    private function health_checks() {
+        global $wpdb;
+        $p = $this->p();
+        $checks = [];
+
+        $dir = ZAAS_Install::ensure_protected_directory();
+        $checks[] = ['label' => 'Защищённая папка аудио создана', 'ok' => is_dir($dir), 'detail' => $dir];
+        $checks[] = ['label' => 'Папка недоступна из веба (.htaccess)', 'ok' => file_exists($dir . '/.htaccess'), 'detail' => 'На Nginx добавьте location-блок вручную — см. readme.txt'];
+        $checks[] = ['label' => 'Папка доступна для записи', 'ok' => wp_is_writable($dir), 'detail' => $dir];
+
+        foreach ([$p->grants_table, $p->devices_table, $p->passkeys_table, $p->otp_table, $p->stream_locks_table, $p->log_table, $p->pins_table] as $table) {
+            $exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) === $table;
+            $checks[] = ['label' => 'Таблица ' . $table, 'ok' => $exists, 'detail' => $exists ? 'найдена' : 'отсутствует — переактивируйте плагин'];
+        }
+
+        $checks[] = ['label' => 'WooCommerce активен', 'ok' => class_exists('WooCommerce'), 'detail' => class_exists('WooCommerce') ? WC_VERSION : 'не найден'];
+        $checks[] = ['label' => 'Elementor активен (необязательно)', 'ok' => class_exists('Elementor\\Plugin'), 'detail' => class_exists('Elementor\\Plugin') ? 'найден' : 'не установлен — виджеты недоступны, шорткоды работают'];
+        $checks[] = ['label' => 'HTTPS (нужен для Passkey)', 'ok' => is_ssl(), 'detail' => home_url()];
+        $checks[] = ['label' => 'PHP OpenSSL (нужен для Passkey)', 'ok' => function_exists('openssl_verify'), 'detail' => phpversion()];
+
+        $rules = get_option('rewrite_rules');
+        $has_rules = is_array($rules) && (
+            array_key_exists('^audio-dostup/([A-Za-z0-9_-]+)/?$', $rules) || array_key_exists('^zaas-stream/([0-9]+)/?$', $rules)
+        );
+        $checks[] = ['label' => 'Правила ЧПУ добавлены', 'ok' => $has_rules, 'detail' => $has_rules ? 'ok' : 'откройте Настройки → Постоянные ссылки и нажмите «Сохранить»'];
+
+        $checks[] = ['label' => 'Ежедневная очистка запланирована', 'ok' => (bool) wp_next_scheduled('zaas_daily_cleanup'), 'detail' => wp_next_scheduled('zaas_daily_cleanup') ? wp_date('d.m.Y H:i', wp_next_scheduled('zaas_daily_cleanup')) : 'не запланирована'];
+
+        if (class_exists('WooCommerce')) {
+            $s = $p->settings();
+            $kaspi_settings = get_option('woocommerce_zaas_kaspi_settings', []);
+            $checks[] = ['label' => 'Шлюз Kaspi включён', 'ok' => ($kaspi_settings['enabled'] ?? 'no') === 'yes', 'detail' => empty($kaspi_settings) ? 'не настроен' : 'ok'];
+            $checks[] = ['label' => 'amoCRM подключён', 'ok' => !empty($s['amo_access_token']), 'detail' => !empty($s['amo_token_expires_at']) ? ('токен до ' . wp_date('d.m.Y H:i', (int) $s['amo_token_expires_at'])) : 'нет токена'];
+        }
+
+        return $checks;
+    }
+
+    public function page_health() {
+        $this->require_cap();
+        $checks = $this->health_checks();
+        ?>
+        <div class="wrap zaas-wrap">
+            <h1>Проверка</h1>
+            <table class="widefat striped">
+                <thead><tr><th></th><th>Проверка</th><th>Детали</th></tr></thead>
+                <tbody>
+                <?php foreach ($checks as $check): ?>
+                    <tr>
+                        <td><?php echo $check['ok'] ? '✅' : '⚠️'; ?></td>
+                        <td><?php echo esc_html($check['label']); ?></td>
+                        <td class="zaas-muted"><?php echo esc_html($check['detail']); ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
         </div>
         <?php
     }

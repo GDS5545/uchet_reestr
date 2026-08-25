@@ -47,6 +47,7 @@ final class ZAAS_Access {
         }
 
         add_action('wp_enqueue_scripts', [$this, 'public_assets']);
+        add_action('zaas_daily_cleanup', [$this, 'cleanup_expired']);
     }
 
     private function p() { return ZAAS_Plugin::instance(); }
@@ -469,7 +470,7 @@ final class ZAAS_Access {
         } else {
             echo '<div class="zaas-library-grid">';
             foreach ($grants as $grant) {
-                $product = wc_get_product($grant->product_id);
+                $product = function_exists('wc_get_product') ? wc_get_product($grant->product_id) : null;
                 if (!$product) { continue; }
                 $pages = get_post_meta($grant->product_id, '_zaas_content_pages', true);
                 $target = is_array($pages) && $pages ? get_permalink((int) $pages[0]) : '#';
@@ -497,6 +498,7 @@ final class ZAAS_Access {
     }
 
     public function buy_button_shortcode($atts = []) {
+        if (!function_exists('wc_get_product')) { return ''; }
         $atts = shortcode_atts(['product_id' => 0, 'text' => 'Купить доступ'], $atts);
         $product_id = absint($atts['product_id']);
         $product = $product_id ? wc_get_product($product_id) : null;
@@ -616,5 +618,36 @@ final class ZAAS_Access {
             'nonce'   => wp_create_nonce(ZAAS_Plugin::NONCE),
             'pinEnabled' => !empty($settings['pin_enabled']),
         ]);
+    }
+
+    /**
+     * Daily housekeeping (mirrors WCSAA's wcsaa_daily_cleanup cron):
+     * expires pending grants whose activation window ran out, marks
+     * expired 'active' grants, and prunes long-revoked devices/passkeys
+     * so the admin lists don't grow forever. Hooked to the same
+     * 'zaas_daily_cleanup' event ZAAS_OTP schedules, so there is only
+     * one wp_schedule_event() call for the whole plugin.
+     */
+    public function cleanup_expired() {
+        global $wpdb;
+        $p = $this->p();
+
+        $wpdb->query(
+            "UPDATE {$p->grants_table} SET status='expired', updated_at=UTC_TIMESTAMP()
+             WHERE status='pending' AND activation_expires_at IS NOT NULL AND activation_expires_at < UTC_TIMESTAMP()"
+        );
+        $wpdb->query(
+            "UPDATE {$p->grants_table} SET status='expired', updated_at=UTC_TIMESTAMP()
+             WHERE status='active' AND access_expires_at IS NOT NULL AND access_expires_at < UTC_TIMESTAMP()"
+        );
+        $wpdb->query(
+            "DELETE FROM {$p->devices_table} WHERE revoked=1 AND revoked_at IS NOT NULL AND revoked_at < (UTC_TIMESTAMP() - INTERVAL 90 DAY)"
+        );
+        $wpdb->query(
+            "DELETE FROM {$p->passkeys_table} WHERE revoked=1"
+        );
+        $wpdb->query(
+            "DELETE FROM {$p->stream_locks_table} WHERE updated_at < (UTC_TIMESTAMP() - INTERVAL 1 DAY)"
+        );
     }
 }

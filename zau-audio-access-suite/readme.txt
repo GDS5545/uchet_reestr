@@ -64,6 +64,39 @@ ZAU Аудиодоступ — объединённый доступ к ауди
 Импорт идемпотентен: повторный запуск не создаёт дублей (уникальный ключ
 по order_id+order_item_id+product_id+email).
 
+Прочие функции исходных плагинов, перенесённые в этот релиз
+--------------------------------------------------------------
+  - Ручная выдача доступа одному email без заказа (ZAU Аудиодоступ →
+    Гранты → «Выдать доступ вручную») — аналог формы
+    wcsaa-legacy-access-migrator.
+  - Статус сделки amoCRM и кнопки «Отправить в amoCRM» / «Подтвердить
+    доступ вручную», статус Kaspi и кнопки «Подтвердить оплату» /
+    «Отклонить» — прямо в карточке заказа WooCommerce (парity с WAOA и
+    WKQAA).
+  - Гранулярные шорткоды метаданных книги: [zaas_audio_cover],
+    [zaas_audio_title], [zaas_audio_author], [zaas_audio_part],
+    [zaas_audio_badge], [zaas_audio_bundle product_id="45"] — для страниц
+    с собственной вёрсткой карточки книги (аналог
+    zau_audio_cover/title/author/part/badge/bundle).
+  - Алиасы шорткодов Kaspi для сайтов, где на страницах уже есть
+    [kaspi_protected_content], [kaspi_buy_button], [kaspi_receipt_upload]
+    из старого Woo Kaspi QR amoCRM Access — работают без правок разметки.
+  - Вкладка «Мои книги» в WooCommerce → Моя учётная запись (аналог My
+    Books из WKQAA).
+  - «Проверка» (ZAU Аудиодоступ → Проверка) — диагностика защищённой
+    папки, таблиц БД, HTTPS/OpenSSL для Passkey, статуса amoCRM/Kaspi,
+    правил ЧПУ и крона — аналог «Проверка Suite» из zau-audiobook-suite.
+  - Докачиваемая загрузка больших файлов частями по 5 МБ прямо в
+    браузере, с шифрованием каждой части на лету (ZAU Аудиодоступ →
+    Файлы) — аналог class-zau-suite-replace.php, без необходимости менять
+    upload_max_filesize на сервере.
+  - Опциональный PWA-режим (по умолчанию выключен, включается в
+    ZAU Аудиодоступ → Стили): манифест, service worker и кнопка
+    «Установить» на странице библиотеки — аналог Suite PWA, но никогда
+    не кэширует /zaas-stream/, /wp-admin/, /wp-json/ и admin-ajax.php.
+  - Ежедневная очистка просроченных грантов и старых отозванных устройств
+    по крону — аналог wcsaa_daily_cleanup.
+
 Не перенесено (сделайте это до отключения старых плагинов)
 ------------------------------------------------------------
   - Устройства/Passkey старых плагинов — клиенты просто заново привязывают
@@ -112,3 +145,10 @@ Nginx
   [zaas_audio id="123"]                   — плеер конкретного файла
   [zaas_protected product_id="45"]...[/zaas_protected] — блок только для владельцев
   [zaas_buy_button product_id="45"]       — кнопка покупки
+  [zaas_audio_cover id="123"]             — обложка файла
+  [zaas_audio_title id="123"]             — название файла
+  [zaas_audio_author id="123"]            — автор/чтец
+  [zaas_audio_part id="123"]              — часть/глава
+  [zaas_audio_badge id="123"]             — бейдж «Доступно» / «Нет доступа»
+  [zaas_audio_bundle product_id="45"]     — все части книги списком с плеером
+  [kaspi_protected_content] / [kaspi_buy_button] / [kaspi_receipt_upload] — алиасы для миграции с Woo Kaspi QR amoCRM Access

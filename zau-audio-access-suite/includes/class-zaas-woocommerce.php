@@ -26,6 +26,44 @@ final class ZAAS_WooCommerce {
 
         add_action('woocommerce_order_details_after_order_table', [$this, 'render_order_access_box']);
         add_action('add_meta_boxes', [$this, 'register_admin_metabox']);
+
+        add_action('init', [$this, 'register_my_account_endpoint']);
+        add_filter('woocommerce_account_menu_items', [$this, 'add_my_account_menu_item']);
+        add_action('woocommerce_account_' . self::ACCOUNT_ENDPOINT . '_endpoint', [$this, 'render_my_account_endpoint']);
+        add_filter('the_title', [$this, 'filter_endpoint_page_title']);
+    }
+
+    const ACCOUNT_ENDPOINT = 'moi-knigi';
+
+    /**
+     * "Мои книги" tab in WooCommerce → Моя учётная запись — parity with
+     * WKQAA's My Books account page, simply rendering the same
+     * [zaas_library] shortcode content that also lives at the standalone
+     * library page.
+     */
+    public function register_my_account_endpoint() {
+        add_rewrite_endpoint(self::ACCOUNT_ENDPOINT, EP_ROOT | EP_PAGES);
+    }
+
+    public function add_my_account_menu_item($items) {
+        $new = [];
+        foreach ($items as $key => $label) {
+            $new[$key] = $label;
+            if ($key === 'orders') { $new[self::ACCOUNT_ENDPOINT] = 'Мои книги'; }
+        }
+        if (!isset($new[self::ACCOUNT_ENDPOINT])) { $new[self::ACCOUNT_ENDPOINT] = 'Мои книги'; }
+        return $new;
+    }
+
+    public function render_my_account_endpoint() {
+        echo do_shortcode('[zaas_library]');
+    }
+
+    public function filter_endpoint_page_title($title) {
+        if (is_account_page() && is_wc_endpoint_url(self::ACCOUNT_ENDPOINT) && in_the_loop()) {
+            return 'Мои книги';
+        }
+        return $title;
     }
 
     private function p() { return ZAAS_Plugin::instance(); }
@@ -194,5 +232,12 @@ final class ZAAS_WooCommerce {
         $order = $post_or_order instanceof WP_Post ? wc_get_order($post_or_order->ID) : $post_or_order;
         if (!$order) { return; }
         $this->render_order_access_box($order);
+        /**
+         * Admin-only extension point (never fired on the customer-facing
+         * order-received page): ZAAS_Kaspi and ZAAS_AmoCRM hook here to
+         * show their own status + manual approve/reject/sync buttons
+         * without this class needing to know about either module.
+         */
+        do_action('zaas_order_metabox_extra', $order);
     }
 }

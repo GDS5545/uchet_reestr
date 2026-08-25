@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Аудиодоступ — объединённый доступ к аудиокнигам
  * Description: Единый доступ к платным аудиокнигам WooCommerce: постоянная ссылка + устройство, вход по PIN и Passkey, шифрованное хранение и потоковая отдача файлов, оплата Kaspi, интеграция amoCRM, перенос старых доступов, виджеты и стили Elementor.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -18,8 +18,8 @@ define('ZAAS_PLUGIN_URL', plugin_dir_url(__FILE__));
 
 final class ZAAS_Plugin {
 
-    const VERSION = '1.0.0';
-    const DB_VERSION = '1.0.0';
+    const VERSION = '1.1.0';
+    const DB_VERSION = '1.1.0';
     const OPT_DB_VERSION = 'zaas_db_version';
     const OPT_SETTINGS = 'zaas_settings';
     const CAP_MANAGE = 'zaas_manage_access';
@@ -77,12 +77,11 @@ final class ZAAS_Plugin {
         require_once ZAAS_PLUGIN_DIR . 'includes/class-zaas-pin.php';
         require_once ZAAS_PLUGIN_DIR . 'includes/class-zaas-webauthn.php';
         require_once ZAAS_PLUGIN_DIR . 'includes/class-zaas-stream.php';
-        require_once ZAAS_PLUGIN_DIR . 'includes/class-zaas-woocommerce.php';
-        require_once ZAAS_PLUGIN_DIR . 'includes/class-zaas-kaspi.php';
         require_once ZAAS_PLUGIN_DIR . 'includes/class-zaas-amocrm.php';
         require_once ZAAS_PLUGIN_DIR . 'includes/class-zaas-legacy-import.php';
         require_once ZAAS_PLUGIN_DIR . 'includes/class-zaas-admin.php';
         require_once ZAAS_PLUGIN_DIR . 'includes/class-zaas-elementor.php';
+        require_once ZAAS_PLUGIN_DIR . 'includes/class-zaas-pwa.php';
 
         ZAAS_OTP::instance();
         ZAAS_Access::instance();
@@ -90,6 +89,12 @@ final class ZAAS_Plugin {
         ZAAS_WebAuthn::instance();
         ZAAS_Stream::instance();
         if (class_exists('WooCommerce')) {
+            // WC_Gateway_ZAAS_Kaspi (in class-zaas-kaspi.php) extends
+            // WC_Payment_Gateway at file scope, so both the require and
+            // the woocommerce.php glue must stay behind this guard —
+            // loading them when WooCommerce is inactive would fatal.
+            require_once ZAAS_PLUGIN_DIR . 'includes/class-zaas-woocommerce.php';
+            require_once ZAAS_PLUGIN_DIR . 'includes/class-zaas-kaspi.php';
             ZAAS_WooCommerce::instance();
             ZAAS_Kaspi::instance();
         }
@@ -97,6 +102,7 @@ final class ZAAS_Plugin {
         ZAAS_Legacy_Import::instance();
         ZAAS_Admin::instance();
         ZAAS_Elementor::init();
+        ZAAS_PWA::instance();
 
         do_action('zaas_loaded');
     }
@@ -152,6 +158,9 @@ final class ZAAS_Plugin {
             // passkeys
             'passkeys_enabled'        => 1,
             'passkey_prompt_enabled'  => 1,
+
+            // PWA (optional, off by default — see class-zaas-pwa.php)
+            'pwa_enabled'             => 0,
 
             // Kaspi gateway settings live under WooCommerce > Payments > Kaspi
             // (standard WC_Payment_Gateway option storage) — see
