@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Аудиодоступ — объединённый доступ к аудиокнигам
  * Description: Единый доступ к платным аудиокнигам WooCommerce: постоянная ссылка + устройство, вход по PIN и Passkey, шифрованное хранение и потоковая отдача файлов, оплата Kaspi, интеграция amoCRM, перенос старых доступов, виджеты и стили Elementor.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -18,8 +18,8 @@ define('ZAAS_PLUGIN_URL', plugin_dir_url(__FILE__));
 
 final class ZAAS_Plugin {
 
-    const VERSION = '1.1.0';
-    const DB_VERSION = '1.1.0';
+    const VERSION = '1.2.0';
+    const DB_VERSION = '1.2.0';
     const OPT_DB_VERSION = 'zaas_db_version';
     const OPT_SETTINGS = 'zaas_settings';
     const CAP_MANAGE = 'zaas_manage_access';
@@ -154,6 +154,7 @@ final class ZAAS_Plugin {
             'pin_max_attempts'        => 5,
             'pin_lock_minutes'        => 15,
             'pin_device_only'         => 0,
+            'auth_password_enabled'   => 1,
 
             // passkeys
             'passkeys_enabled'        => 1,

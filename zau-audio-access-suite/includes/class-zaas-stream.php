@@ -311,14 +311,26 @@ final class ZAAS_Stream {
         ], home_url('/zaas-stream/' . absint($audio_id) . '/'));
     }
 
+    /**
+     * This is the "audio widget that both plays and locks" the original
+     * plugins had: it's never an open <audio> tag with access checked
+     * elsewhere. An unrecognized visitor sees the login gate itself
+     * (PIN, WordPress login/password, or the emailed link — whichever
+     * the `methods` attribute/global settings allow) right where the
+     * player would be; only a visitor we already know gets told "buy"
+     * instead, and only once we know for a fact they don't own this item.
+     */
     public function audio_shortcode($atts) {
-        $atts = shortcode_atts(['id' => 0], $atts);
+        $atts = shortcode_atts(['id' => 0, 'methods' => '', 'show_recovery' => 'yes'], (array) $atts);
         $audio_id = absint($atts['id']);
         if (!$audio_id || get_post_type($audio_id) !== self::CPT) { return ''; }
 
         $product_id = (int) get_post_meta($audio_id, '_zaas_product_id', true);
         $email = ZAAS_Access::instance()->resolve_customer_email();
-        if (!$email || ($product_id && !ZAAS_Access::instance()->has_active_access($product_id, $email))) {
+        if (!$email) {
+            return ZAAS_Access::instance()->auth_shortcode($atts);
+        }
+        if ($product_id && !ZAAS_Access::instance()->has_active_access($product_id, $email)) {
             return ZAAS_Access::instance()->buy_button_shortcode(['product_id' => $product_id]);
         }
 
@@ -410,7 +422,11 @@ final class ZAAS_Stream {
             echo '</div></div>';
         }
         echo '</div>';
-        if (!$has_access) { echo ZAAS_Access::instance()->buy_button_shortcode(['product_id' => $product_id]); }
+        if (!$has_access) {
+            echo $email
+                ? ZAAS_Access::instance()->buy_button_shortcode(['product_id' => $product_id])
+                : ZAAS_Access::instance()->auth_shortcode([]);
+        }
         return ob_get_clean();
     }
 

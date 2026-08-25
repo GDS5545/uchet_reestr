@@ -21,6 +21,29 @@ abstract class ZAAS_Elementor_Widget_Base extends \Elementor\Widget_Base {
     }
 
     /**
+     * Shared "Способы входа" controls for any widget that can fall back
+     * to the login gate (Auth, Player, Protected): lets this one widget
+     * instance narrow which methods it offers. It can only *intersect*
+     * with what's enabled in ZAU Аудиодоступ → PIN и вход — a widget can
+     * never re-enable a method switched off site-wide.
+     */
+    protected function register_auth_method_controls() {
+        $this->start_controls_section('zaas_auth_methods', ['label' => 'Способы входа']);
+        $this->add_control('enable_recovery', ['label' => 'Ссылка на email', 'type' => \Elementor\Controls_Manager::SWITCHER, 'return_value' => 'yes', 'default' => 'yes']);
+        $this->add_control('enable_pin', ['label' => 'Постоянный PIN', 'type' => \Elementor\Controls_Manager::SWITCHER, 'return_value' => 'yes', 'default' => 'yes']);
+        $this->add_control('enable_password', ['label' => 'Логин и пароль', 'type' => \Elementor\Controls_Manager::SWITCHER, 'return_value' => 'yes', 'default' => 'yes']);
+        $this->end_controls_section();
+    }
+
+    protected function auth_shortcode_attributes($settings) {
+        $methods = [];
+        if (($settings['enable_recovery'] ?? 'yes') === 'yes') { $methods[] = 'recovery'; }
+        if (($settings['enable_pin'] ?? 'yes') === 'yes') { $methods[] = 'pin'; }
+        if (($settings['enable_password'] ?? 'yes') === 'yes') { $methods[] = 'password'; }
+        return ' methods="' . esc_attr($methods ? implode(',', $methods) : 'none') . '"';
+    }
+
+    /**
      * Shared "Стиль" controls: container box model + a small design-token
      * palette. Kept intentionally smaller than a full component library —
      * enough for real theming without hundreds of one-off toggles.
@@ -94,35 +117,41 @@ class ZAAS_Elementor_Library_Widget extends ZAAS_Elementor_Widget_Base {
 
 class ZAAS_Elementor_Auth_Widget extends ZAAS_Elementor_Widget_Base {
     public function get_name() { return 'zaas-auth'; }
-    public function get_title() { return 'ZAU: Вход (ссылка / PIN)'; }
+    public function get_title() { return 'ZAU: Вход (ссылка / PIN / пароль)'; }
     public function get_icon() { return 'eicon-lock-user'; }
 
     protected function register_controls() {
         $this->start_controls_section('zaas_content', ['label' => 'Контент']);
         $this->end_controls_section();
-        $this->register_style_controls();
-    }
-
-    protected function render() {
-        $this->render_shortcode_in_wrapper('[zaas_auth]');
-    }
-}
-
-class ZAAS_Elementor_Player_Widget extends ZAAS_Elementor_Widget_Base {
-    public function get_name() { return 'zaas-player'; }
-    public function get_title() { return 'ZAU: Аудиоплеер'; }
-    public function get_icon() { return 'eicon-play-o'; }
-
-    protected function register_controls() {
-        $this->start_controls_section('zaas_content', ['label' => 'Контент']);
-        $this->add_control('audio_id', ['label' => 'ID аудиофайла', 'type' => \Elementor\Controls_Manager::NUMBER, 'default' => 0]);
-        $this->end_controls_section();
+        $this->register_auth_method_controls();
         $this->register_style_controls();
     }
 
     protected function render() {
         $settings = $this->get_settings_for_display();
-        $this->render_shortcode_in_wrapper('[zaas_audio id="' . absint($settings['audio_id']) . '"]');
+        $this->render_shortcode_in_wrapper('[zaas_auth' . $this->auth_shortcode_attributes($settings) . ']');
+    }
+}
+
+class ZAAS_Elementor_Player_Widget extends ZAAS_Elementor_Widget_Base {
+    public function get_name() { return 'zaas-player'; }
+    public function get_title() { return 'ZAU: Аудиоплеер (плеер + замок)'; }
+    public function get_icon() { return 'eicon-play-o'; }
+
+    protected function register_controls() {
+        $this->start_controls_section('zaas_content', ['label' => 'Контент']);
+        $this->add_control('audio_id', ['label' => 'ID аудиофайла', 'type' => \Elementor\Controls_Manager::NUMBER, 'default' => 0]);
+        $this->add_control('lock_note', [
+            'type' => \Elementor\Controls_Manager::RAW_HTML, 'raw' => 'Этот виджет — сразу и плеер, и замок: незалогиненный посетитель увидит форму входа (по выбранным ниже способам) прямо на месте плеера, а не сразу кнопку «Купить».', 'content_classes' => 'elementor-descriptor',
+        ]);
+        $this->end_controls_section();
+        $this->register_auth_method_controls();
+        $this->register_style_controls();
+    }
+
+    protected function render() {
+        $settings = $this->get_settings_for_display();
+        $this->render_shortcode_in_wrapper('[zaas_audio id="' . absint($settings['audio_id']) . '"' . $this->auth_shortcode_attributes($settings) . ']');
     }
 }
 
@@ -139,12 +168,13 @@ class ZAAS_Elementor_Protected_Widget extends ZAAS_Elementor_Widget_Base {
             'default' => '<p>Этот текст видят только покупатели.</p>',
         ]);
         $this->end_controls_section();
+        $this->register_auth_method_controls();
         $this->register_style_controls();
     }
 
     protected function render() {
         $settings = $this->get_settings_for_display();
-        $shortcode = '[zaas_protected product_id="' . absint($settings['product_id']) . '"]' . $settings['inner_html'] . '[/zaas_protected]';
+        $shortcode = '[zaas_protected product_id="' . absint($settings['product_id']) . '"' . $this->auth_shortcode_attributes($settings) . ']' . $settings['inner_html'] . '[/zaas_protected]';
         $this->render_shortcode_in_wrapper($shortcode);
     }
 }

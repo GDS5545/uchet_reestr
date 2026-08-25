@@ -68,7 +68,7 @@
 .zaas-form-message.is-error { color: #C62828; }
 .zaas-form-message.is-success { color: #2E7D32; }
 
-.zaas-auth-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.zaas-auth-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .zaas-tab { padding: 10px 16px; border-radius: 999px; border: 1px solid var(--zaas-e-border); background: transparent; cursor: pointer; font-weight: 600; }
 .zaas-tab.is-active { background: var(--zaas-e-accent); color: #fff; border-color: var(--zaas-e-accent); }
 .zaas-tab-panel { display: none; }

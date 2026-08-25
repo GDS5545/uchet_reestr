@@ -41,7 +41,7 @@ final class ZAAS_Access {
         add_shortcode('zaas_auth', [$this, 'auth_shortcode']);
         add_shortcode('zaas_buy_button', [$this, 'buy_button_shortcode']);
 
-        foreach (['zaas_request_recovery', 'zaas_verify_recovery', 'zaas_refresh_nonce', 'zaas_logout'] as $action) {
+        foreach (['zaas_request_recovery', 'zaas_verify_recovery', 'zaas_refresh_nonce', 'zaas_logout', 'zaas_password_login'] as $action) {
             add_action('wp_ajax_' . $action, [$this, 'ajax_' . $action]);
             add_action('wp_ajax_nopriv_' . $action, [$this, 'ajax_' . $action]);
         }
@@ -343,18 +343,41 @@ final class ZAAS_Access {
         $this->resolved_email = null;
 
         $secret = isset($_COOKIE[self::DEVICE_COOKIE]) ? sanitize_text_field(wp_unslash($_COOKIE[self::DEVICE_COOKIE])) : '';
-        if ($secret === '' || !preg_match('/^[a-f0-9]{64}$/', $secret)) { return null; }
+        if ($secret !== '' && preg_match('/^[a-f0-9]{64}$/', $secret)) {
+            global $wpdb;
+            $hash = $this->device_secret_hash($secret);
+            $row = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM {$this->p()->devices_table} WHERE device_hash=%s AND revoked=0 LIMIT 1", $hash
+            ));
+            if ($row) {
+                $wpdb->update($this->p()->devices_table, ['last_seen_at' => current_time('mysql', true)], ['id' => $row->id]);
+                $this->resolved_email = $row->customer_email;
+                return $this->resolved_email;
+            }
+        }
 
-        global $wpdb;
-        $hash = $this->device_secret_hash($secret);
-        $row = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM {$this->p()->devices_table} WHERE device_hash=%s AND revoked=0 LIMIT 1", $hash
-        ));
-        if (!$row) { return null; }
+        // No (or a stale) device cookie: if the visitor is already logged
+        // into WordPress some other way (wp-login.php, or the password
+        // login AJAX handler earlier in this same request) and their
+        // account email actually owns an active grant, adopt that
+        // identity and silently bind this browser as a device too, so
+        // the next request resolves straight from the cookie.
+        if (is_user_logged_in()) {
+            $user = wp_get_current_user();
+            if (is_email($user->user_email)) {
+                global $wpdb;
+                $has_grant = (bool) $wpdb->get_var($wpdb->prepare(
+                    "SELECT id FROM {$this->p()->grants_table} WHERE customer_email=%s AND status='active' LIMIT 1", $user->user_email
+                ));
+                if ($has_grant) {
+                    $this->resolved_email = $user->user_email;
+                    if (!headers_sent()) { $this->bind_device($user->user_email); }
+                    return $this->resolved_email;
+                }
+            }
+        }
 
-        $wpdb->update($this->p()->devices_table, ['last_seen_at' => current_time('mysql', true)], ['id' => $row->id]);
-        $this->resolved_email = $row->customer_email;
-        return $this->resolved_email;
+        return null;
     }
 
     public function logout_device() {
@@ -488,10 +511,22 @@ final class ZAAS_Access {
         return ob_get_clean();
     }
 
+    /**
+     * The wrapped content is only ever shown to a visitor this browser
+     * already recognizes (device cookie or a genuine WP login). Anyone
+     * else sees the login gate itself, not a "buy" prompt — matching how
+     * the original zau_audio widget worked: the widget IS the lock, and
+     * it only opens via PIN or username/password (or the email-link
+     * recovery flow), never by simply clicking past it. A "buy" prompt
+     * only appears once we know who the visitor is and know for a fact
+     * they don't own this particular product.
+     */
     public function protected_shortcode($atts, $content = '') {
-        $atts = shortcode_atts(['product_id' => 0], $atts);
+        $atts = shortcode_atts(['product_id' => 0, 'methods' => '', 'show_recovery' => 'yes'], (array) $atts);
         $product_id = absint($atts['product_id']);
-        if ($product_id && !$this->has_active_access($product_id)) {
+        $email = $this->resolve_customer_email();
+        if (!$email) { return $this->auth_shortcode($atts); }
+        if ($product_id && !$this->has_active_access($product_id, $email)) {
             return $this->buy_button_shortcode(['product_id' => $product_id]);
         }
         return do_shortcode($content);
@@ -506,34 +541,72 @@ final class ZAAS_Access {
         return '<a class="zaas-btn zaas-btn-primary zaas-buy-button" href="' . esc_url($url) . '">' . esc_html($atts['text']) . '</a>';
     }
 
+    const AUTH_METHOD_LABELS = ['recovery' => 'Ссылка на почту', 'pin' => 'Вход по PIN', 'password' => 'Логин и пароль'];
+
     /**
-     * Login/recovery panel shown when the visitor has no valid device
-     * cookie. Tabs are rendered client-side; PIN tab markup is added by
-     * ZAAS_PIN via the `zaas_auth_extra_tabs` filter so this class doesn't
-     * need to know PIN internals.
+     * Login gate shown whenever the visitor isn't recognized — this is
+     * the whole widget/shortcode when it's used standalone ([zaas_auth]),
+     * and it's also what audio_shortcode()/protected_shortcode() fall
+     * back to instead of a "buy" prompt, so a protected-audio widget acts
+     * as its own lock: it only opens via one of the enabled methods
+     * below, never by simply not being logged in.
+     *
+     * `methods` (comma list of recovery/pin/password) lets a caller (an
+     * Elementor widget instance, typically) narrow which methods show;
+     * it can only intersect with what's globally enabled in settings,
+     * never re-enable something switched off site-wide.
      */
     public function auth_shortcode($atts = []) {
+        $atts = shortcode_atts(['methods' => '', 'show_recovery' => 'yes'], (array) $atts);
         $settings = $this->p()->settings();
+
+        $global_methods = ['recovery'];
+        if (!empty($settings['pin_enabled'])) { $global_methods[] = 'pin'; }
+        if (!empty($settings['auth_password_enabled'])) { $global_methods[] = 'password'; }
+
+        $wanted = $atts['methods'] !== '' ? array_filter(array_map('trim', explode(',', $atts['methods']))) : $global_methods;
+        $methods = array_values(array_intersect($global_methods, $wanted));
+        if ($atts['show_recovery'] === 'no') { $methods = array_values(array_diff($methods, ['recovery'])); }
+        if (!$methods) { $methods = ['recovery']; } // never render a dead-end with zero usable tabs
+        $active_method = $methods[0];
+
         ob_start();
         echo '<div class="zaas-interface zaas-auth" data-zaas-auth>';
-        echo '<div class="zaas-auth-tabs" role="tablist">';
-        echo '<button type="button" class="zaas-tab is-active" data-zaas-tab="recovery">Ссылка на почту</button>';
-        if (!empty($settings['pin_enabled'])) {
-            echo '<button type="button" class="zaas-tab" data-zaas-tab="pin">Вход по PIN</button>';
+
+        if (count($methods) > 1) {
+            echo '<div class="zaas-auth-tabs" role="tablist">';
+            foreach ($methods as $m) {
+                echo '<button type="button" class="zaas-tab' . ($m === $active_method ? ' is-active' : '') . '" data-zaas-tab="' . esc_attr($m) . '">' . esc_html(self::AUTH_METHOD_LABELS[$m]) . '</button>';
+            }
+            echo '</div>';
         }
-        echo '</div>';
 
-        echo '<div class="zaas-tab-panel is-active" data-zaas-panel="recovery">';
-        echo '<p class="zaas-muted">Введите email, указанный при покупке — вышлем ссылку для входа.</p>';
-        echo '<form class="zaas-form" data-zaas-recovery-form>';
-        echo '<label>Email<input type="email" name="email" required></label>';
-        echo '<div class="zaas-otp-step" data-zaas-otp-step hidden><label>Код из письма<input type="text" inputmode="numeric" name="code" maxlength="6"></label></div>';
-        echo '<button type="submit" class="zaas-btn zaas-btn-primary">Получить доступ</button>';
-        echo '<div class="zaas-form-message" data-zaas-message aria-live="polite"></div>';
-        echo '</form>';
-        echo '</div>';
+        if (in_array('recovery', $methods, true)) {
+            echo '<div class="zaas-tab-panel' . ('recovery' === $active_method ? ' is-active' : '') . '" data-zaas-panel="recovery">';
+            echo '<p class="zaas-muted">Введите email, указанный при покупке — вышлем ссылку для входа.</p>';
+            echo '<form class="zaas-form" data-zaas-recovery-form>';
+            echo '<label>Email<input type="email" name="email" required></label>';
+            echo '<div class="zaas-otp-step" data-zaas-otp-step hidden><label>Код из письма<input type="text" inputmode="numeric" name="code" maxlength="6"></label></div>';
+            echo '<button type="submit" class="zaas-btn zaas-btn-primary">Получить доступ</button>';
+            echo '<div class="zaas-form-message" data-zaas-message aria-live="polite"></div>';
+            echo '</form>';
+            echo '</div>';
+        }
 
-        echo apply_filters('zaas_auth_extra_tabs', '', $atts);
+        if (in_array('password', $methods, true)) {
+            echo '<div class="zaas-tab-panel' . ('password' === $active_method ? ' is-active' : '') . '" data-zaas-panel="password">';
+            echo '<form class="zaas-form" data-zaas-password-form>';
+            echo '<label>Email или логин<input type="text" name="login" required autocomplete="username"></label>';
+            echo '<label>Пароль<input type="password" name="password" required autocomplete="current-password"></label>';
+            echo '<button type="submit" class="zaas-btn zaas-btn-primary">Войти</button>';
+            echo '<div class="zaas-form-message" data-zaas-message aria-live="polite"></div>';
+            echo '</form>';
+            echo '</div>';
+        }
+
+        // PIN panel is supplied by ZAAS_PIN so this class doesn't need to
+        // know PIN internals; it checks $methods/$active_method itself.
+        echo apply_filters('zaas_auth_extra_tabs', '', ['methods' => $methods, 'active' => $active_method]);
 
         echo '</div>';
         return ob_get_clean();
@@ -579,6 +652,60 @@ final class ZAAS_Access {
         $this->bind_device($email);
         $this->p()->log('otp_login', 'device', 0, $email);
         $settings = $this->p()->settings();
+        $library = absint($settings['library_page_id']);
+        wp_send_json_success(['message' => 'Вход выполнен.', 'redirect' => $library ? get_permalink($library) : home_url('/')]);
+    }
+
+    /**
+     * WordPress username/password login as an access method (the third
+     * method the original audio-lock widgets offered alongside PIN and
+     * the emailed link). Requires the authenticated account's email to
+     * actually have an active grant — a valid WP password alone isn't
+     * enough, exactly like PIN/OTP login also check for a grant.
+     */
+    public function ajax_zaas_password_login() {
+        check_ajax_referer(ZAAS_Plugin::NONCE, 'nonce');
+        $settings = $this->p()->settings();
+        if (empty($settings['auth_password_enabled'])) {
+            wp_send_json_error(['message' => 'Вход по логину и паролю отключён.'], 400);
+        }
+
+        $login = sanitize_text_field(wp_unslash($_POST['login'] ?? ''));
+        $password = (string) ($_POST['password'] ?? '');
+        if ($login === '' || $password === '') {
+            wp_send_json_error(['message' => 'Введите логин/email и пароль.'], 400);
+        }
+
+        $rate_key = 'zaas_pwd_lock_' . md5(strtolower($login) . '|' . $this->p()->client_ip());
+        $state = get_transient($rate_key);
+        $state = is_array($state) ? $state : ['attempts' => 0];
+        if ($state['attempts'] >= 5) {
+            wp_send_json_error(['message' => 'Слишком много попыток. Попробуйте позже.'], 429);
+        }
+
+        $user = wp_authenticate(sanitize_user($login), $password);
+        if (is_wp_error($user)) {
+            $state['attempts']++;
+            set_transient($rate_key, $state, 15 * MINUTE_IN_SECONDS);
+            wp_send_json_error(['message' => 'Неверный логин или пароль.'], 400);
+        }
+        delete_transient($rate_key);
+
+        $email = $user->user_email;
+        global $wpdb;
+        $has_grant = (bool) $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM {$this->p()->grants_table} WHERE customer_email=%s AND status='active' LIMIT 1", $email
+        ));
+        if (!$has_grant) {
+            wp_send_json_error(['message' => 'Для этой учётной записи не найден активный доступ к аудиокнигам.'], 404);
+        }
+
+        wp_set_current_user($user->ID);
+        wp_set_auth_cookie($user->ID, true, is_ssl());
+        do_action('wp_login', $user->user_login, $user);
+
+        $this->bind_device($email);
+        $this->p()->log('password_login', 'device', 0, $email);
         $library = absint($settings['library_page_id']);
         wp_send_json_success(['message' => 'Вход выполнен.', 'redirect' => $library ? get_permalink($library) : home_url('/')]);
     }

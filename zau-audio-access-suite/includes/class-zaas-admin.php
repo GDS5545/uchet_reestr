@@ -106,6 +106,7 @@ final class ZAAS_Admin {
                     'pin_max_attempts'         => max(1, absint($_POST['pin_max_attempts'] ?? 5)),
                     'pin_lock_minutes'         => max(1, absint($_POST['pin_lock_minutes'] ?? 15)),
                     'pin_device_only'          => isset($_POST['pin_device_only']) ? 1 : 0,
+                    'auth_password_enabled'    => isset($_POST['auth_password_enabled']) ? 1 : 0,
                     'passkeys_enabled'         => isset($_POST['passkeys_enabled']) ? 1 : 0,
                     'passkey_prompt_enabled'   => isset($_POST['passkey_prompt_enabled']) ? 1 : 0,
                 ];
@@ -487,6 +488,10 @@ final class ZAAS_Admin {
                 <label>Блокировка, минут<input type="number" name="pin_lock_minutes" min="1" value="<?php echo (int) $s['pin_lock_minutes']; ?>"></label>
                 <label><input type="checkbox" name="pin_device_only" <?php checked($s['pin_device_only']); ?>> Вход по PIN только на уже привязанном устройстве (без email)</label>
 
+                <h2>Логин и пароль WordPress</h2>
+                <label><input type="checkbox" name="auth_password_enabled" <?php checked($s['auth_password_enabled']); ?>> Разрешить вход по обычному логину/email и паролю WordPress</label>
+                <p class="description">Учётная запись должна принадлежать email, на который выдан активный доступ — сам по себе верный пароль доступ не откроет.</p>
+
                 <h2>Passkeys</h2>
                 <label><input type="checkbox" name="passkeys_enabled" <?php checked($s['passkeys_enabled']); ?>> Разрешить вход по Passkey (требуется HTTPS)</label>
                 <label><input type="checkbox" name="passkey_prompt_enabled" <?php checked($s['passkey_prompt_enabled']); ?>> Предлагать создать Passkey в кабинете</label>
@@ -539,13 +544,13 @@ final class ZAAS_Admin {
             </form>
 
             <h2>Elementor</h2>
-            <p>В редакторе Elementor виджеты доступны в категории «ZAU Аудиодоступ»: Библиотека, Защищённый блок, Аудиоплеер, Кнопка покупки, Оплата Kaspi, Вход/PIN. На вкладке «Стиль» каждого виджета можно переопределить цвета, отступы, радиус и типографику только для этого блока — глобальные значения выше остаются основой (см. assets/css/theme.css).</p>
+            <p>В редакторе Elementor виджеты доступны в категории «ZAU Аудиодоступ»: Библиотека, Защищённый блок, Аудиоплеер, Кнопка покупки, Вход. <strong>Виджет «Аудиоплеер» — это одновременно и плеер, и замок</strong>: незалогиненный посетитель видит на месте плеера форму входа (ссылка на email, PIN и/или логин с паролем), а не кнопку «Купить» — точно как в исходных плагинах. У виджетов «Вход», «Аудиоплеер» и «Защищённый блок» есть вкладка «Способы входа», где можно для конкретного места на сайте отключить часть методов (например, оставить только PIN) — но включить то, что выключено глобально в настройках выше, виджет не может. На вкладке «Стиль» каждого виджета можно переопределить цвета, отступы, радиус и типографику только для этого блока — глобальные значения выше остаются основой (см. assets/css/theme.css).</p>
             <h2>Шорткоды (если Elementor не используется)</h2>
             <ul class="zaas-shortcode-list">
                 <li><code>[zaas_library]</code> — личный кабинет / список книг</li>
-                <li><code>[zaas_auth]</code> — форма входа (ссылка на email + PIN)</li>
-                <li><code>[zaas_audio id="123"]</code> — плеер для конкретного файла</li>
-                <li><code>[zaas_protected product_id="45"]...[/zaas_protected]</code> — блок, видимый только владельцам продукта</li>
+                <li><code>[zaas_auth methods="pin,password"]</code> — форма входа (ссылка на email / PIN / логин и пароль; атрибут <code>methods</code> необязателен и сужает список)</li>
+                <li><code>[zaas_audio id="123"]</code> — плеер и замок в одном: без входа показывает форму входа вместо плеера</li>
+                <li><code>[zaas_protected product_id="45"]...[/zaas_protected]</code> — блок, видимый только владельцам продукта (без входа — тоже форма входа, не «купить»)</li>
                 <li><code>[zaas_buy_button product_id="45"]</code> — кнопка покупки</li>
                 <li><code>[zaas_audio_cover id="123"]</code>, <code>[zaas_audio_title id="123"]</code>, <code>[zaas_audio_author id="123"]</code>, <code>[zaas_audio_part id="123"]</code>, <code>[zaas_audio_badge id="123"]</code> — отдельные поля метаданных для собственной вёрстки карточки</li>
                 <li><code>[zaas_audio_bundle product_id="45"]</code> — список всех частей книги с плеером</li>

@@ -178,10 +178,14 @@ final class ZAAS_PIN {
         $settings = $this->p()->settings();
         if (empty($settings['pin_enabled'])) { return $extra; }
 
+        $methods = is_array($atts) && isset($atts['methods']) ? $atts['methods'] : ['pin'];
+        if (!in_array('pin', $methods, true)) { return $extra; }
+        $is_active = isset($atts['active']) && $atts['active'] === 'pin';
+
         $device_only = !empty($settings['pin_device_only']) && ZAAS_Access::instance()->resolve_customer_email();
 
         ob_start();
-        echo '<div class="zaas-tab-panel" data-zaas-panel="pin">';
+        echo '<div class="zaas-tab-panel' . ($is_active ? ' is-active' : '') . '" data-zaas-panel="pin">';
         echo '<form class="zaas-form" data-zaas-pin-login-form>';
         if (!$device_only) {
             echo '<label>Email<input type="email" name="identity" required></label>';

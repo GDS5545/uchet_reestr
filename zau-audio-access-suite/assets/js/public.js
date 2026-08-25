@@ -68,6 +68,18 @@
         });
     }
 
+    function bindPasswordLoginForm(form) {
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            showMessage(form, 'Входим…', false);
+            post('zaas_password_login', { login: form.login.value.trim(), password: form.password.value }).then(function (res) {
+                var body = res.data || {};
+                showMessage(form, body.message || '', !res.success);
+                if (res.success && body.redirect) { window.location.href = body.redirect; }
+            });
+        });
+    }
+
     function bindPinLoginForm(form) {
         form.addEventListener('submit', function (e) {
             e.preventDefault();
@@ -201,6 +213,7 @@
     document.addEventListener('DOMContentLoaded', function () {
         document.querySelectorAll('[data-zaas-auth]').forEach(bindTabs);
         document.querySelectorAll('[data-zaas-recovery-form]').forEach(bindRecoveryForm);
+        document.querySelectorAll('[data-zaas-password-form]').forEach(bindPasswordLoginForm);
         document.querySelectorAll('[data-zaas-pin-login-form]').forEach(bindPinLoginForm);
         document.querySelectorAll('[data-zaas-pin-reset-form]').forEach(bindPinResetForm);
         document.querySelectorAll('.zaas-library, .zaas-interface').forEach(bindLogout);
