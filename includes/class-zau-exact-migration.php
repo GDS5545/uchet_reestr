@@ -25,7 +25,7 @@ if (!defined('ABSPATH')) { exit; }
  *     данные»; администратор разбирает такие отметки в очереди.
  */
 final class ZAU_Exact_Migration {
-    const VERSION = '2.28.6';
+    const VERSION = '2.28.7';
     const DB_VERSION = '1.1.0';
     const OPT_DB = 'zau_exact_migration_db_version';
     const OPT = 'zau_exact_migration_settings';
@@ -736,6 +736,7 @@ final class ZAU_Exact_Migration {
         $target = 0;
         $decision = '';
         $message = '';
+        $priorMismatch = null;
         if ($email) {
             $existing = get_user_by('email', $email);
             if ($existing) {
@@ -764,20 +765,22 @@ final class ZAU_Exact_Migration {
             // в него номер старого аккаунта. Такой аккаунт — тот же человек: связываем его,
             // а не создаём второй, и записываем в него email со старого сайта.
             $prior = $this->prior_import_account($oldId);
-            if ($prior) {
+            $oldTokens = $this->old_user_name_tokens($item);
+            $priorTokens = $prior ? array_values(array_unique(array_merge($this->name_tokens($prior->last_name . ' ' . $prior->first_name), $this->name_tokens($prior->display_name)))) : [];
+            $common = $prior ? count(array_intersect($oldTokens, $priorTokens)) : 0;
+            if ($prior && ($common >= 2 || (count($oldTokens) === 1 && $common === 1))) {
                 $target = (int)$prior->ID;
                 $decision = $dry ? 'would_link_prior_import' : 'linked_prior_import';
-                $message = 'Найден аккаунт #' . $target . ', созданный прежним переносом из этого же старого аккаунта, без email' . ($email ? '; в него будет записан email ' . $email : '') . '.';
-                $sameName = count(array_intersect($this->old_user_name_tokens($item), array_merge($this->name_tokens($prior->last_name . ' ' . $prior->first_name), $this->name_tokens($prior->display_name)))) >= 2;
-                if (!$sameName) { $message .= ' ФИО в этом аккаунте отличается от старого аккаунта — профиль стоит проверить.'; }
-                if (!$dry) {
-                    if ($email && !email_exists($email)) {
-                        add_filter('send_email_change_email', '__return_false');
-                        wp_update_user(['ID'=>$target, 'user_email'=>$email]);
-                        remove_filter('send_email_change_email', '__return_false');
-                    }
-                    if (!$sameName) { update_user_meta($target, 'zau_exact_prior_mismatch', 'name'); }
+                $message = 'Найден аккаунт #' . $target . ' «' . $prior->display_name . '», созданный прежним переносом из этого же старого аккаунта, без email; ФИО совпадает' . ($email ? '; в него будет записан email ' . $email : '') . '.';
+                if (!$dry && $email && !email_exists($email)) {
+                    add_filter('send_email_change_email', '__return_false');
+                    wp_update_user(['ID'=>$target, 'user_email'=>$email]);
+                    remove_filter('send_email_change_email', '__return_false');
                 }
+            } elseif ($prior) {
+                // Номер старого аккаунта записан в аккаунт с другим ФИО: прежний перенос мог
+                // перепутать людей. Не связываем — создаём аккаунт и выносим пару на ручную проверку.
+                $priorMismatch = $prior;
             }
         }
         if (!$target) {
@@ -789,6 +792,7 @@ final class ZAU_Exact_Migration {
             if ($dry) {
                 $this->add_stat($job, 'would_create');
                 $this->report($job, 'user', $oldId, 'would_create', $email ? 'Будет создан новый аккаунт с email ' . $email . '.' : 'Будет создан новый аккаунт без email (на старом сайте email пустой).', 0, 0, $tokens);
+                if (!empty($priorMismatch)) { $this->report_prior_mismatch($job, $oldId, $item, $priorMismatch, 0, true); }
                 return;
             }
             $created = $this->create_user($item, $email);
@@ -811,6 +815,25 @@ final class ZAU_Exact_Migration {
         $this->save_map('user', $oldId, ['target_user_id'=>$target, 'checksum'=>$compare, 'decision'=>$decision, 'message'=>$message]);
         $this->add_stat($job, $decision);
         $this->report($job, 'user', $oldId, $decision, $message, $target, 0, $tokens);
+        if (!empty($priorMismatch)) { $this->report_prior_mismatch($job, $oldId, $item, $priorMismatch, $target, false); }
+    }
+
+    private function old_display_name(array $item) {
+        $meta = (array)($item['meta'] ?? []);
+        $name = trim($this->meta_first($meta, 'last_name') . ' ' . $this->meta_first($meta, 'first_name'));
+        $display = trim((string)($item['display_name'] ?? ''));
+        return $name !== '' ? ($display !== '' && $display !== $name ? $name . ' / ' . $display : $name) : $display;
+    }
+
+    private function report_prior_mismatch($job, $oldId, array $item, $prior, $createdId, $dry) {
+        $this->add_stat($job, 'possible_duplicate');
+        $this->report($job, 'user', $oldId, 'possible_duplicate',
+            'Прежний перенос записал этот старый аккаунт в аккаунт #' . (int)$prior->ID . ' «' . $prior->display_name . '» (без email), но ФИО там другое, чем в старом аккаунте («' . $this->old_display_name($item) . '»). Автоматически НЕ связано: ' . ($dry ? 'будет создан отдельный аккаунт, пара попадёт в очередь «Возможные дубли».' : 'создан отдельный аккаунт, проверьте пару в очереди «Возможные дубли».'),
+            (int)$createdId, 0, ['candidates'=>[['id'=>(int)$prior->ID, 'name'=>$prior->display_name, 'email'=>'']], 'old_name'=>$this->old_display_name($item)]);
+        if (!$dry && $createdId) {
+            $list = (array)get_user_meta((int)$createdId, 'zau_exact_possible_duplicate', true);
+            update_user_meta((int)$createdId, 'zau_exact_possible_duplicate', array_values(array_unique(array_filter(array_map('intval', array_merge($list, [(int)$prior->ID]))))));
+        }
     }
 
     /** Единственный аккаунт без email с zau_legacy_user_id = старому ID, не занятый другим старым аккаунтом и не помеченный как дубль. */
@@ -1066,7 +1089,8 @@ final class ZAU_Exact_Migration {
                     : 'Проверьте и объедините в очереди «Возможные дубли».'),
                 (int)$row->target_user_id, 0, ['candidates'=>$found]);
             if (!$dry && (int)$row->target_user_id) {
-                update_user_meta((int)$row->target_user_id, 'zau_exact_possible_duplicate', wp_list_pluck($found, 'id'));
+                $list = (array)get_user_meta((int)$row->target_user_id, 'zau_exact_possible_duplicate', true);
+                update_user_meta((int)$row->target_user_id, 'zau_exact_possible_duplicate', array_values(array_unique(array_filter(array_map('intval', array_merge($list, wp_list_pluck($found, 'id')))))));
             }
         }
         return count((array)$rows) < 100;
@@ -1646,13 +1670,18 @@ final class ZAU_Exact_Migration {
         header('Content-Disposition: attachment; filename="zau-exact-report-' . wp_date('Y-m-d-H-i') . '.csv"');
         echo "\xEF\xBB\xBF";
         $out = fopen('php://output', 'w');
-        zau_fputcsv($out, ['Тип', 'Старый ID', 'Решение', 'Пояснение', 'Аккаунт нового сайта', 'Заявка нового сайта', 'ФИО в заявлении', 'Совпадение ФИО'], ';');
+        zau_fputcsv($out, ['Тип', 'Старый ID', 'Решение', 'Пояснение', 'Аккаунт нового сайта', 'Заявка нового сайта', 'ФИО в заявлении', 'Совпадение ФИО', 'ФИО в старом аккаунте', 'Аккаунт нового сайта: ФИО и email'], ';');
         $offset = 0;
         do {
             $rows = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$this->report_table} WHERE job_token=%s ORDER BY id ASC LIMIT 2000 OFFSET %d", $token, $offset));
             foreach ((array)$rows as $row) {
                 $details = json_decode((string)$row->details, true);
-                zau_fputcsv($out, [$row->source_type, $row->source_id, $row->decision, $row->message, $row->target_user_id ?: '', $row->target_submission_id ?: '', $details['applicant'] ?? '', $details['match'] ?? ''], ';');
+                $oldName = (string)($details['old_name'] ?? '');
+                if ($oldName === '' && $row->source_type === 'user' && is_array($details)) {
+                    $oldName = trim(trim(($details['last'] ?? '') . ' ' . ($details['first'] ?? '')) . ' / ' . ($details['display'] ?? ''), ' /');
+                }
+                $newUser = (int)$row->target_user_id ? get_user_by('id', (int)$row->target_user_id) : false;
+                zau_fputcsv($out, [$row->source_type, $row->source_id, $row->decision, $row->message, $row->target_user_id ?: '', $row->target_submission_id ?: '', $details['applicant'] ?? '', $details['match'] ?? '', $oldName, $newUser ? trim($newUser->display_name . ' <' . $newUser->user_email . '>') : ''], ';');
             }
             $offset += count((array)$rows);
         } while (count((array)$rows) === 2000);
