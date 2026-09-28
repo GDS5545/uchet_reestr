@@ -347,3 +347,38 @@ body:has([class*="zau-nav-mobile-fixed-yes"] .zau-cabinet-nav-mobile){padding-bo
 .zau-legacy-profile-note{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;background:#f5f8ff;border:1px solid #d1e0ff;border-radius:12px;padding:12px 14px;font-size:14px}
 .zau-legacy-profile-note.is-open{background:#fffaeb;border-color:#fedf89}
 .zau-legacy-prefill-note{margin-bottom:14px}
+/* 2.28.1 — памятка «Как зарегистрироваться / забыли пароль» во всплывающем окне */
+.zau-help-open{display:inline-flex;align-items:center;gap:10px;margin:4px 0 14px;padding:10px 16px 10px 10px;border:1px solid #cfe0f5;border-radius:999px;background:#f2f7fd;color:#0d4a91;font:inherit;font-weight:700;font-size:15px;line-height:1.2;cursor:pointer;text-align:left}
+.zau-help-open:hover,.zau-help-open:focus-visible{background:#e3eefb;outline:none;box-shadow:0 0 0 3px rgba(21,101,192,.18)}
+.zau-help-open span{display:grid;place-items:center;flex:0 0 28px;width:28px;height:28px;border-radius:50%;background:#1565c0;color:#fff;font-size:16px}
+.zau-help-modal[hidden]{display:none}
+.zau-help-modal{position:fixed;inset:0;z-index:1000000;display:grid;place-items:center;padding:20px}
+.zau-help-backdrop{position:absolute;inset:0;background:rgba(10,25,45,.62);backdrop-filter:blur(2px)}
+.zau-help-dialog{position:relative;display:flex;flex-direction:column;width:min(560px,100%);max-height:92vh;border-radius:20px;background:#fff;color:#1d2939;box-shadow:0 30px 80px rgba(0,0,0,.3);overflow:hidden;font-size:17px;line-height:1.5}
+.zau-help-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px 10px}
+.zau-help-head strong{font-size:14px;letter-spacing:.06em;text-transform:uppercase;color:#1565c0}
+.zau-help-x{display:grid;place-items:center;width:40px;height:40px;border:0;border-radius:50%;background:#eef2f6;color:#344054;font-size:26px;line-height:1;cursor:pointer}
+.zau-help-tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0 18px;padding:4px;border-radius:14px;background:#eef3f9}
+.zau-help-tabs button{padding:11px 8px;border:0;border-radius:10px;background:transparent;color:#475467;font:inherit;font-size:16px;font-weight:700;cursor:pointer}
+.zau-help-tabs button.is-active{background:#fff;color:#1565c0;box-shadow:0 2px 8px rgba(16,24,40,.1)}
+.zau-help-body{overflow:auto;padding:6px 18px 8px;-webkit-overflow-scrolling:touch}
+.zau-help-panel h3{margin:14px 0 12px;font-size:24px;line-height:1.2;color:#101828}
+.zau-help-steps{list-style:none;counter-reset:zau-help;margin:0 0 16px;padding:0;display:grid;gap:12px}
+.zau-help-steps li{counter-increment:zau-help;display:grid;grid-template-columns:36px 1fr;gap:12px;align-items:start}
+.zau-help-steps li::before{content:counter(zau-help);display:grid;place-items:center;width:36px;height:36px;border-radius:50%;background:#1565c0;color:#fff;font-weight:800;font-size:17px}
+.zau-help-steps li>div{display:flex;flex-direction:column;gap:3px;padding-top:5px}
+.zau-help-steps strong{font-size:17px;color:#101828}
+.zau-help-steps span{color:#475467;font-size:16px}
+.zau-help-btn{display:inline-block;margin:2px 0;padding:2px 10px;line-height:1.35;border-radius:8px;background:#1565c0;color:#fff;font-weight:700;font-size:.92em;white-space:nowrap}
+.zau-help-dialog h3,.zau-help-dialog h4{font-family:inherit;font-weight:800;letter-spacing:0}
+.zau-help-subtitle{margin:20px 0 12px;padding:8px 12px;border-left:4px solid #1565c0;border-radius:0 10px 10px 0;background:#f2f7fd;font-size:18px;line-height:1.3;color:#0d3d75}
+.zau-help-subtitle+.zau-help-steps li::before{background:#fff;color:#1565c0;border:2px solid #1565c0;width:32px;height:32px;font-size:15px}
+.zau-help-tip{display:flex;flex-direction:column;gap:2px;margin:6px 0 14px;padding:12px 14px;border-radius:12px;background:#f2f4f7;font-size:15px}
+.zau-help-tip.is-warning{background:#fff7e6;border-left:4px solid #f79009}
+.zau-help-tip.is-good{background:#ecfdf3;border-left:4px solid #12b76a}
+.zau-help-tip span{color:#475467}
+.zau-help-foot{padding:12px 18px calc(12px + env(safe-area-inset-bottom));border-top:1px solid #eaecf0}
+.zau-help-foot .zau-union-button{width:100%;justify-content:center;min-height:50px;font-size:17px}
+.zau-help-inline{margin:8px 0}
+body.zau-help-lock{overflow:hidden}
+@media(max-width:640px){.zau-help-modal{padding:0;place-items:end stretch}.zau-help-dialog{width:100%;max-height:100%;height:100%;border-radius:0}.zau-help-panel h3{font-size:22px}.zau-help-btn{white-space:normal}}

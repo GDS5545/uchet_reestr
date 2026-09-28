@@ -276,3 +276,25 @@ const authObserver=new MutationObserver(mutations=>{
 });
 if(document.documentElement)authObserver.observe(document.documentElement,{childList:true,subtree:true});
 })();
+/* 2.28.1 — всплывающая памятка «Как зарегистрироваться / забыли пароль» */
+(function(){
+ function modal(){return document.querySelector('[data-zau-help-modal]');}
+ function show(tab){
+  const m=modal();if(!m)return;
+  if(m.parentNode!==document.body)document.body.appendChild(m);
+  const tabs=m.querySelectorAll('[data-zau-help-tab]');
+  if(!m.querySelector('[data-zau-help-panel="'+tab+'"]'))tab=tabs[0]?tabs[0].dataset.zauHelpTab:'';
+  tabs.forEach(b=>{const on=b.dataset.zauHelpTab===tab;b.classList.toggle('is-active',on);b.setAttribute('aria-selected',on?'true':'false');});
+  m.querySelectorAll('[data-zau-help-panel]').forEach(p=>{p.hidden=p.dataset.zauHelpPanel!==tab;});
+  const body=m.querySelector('.zau-help-body');if(body)body.scrollTop=0;
+  if(m.hidden){m.hidden=false;document.body.classList.add('zau-help-lock');const x=m.querySelector('.zau-help-x');if(x)x.focus();}
+ }
+ function hide(){const m=modal();if(!m||m.hidden)return;m.hidden=true;document.body.classList.remove('zau-help-lock');}
+ document.addEventListener('click',e=>{
+  const open=e.target.closest('[data-zau-help-open]');if(open){e.preventDefault();show(open.dataset.zauHelpOpen||'register');return;}
+  const tab=e.target.closest('[data-zau-help-tab]');if(tab){show(tab.dataset.zauHelpTab);return;}
+  if(e.target.closest('[data-zau-help-close]'))hide();
+ });
+ document.addEventListener('keydown',e=>{if(e.key==='Escape')hide();});
+ if(/[#&?]zau-help=(register|recovery)/.test(location.href)){const t=location.href.match(/zau-help=(register|recovery)/)[1];const go=()=>show(t);document.readyState==='loading'?document.addEventListener('DOMContentLoaded',go):go();}
+})();

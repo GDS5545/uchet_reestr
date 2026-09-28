@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.28.0';
+    const VERSION = '2.28.1';
     const DB_VERSION = '2.18.2';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
@@ -125,6 +125,7 @@ final class ZAU_Union_Module {
         add_shortcode('zau_union_custom_tab', [$this, 'custom_tab_shortcode']);
         add_shortcode('zau_union_member_card', [$this, 'member_card_shortcode']);
         add_shortcode('zau_union_benefits', [$this, 'benefits_shortcode']);
+        add_shortcode('zau_union_help', [$this, 'help_shortcode']);
 
         add_filter('zau_cert_field_definitions', [$this, 'certificate_field_definitions']);
         add_filter('zau_cert_field_types', [$this, 'certificate_field_types']);
@@ -2215,12 +2216,97 @@ final class ZAU_Union_Module {
         ];
     }
 
+    /**
+     * Памятка «Как зарегистрироваться и что делать, если забыли пароль/PIN».
+     * Текст строится по текущим настройкам входа, поэтому всегда совпадает с тем,
+     * что человек видит в форме. Показывается во всплывающем окне.
+     */
+    private function help_step($title,$text='') {
+        return '<li><div><strong>'.$title.'</strong>'.($text!==''?'<span>'.$text.'</span>':'').'</div></li>';
+    }
+
+    private function help_btn($label) {
+        return '<b class="zau-help-btn">'.esc_html($label).'</b>';
+    }
+
+    private function help_sections() {
+        $cfg=$this->auth_config([]);
+        $s=$this->settings();
+        $mode=sanitize_key((string)$s['registration_mode'])==='otp'?'otp':'direct';
+        $channels=$cfg['otp_channels'];
+        $contact=count($channels)===1?($channels[0]==='email'?'email':'номер телефона'):'email или номер телефона';
+        $where=count($channels)===1?($channels[0]==='email'?'на почту':'в SMS'):'на почту или в SMS';
+        $b=function($l){return $this->help_btn($l);};
+
+        $reg='<ol class="zau-help-steps">';
+        $reg.=$this->help_step('Нажмите '.$b('Зарегистрироваться'),'На странице личного кабинета профсоюза.');
+        if($mode==='otp'){
+            $reg.=$this->help_step('Подтвердите '.$contact,'Нажмите '.$b('Получить код регистрации').' и введите 6 цифр из сообщения');
+        }
+        $reg.=$this->help_step('Заполните анкету','ФИО, телефон, email, место работы и филиал. Организацию можно найти по БИН кнопкой '.$b('Найти'));
+        $reg.=$this->help_step('Распишитесь в окне подписи','Пальцем на телефоне или мышкой на компьютере. Переписать — '.$b('Очистить подпись'));
+        if(!empty($s['auth_pin_enabled']) && $s['pin_setup_mode']!=='off'){
+            $reg.=$this->help_step('Придумайте PIN из '.(int)$s['pin_min_length'].'–'.(int)$s['pin_max_length'].' цифр','Введите его дважды. Это ваш код для быстрого входа — запишите его.');
+        }
+        $reg.=$this->help_step('Нажмите '.$b('Отправить и сформировать документы'),'Кабинет откроется сам, готовые документы — во вкладке «Документы».');
+        $reg.='</ol>';
+        $reg.='<div class="zau-help-tip is-warning"><strong>Уже регистрировались на старом сайте?</strong><span>Не создавайте кабинет заново — ваши данные перенесены. Нажмите «Войти» и войдите по коду на тот же '.$contact.'.</span></div>';
+
+        $rec='<div class="zau-help-tip is-good"><strong>Пароль помнить не обязательно</strong><span>Войти можно одноразовым кодом '.$where.'.</span></div>';
+        $n=0;
+        if(in_array('otp',$cfg['methods'],true)){
+            $rec.='<h4 class="zau-help-subtitle">Способ '.(++$n).'. Вход по коду — самый простой</h4><ol class="zau-help-steps">';
+            $rec.=$this->help_step($b('Войти').' → '.$b('Код из email или SMS'));
+            $rec.=$this->help_step('Введите '.$contact,'Тот же, что при регистрации, и нажмите '.$b('Получить код для входа'));
+            $rec.=$this->help_step('Введите 6 цифр из сообщения','и нажмите '.$b('Войти в кабинет'));
+            $rec.='</ol>';
+        }
+        if(in_array('pin',$cfg['methods'],true) && $cfg['show_recovery']){
+            $rec.='<h4 class="zau-help-subtitle">Способ '.(++$n).'. Забыли PIN — создайте новый</h4><ol class="zau-help-steps">';
+            $rec.=$this->help_step($b('Войти').' → '.$b('Постоянный PIN').' → '.$b('Не помню PIN'));
+            $rec.=$this->help_step('Введите email','и нажмите '.$b('Отправить код восстановления'));
+            $rec.=$this->help_step('Введите код из письма и новый PIN дважды','и нажмите '.$b('Сохранить новый PIN и войти'));
+            $rec.='</ol>';
+        }
+        if(in_array('password',$cfg['methods'],true) && $cfg['show_recovery']){
+            $rec.='<h4 class="zau-help-subtitle">Способ '.(++$n).'. Забыли пароль</h4><ol class="zau-help-steps">';
+            $rec.=$this->help_step($b('Войти').' → '.$b('Логин и пароль').' → '.$b('Восстановить пароль по email'));
+            $rec.=$this->help_step('Откройте письмо и перейдите по ссылке','Придумайте новый пароль и войдите с ним.');
+            $rec.='</ol>';
+        }
+        $rec.='<div class="zau-help-tip"><strong>Письмо не пришло?</strong><span>Подождите 1–2 минуты и проверьте папку «Спам». Код действует недолго — если истёк, запросите новый.</span></div>';
+        return ['register'=>['title'=>'Как зарегистрироваться','short'=>'Регистрация','html'=>$reg],'recovery'=>['title'=>'Забыли пароль или PIN','short'=>'Забыли пароль','html'=>$rec]];
+    }
+
+    /** Кнопка + всплывающее окно с памяткой. Окно выводится на странице один раз. */
+    private function help_popup_html($label='Как зарегистрироваться или войти?',$tab='register') {
+        static $modalPrinted=false;
+        $sections=$this->help_sections();
+        if(!isset($sections[$tab]))$tab='register';
+        $html='<button type="button" class="zau-help-open" data-zau-help-open="'.esc_attr($tab).'"><span aria-hidden="true">?</span>'.esc_html($label).'</button>';
+        if($modalPrinted)return $html;
+        $modalPrinted=true;
+        $html.='<div class="zau-help-modal" data-zau-help-modal hidden><div class="zau-help-backdrop" data-zau-help-close></div><div class="zau-help-dialog" role="dialog" aria-modal="true" aria-labelledby="zau-help-title">';
+        $html.='<div class="zau-help-head"><strong id="zau-help-title">Памятка участника</strong><button type="button" class="zau-help-x" data-zau-help-close aria-label="Закрыть">×</button></div>';
+        $html.='<div class="zau-help-tabs" role="tablist">';
+        foreach($sections as $key=>$section){$html.='<button type="button" role="tab" data-zau-help-tab="'.esc_attr($key).'">'.esc_html($section['short']).'</button>';}
+        $html.='</div><div class="zau-help-body">';
+        foreach($sections as $key=>$section){$html.='<section class="zau-help-panel" data-zau-help-panel="'.esc_attr($key).'" hidden><h3>'.esc_html($section['title']).'</h3>'.$section['html'].'</section>';}
+        $html.='</div><div class="zau-help-foot"><button type="button" class="zau-union-button" data-zau-help-close>Понятно</button></div></div></div>';
+        return $html;
+    }
+
+    public function help_shortcode($atts=[]) {
+        $atts=shortcode_atts(['label'=>'Как зарегистрироваться или войти?','tab'=>'register'],$atts,'zau_union_help');
+        return '<div class="zau-help-inline">'.$this->help_popup_html(sanitize_text_field($atts['label']),sanitize_key($atts['tab'])).'</div>';
+    }
+
     public function auth_shortcode($atts=[]) {
         $atts=shortcode_atts([
             'id'=>0,'slug'=>'','pin_setup'=>'inherit','mobile_steps'=>'off',
             'return_url'=>'','login_return_url'=>'','register_return_url'=>'','methods'=>'inherit','otp_channels'=>'inherit','default_method'=>'',
             'flow'=>'combined','default_flow'=>'','show_flow_tabs'=>'yes','start_screen'=>'yes',
-            'show_tabs'=>'inherit','show_recovery'=>'inherit','show_heading'=>'yes','show_description'=>'yes','show_remember'=>'yes','pin_device_only'=>'inherit'
+            'show_tabs'=>'inherit','show_recovery'=>'inherit','show_heading'=>'yes','show_description'=>'yes','show_remember'=>'yes','pin_device_only'=>'inherit','show_help'=>'yes'
         ],$atts,'zau_union_auth');
         $returnUrl=esc_url_raw($atts['return_url']);
         $loginReturnUrl=esc_url_raw($atts['login_return_url']);
@@ -2253,6 +2339,7 @@ final class ZAU_Union_Module {
         <div class="zau-union-panel zau-auth<?php echo $activeFlow==='choice'?' is-choosing':' is-flow-selected';?>" data-zau-auth data-return-url="<?php echo esc_attr($returnUrl);?>" data-login-return-url="<?php echo esc_attr($loginReturnUrl);?>" data-register-return-url="<?php echo esc_attr($registerReturnUrl);?>" data-default-method="<?php echo esc_attr($cfg['default']);?>" data-methods="<?php echo esc_attr(implode(',',$cfg['methods']));?>" data-otp-channels="<?php echo esc_attr(implode(',',$cfg['otp_channels']));?>" data-auth-flow="<?php echo esc_attr($cfg['flow']);?>" data-default-flow="<?php echo esc_attr($activeFlow);?>" data-start-screen="<?php echo $cfg['start_screen']?'1':'0';?>" data-pin-device-only="<?php echo $cfg['pin_device_only']?'1':'0';?>">
             <?php if($cfg['show_heading']):?><h2><?php echo $cfg['flow']==='register'?'Регистрация в профсоюз':($cfg['flow']==='combined'?'Личный кабинет профсоюза':'Вход в личный кабинет');?></h2><?php endif;?>
             <?php if($cfg['show_description']):?><p class="zau-auth-main-description"><?php echo $cfg['flow']==='login'?'Выберите способ входа для уже созданного аккаунта.':($cfg['flow']==='combined'?'Сначала выберите: создать новый кабинет или войти в существующий.':($registrationMode==='direct'?'Заполните регистрационную анкету. Подтверждающий код не требуется.':'Сначала подтвердите email или телефон, затем заполните заявление.'));?></p><?php endif;?>
+            <?php if($this->shortcode_switch($atts['show_help']??'yes',true)) echo $this->help_popup_html('Как зарегистрироваться или войти?',$activeFlow==='login'?'recovery':'register');?>
 
             <?php if($cfg['flow']==='combined' && $cfg['show_flow_tabs']):?>
                 <div class="zau-auth-choice-intro" data-zau-auth-choice-intro><strong>Что вы хотите сделать?</strong><span>После выбора откроется только нужный раздел.</span></div>
