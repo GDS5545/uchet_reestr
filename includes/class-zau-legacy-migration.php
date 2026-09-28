@@ -135,6 +135,7 @@ final class ZAU_Legacy_Migration {
         <div class="wrap zau-legacy-wrap">
             <?php zau_admin_hub_nav('import'); ?>
             <h1>Перенос старых пользователей, заявлений и PDF</h1>
+            <div class="notice notice-error inline"><p><strong>Устаревший инструмент:</strong> сопоставляет людей по email и телефону и может прикрепить заявление к чужому аккаунту. Для переноса используйте <a href="<?php echo esc_url(admin_url('admin.php?page=zau-exact-migration')); ?>">«Точный перенос 1:1»</a>.</p></div>
             <div class="notice notice-warning inline"><p><strong>Сначала сделайте полную резервную копию базы и папки <code>wp-content/uploads</code>.</strong> Импортёр не удаляет старые записи и файлы, но перенос на рабочем сайте следует сначала проверить в режиме «Только анализ».</p></div>
 
             <div class="zau-legacy-summary">

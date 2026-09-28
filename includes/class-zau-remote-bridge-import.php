@@ -701,6 +701,7 @@ final class ZAU_Remote_Bridge_Import {
         <div class="wrap zau-remote-wrap">
             <?php zau_admin_hub_nav('import'); ?>
             <h1>Перенос со старого сайта — ФИО + email и точная связь заявлений</h1>
+            <div class="notice notice-error inline"><p><strong>Устаревший инструмент.</strong> Он объединяет людей по ФИО и email и собирает профиль из всех заявлений аккаунта — из-за этого в кабинеты попадали чужие данные. Используйте <a href="<?php echo esc_url(admin_url('admin.php?page=zau-exact-migration')); ?>">«Точный перенос 1:1»</a>.</p></div>
             <?php if (!empty($_GET['saved'])): ?><div class="notice notice-success is-dismissible"><p>Настройки подключения сохранены.</p></div><?php endif; ?>
             <div class="notice notice-warning inline"><p><strong>Перед настоящим переносом сделайте резервные копии обеих баз и каталогов uploads.</strong> Сначала выполните полный пробный анализ и проверьте строки «требуется проверка».</p></div>
 

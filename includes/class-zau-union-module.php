@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.27.1';
+    const VERSION = '2.28.0';
     const DB_VERSION = '2.18.2';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
@@ -1089,7 +1089,7 @@ final class ZAU_Union_Module {
     private function discovered_submission_fields() {
         global $wpdb;
         $keys = [];
-        $rows = $wpdb->get_col("SELECT data_json FROM {$this->submissions_table} WHERE data_json IS NOT NULL AND data_json<>'' ORDER BY id DESC LIMIT 200");
+        $rows = $wpdb->get_col("SELECT data_json FROM {$this->submissions_table} WHERE data_json IS NOT NULL AND data_json<>'' AND status NOT IN (" . $this->legacy_archive_statuses_sql() . ") ORDER BY id DESC LIMIT 200");
         foreach ((array)$rows as $json) {
             $data = json_decode((string)$json, true);
             if (!is_array($data)) { continue; }
@@ -1901,7 +1901,7 @@ final class ZAU_Union_Module {
         // organization name — some forms (e.g. dues-only) have no such field.
         $declaredByUser = [];
         $subRows = $wpdb->get_results($wpdb->prepare(
-            "SELECT user_id,data_json,created_at,id FROM {$this->submissions_table} WHERE user_id IN ($placeholders) ORDER BY user_id ASC,id DESC",
+            "SELECT user_id,data_json,created_at,id FROM {$this->submissions_table} WHERE user_id IN ($placeholders) AND status NOT IN (" . $this->foreign_submission_statuses_sql() . ") ORDER BY user_id ASC,id DESC",
             $userIds
         ));
         foreach ($subRows as $row) {
@@ -2374,6 +2374,7 @@ final class ZAU_Union_Module {
         if($directGuest){$mobileSteps=false;} // Прямая регистрация всегда одной цельной формой.
         ob_start(); ?>
         <form class="zau-union-form zau-aqniet-form<?php echo $mobileSteps?' zau-aqniet-step-form':'';?><?php echo $directGuest?' zau-single-page-registration':'';?>" data-zau-union-form data-form-id="<?php echo (int)$form->id;?>" data-zau-aqniet-steps="<?php echo $mobileSteps?'1':'0';?>"><div class="zau-union-form-head"><span class="zau-aqniet-kicker">AQNIET · Регистрация</span><h2><?php echo esc_html($form->name);?></h2><?php if($form->description):?><p><?php echo esc_html($form->description);?></p><?php endif;?><?php if($directGuest):?><div class="zau-direct-registration-note"><strong>Подтверждающий код не требуется.</strong> Заполните анкету — личный кабинет будет создан автоматически. <?php if($embeddedAuth):?><button type="button" class="zau-link-button" data-zau-open-auth-flow="login">Уже зарегистрированы? Войти</button><?php else:$loginPage=absint($settings['login_page_id']??0);$loginUrl=$loginPage?get_permalink($loginPage):wp_login_url();?><a href="<?php echo esc_url($loginUrl);?>">Уже зарегистрированы? Войти</a><?php endif;?></div><?php endif;?></div><input type="hidden" name="form_id" value="<?php echo (int)$form->id;?>"><?php if($directGuest):?><input type="hidden" name="zau_direct_registration" value="1"><input type="hidden" name="zau_started_at" value="<?php echo esc_attr(time());?>"><input type="hidden" name="zau_human_form" value="0" data-zau-human-form><div class="zau-registration-trap" aria-hidden="true"><label>Оставьте поле пустым<input type="search" name="zau_company_website" value="" tabindex="-1" autocomplete="new-password" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true"></label></div><?php endif;?>
+        <?php echo apply_filters('zau_union_form_before_fields','',$form,$user); ?>
         <?php foreach($fields as $field): $this->render_public_field($field,$user); endforeach; ?>
         <?php if($showPinSetup):?><div class="zau-registration-security" data-zau-registration-security><h3>Код входа в личный кабинет</h3><p>Придумайте постоянный цифровой PIN. Его не нужно получать с сервера при каждом входе; восстановить PIN можно будет через email.</p><input type="hidden" name="zau_pin_setup_mode" value="<?php echo esc_attr($pinMode);?>"><div class="zau-security-grid"><label>Новый PIN<?php if($pinMode==='required'):?> <span class="zau-required-mark">*</span><?php endif;?><input type="password" name="zau_login_pin" inputmode="numeric" pattern="[0-9]*" maxlength="12" autocomplete="new-password" placeholder="От <?php echo (int)$settings['pin_min_length'];?> до <?php echo (int)$settings['pin_max_length'];?> цифр"<?php echo $pinMode==='required'?' required':'';?>></label><label>Повторите PIN<?php if($pinMode==='required'):?> <span class="zau-required-mark">*</span><?php endif;?><input type="password" name="zau_login_pin_confirm" inputmode="numeric" pattern="[0-9]*" maxlength="12" autocomplete="new-password"<?php echo $pinMode==='required'?' required':'';?>></label></div></div><?php else:?><input type="hidden" name="zau_pin_setup_mode" value="off"><?php endif;?>
         <div class="zau-form-actions"><button type="submit" class="zau-union-button">Отправить и сформировать документы</button><span class="zau-form-progress" data-zau-form-progress></span></div><div data-zau-form-result></div><div class="zau-offscreen-render" data-zau-render-holder></div></form>
@@ -2383,7 +2384,7 @@ final class ZAU_Union_Module {
     private function render_public_field($field,$user) {
         $key=$field['key']; $type=$field['type']; $label=$field['label']; $required=$field['required'];
         if($type==='heading'){echo '<div class="zau-form-heading"><h3>'.esc_html($label).'</h3></div>';return;}
-        $value=$this->prefill_value($key,$field['default'],$user); $req=$required?' required':''; $star=$required?' <span class="zau-required-mark">*</span>':'';
+        $value=apply_filters('zau_union_prefill_field_value',$this->prefill_value($key,$field['default'],$user),$field,$user); $req=$required?' required':''; $star=$required?' <span class="zau-required-mark">*</span>':'';
         echo '<div class="zau-form-field zau-field-'.esc_attr($type).'" data-field-key="'.esc_attr($key).'">';
         if($type==='hidden'){echo '<input type="hidden" name="'.esc_attr($key).'" value="'.esc_attr($value).'">';echo '</div>';return;}
         if($type==='checkbox'){echo '<label class="zau-checkbox"><input type="checkbox" name="'.esc_attr($key).'" value="1"'.$req.'> <span>'.esc_html($label).$star.'</span></label>';echo '</div>';return;}
@@ -2418,9 +2419,22 @@ final class ZAU_Union_Module {
         return array_values($latest);
     }
 
+    /**
+     * Архивные заявки точного переноса (class-zau-exact-migration.php) живут
+     * в отдельном блоке кабинета и не считаются «последней заявкой по форме».
+     */
+    private function legacy_archive_statuses_sql() {
+        return "'legacy','legacy_other','legacy_disputed','legacy_unassigned','legacy_superseded','legacy_hidden'";
+    }
+
+    /** Заявки, чьи данные НЕ принадлежат владельцу аккаунта: их нельзя использовать для профиля и карточки. */
+    private function foreign_submission_statuses_sql() {
+        return "'legacy_other','legacy_disputed','legacy_unassigned','legacy_superseded','legacy_hidden'";
+    }
+
     private function latest_user_submissions($uid) {
         global $wpdb;
-        $rows = $wpdb->get_results($wpdb->prepare("SELECT s.*,f.name form_name FROM {$this->submissions_table} s LEFT JOIN {$this->forms_table} f ON f.id=s.form_id WHERE s.user_id=%d ORDER BY s.id DESC", $uid));
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT s.*,f.name form_name FROM {$this->submissions_table} s LEFT JOIN {$this->forms_table} f ON f.id=s.form_id WHERE s.user_id=%d AND s.status NOT IN (" . $this->legacy_archive_statuses_sql() . ") ORDER BY s.id DESC", $uid));
         $latest = [];
         foreach ($rows as $row) {
             $key = (int) $row->form_id;
@@ -2688,6 +2702,7 @@ final class ZAU_Union_Module {
                     </article>
                 <?php endforeach;?>
                 </div>
+                <?php echo apply_filters('zau_union_cabinet_submissions_after','',$uid);?>
             </section>
             <?php endif;?>
 
@@ -2853,7 +2868,7 @@ final class ZAU_Union_Module {
             $formUrl=$this->member_form_url();
             ?>
             <section id="zau-submissions" class="zau-cabinet-section zau-cabinet-tab-panel" data-zau-tab-panel="submissions"><?php if($showHeading):?><div class="zau-section-head"><div><h3><?php echo esc_html($heading);?></h3><?php if($subtitle):?><p><?php echo esc_html($subtitle);?></p><?php endif;?></div><a class="zau-union-button zau-secondary-button" href="<?php echo esc_url($formUrl);?>">Пересдать / подать новое заявление</a></div><?php endif;?><div class="zau-cabinet-generation" data-zau-cabinet-generation hidden><span data-zau-cabinet-progress></span><div data-zau-cabinet-result></div></div><?php if(!$submissions):?><div class="zau-empty-state">Отправленных форм пока нет.</div><?php endif;?><div class="zau-submission-list">
-            <?php foreach($submissions as $row):$submissionDocs=$docsBySubmission[(int)$row->id]??[];$needsPdf=!$submissionDocs;foreach($submissionDocs as $submissionDoc){if(empty($submissionDoc->pdf_url)){$needsPdf=true;break;}}$auto=$needsPdf&&!$autoAssigned;if($auto)$autoAssigned=true;?><article class="zau-submission-row"><div><strong>#<?php echo (int)$row->id;?> — <?php echo esc_html($row->form_name);?></strong><small><?php echo esc_html($row->created_at);?></small></div><span class="zau-submission-status"><?php echo esc_html($row->status==='submitted'?'Отправлено':$row->status);?></span><?php if($needsPdf):?><button type="button" class="zau-union-button zau-small-button" data-zau-recover-submission="<?php echo (int)$row->id;?>" data-auto="<?php echo $auto?'1':'0';?>">Сформировать PDF</button><?php endif;?></article><?php endforeach;?></div></section><div data-zau-cabinet-render-holder aria-hidden="true"></div>
+            <?php foreach($submissions as $row):$submissionDocs=$docsBySubmission[(int)$row->id]??[];$needsPdf=!$submissionDocs;foreach($submissionDocs as $submissionDoc){if(empty($submissionDoc->pdf_url)){$needsPdf=true;break;}}$auto=$needsPdf&&!$autoAssigned;if($auto)$autoAssigned=true;?><article class="zau-submission-row"><div><strong>#<?php echo (int)$row->id;?> — <?php echo esc_html($row->form_name);?></strong><small><?php echo esc_html($row->created_at);?></small></div><span class="zau-submission-status"><?php echo esc_html($row->status==='submitted'?'Отправлено':$row->status);?></span><?php if($needsPdf):?><button type="button" class="zau-union-button zau-small-button" data-zau-recover-submission="<?php echo (int)$row->id;?>" data-auto="<?php echo $auto?'1':'0';?>">Сформировать PDF</button><?php endif;?></article><?php endforeach;?></div><?php echo apply_filters('zau_union_cabinet_submissions_after','',$uid);?></section><div data-zau-cabinet-render-holder aria-hidden="true"></div>
         <?php elseif ($section === 'card'): ?>
             <section id="zau-card" class="zau-cabinet-section zau-cabinet-tab-panel" data-zau-tab-panel="card"><?php echo $this->member_card_shortcode();?></section>
         <?php elseif ($section === 'benefits'): ?>
@@ -4324,7 +4339,7 @@ $xref
             if(is_wp_error($result))return $result;
         }
         global $wpdb;
-        $latest=(int)$wpdb->get_var($wpdb->prepare("SELECT id FROM {$this->submissions_table} WHERE user_id=%d ORDER BY id DESC LIMIT 1",$memberId));
+        $latest=(int)$wpdb->get_var($wpdb->prepare("SELECT id FROM {$this->submissions_table} WHERE user_id=%d AND status NOT IN (".$this->legacy_archive_statuses_sql().") ORDER BY id DESC LIMIT 1",$memberId));
         if($latest)$wpdb->update($this->submissions_table,['status'=>$submissionStatus,'updated_at'=>current_time('mysql')],['id'=>$latest]);
         $this->log('membership_'.$approval,'user',$memberId,'decision='.$decision.($note!==''?'; note='.$note:''));
         return true;
@@ -4374,7 +4389,7 @@ $xref
 
     private function latest_submission_data($memberId) {
         global $wpdb;
-        $json=$wpdb->get_var($wpdb->prepare("SELECT data_json FROM {$this->submissions_table} WHERE user_id=%d ORDER BY id DESC LIMIT 1",(int)$memberId));
+        $json=$wpdb->get_var($wpdb->prepare("SELECT data_json FROM {$this->submissions_table} WHERE user_id=%d AND status NOT IN (".$this->foreign_submission_statuses_sql().") ORDER BY id DESC LIMIT 1",(int)$memberId));
         $data=json_decode((string)$json,true);return is_array($data)?$data:[];
     }
 
@@ -4458,7 +4473,7 @@ $xref
             </form>
             <?php if($canReview):?><div class="zau-membership-decision"><h4>Решение по вступлению</h4><p>После одобрения статус автоматически станет «Состоит в профсоюзе».</p><textarea data-zau-membership-note placeholder="Комментарий к решению"></textarea><div><button type="button" class="zau-union-button" data-zau-membership-decision="approve">Одобрить вступление</button><button type="button" class="zau-union-button zau-secondary-button" data-zau-membership-decision="revision">На доработку</button><button type="button" class="zau-union-button zau-danger-button" data-zau-membership-decision="reject">Отклонить</button></div><small>Текущее решение: <?php echo esc_html($this->membership_approval_label($approval));?></small></div><?php endif;?>
             <?php if($history):?><details class="zau-member-history"><summary>История статусов и согласований</summary><ul><?php foreach($history as $item):?><li><strong><?php echo esc_html(mysql2date('d.m.Y H:i',$item->created_at));?></strong> — <?php echo esc_html($item->details);?></li><?php endforeach;?></ul></details><?php endif;?>
-        </section><?php return ob_get_clean();
+        </section><?php echo apply_filters('zau_union_member_card_after','',$memberId,$viewerId);?><?php return ob_get_clean();
     }
 
     public function ajax_reveal_sensitive() {

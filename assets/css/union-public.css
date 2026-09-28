@@ -331,3 +331,19 @@ body:has([class*="zau-nav-mobile-fixed-yes"] .zau-cabinet-nav-mobile){padding-bo
 
 /* 2.25 — лёгкая заглушка вместо тяжёлого рендера во время фонового сохранения Elementor */
 .zau-elementor-save-placeholder{padding:16px;border:1px dashed #c3c4c7;border-radius:10px;color:#667085;font-size:13px}
+/* 2.28.0 — архив заявлений со старого сайта (точный перенос 1:1) */
+.zau-legacy-archive{margin-top:24px;display:flex;flex-direction:column;gap:10px}
+.zau-legacy-item{border:1px solid #d9e2ef;border-radius:12px;background:#fff;padding:0 14px}
+.zau-legacy-item summary{cursor:pointer;padding:12px 0;display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}
+.zau-legacy-item summary small{color:#667085}
+.zau-legacy-item.is-legacy_other{border-color:#fedf89;background:#fffcf5}
+.zau-legacy-item.is-legacy_disputed{border-color:#fecdca;background:#fffbfa;opacity:.9}
+.zau-legacy-badge{font-size:12px;padding:2px 8px;border-radius:999px;background:#fef0c7;color:#93370d}
+.is-legacy_disputed .zau-legacy-badge{background:#fee4e2;color:#b42318}
+.zau-legacy-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 16px;margin:4px 0 12px}
+.zau-legacy-fields dt{font-size:12px;color:#667085}.zau-legacy-fields dd{margin:0;word-break:break-word}
+.zau-legacy-actions{display:flex;flex-wrap:wrap;gap:8px;padding-bottom:14px}
+.zau-legacy-hint{background:#fffaeb;border-radius:8px;padding:8px 10px;margin:0 0 10px;font-size:14px}
+.zau-legacy-profile-note{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;background:#f5f8ff;border:1px solid #d1e0ff;border-radius:12px;padding:12px 14px;font-size:14px}
+.zau-legacy-profile-note.is-open{background:#fffaeb;border-color:#fedf89}
+.zau-legacy-prefill-note{margin-bottom:14px}

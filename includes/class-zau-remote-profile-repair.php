@@ -422,6 +422,19 @@ final class ZAU_Remote_Profile_Repair {
         return $this->organization_match($name, '', $allowCreate, $dryRun);
     }
 
+    /** Public wrappers used by the exact 1:1 migration (class-zau-exact-migration.php). */
+    public function match_organization($name, $bin, $allowCreate = true, $dryRun = false) {
+        return $this->organization_match($name, $bin, $allowCreate, $dryRun);
+    }
+
+    public function match_branch($value) {
+        return $this->branch_match($value);
+    }
+
+    public function extract_profile_fields(array $labelledValues) {
+        return $this->extract_from_fields($labelledValues);
+    }
+
     private function organization_match($name,$bin,$allowCreate,$dryRun) {
         global $wpdb;
         $name=trim((string)$name);
