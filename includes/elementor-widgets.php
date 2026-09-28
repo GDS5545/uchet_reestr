@@ -25,8 +25,14 @@ abstract class ZAU_Union_Elementor_Widget_Base extends \Elementor\Widget_Base {
 
     protected function render_shortcode_in_wrapper($shortcode, $extra_classes = '') {
         $classes = trim('zau-elementor-interface zau-aqniet-blue zau-elementor-' . sanitize_html_class($this->get_name()) . ' ' . $extra_classes);
+        $output = do_shortcode($shortcode);
+        // Safety net: if a shortcode attribute ever contains characters that
+        // break WordPress's [tag] parsing, do_shortcode() leaves the raw,
+        // unparsed tag text in the output instead of real HTML — never show
+        // that broken text on the live page.
+        if (strpos($output, '[zau_union_') !== false) { $output = ''; }
         echo '<div class="' . esc_attr($classes) . '">';
-        echo do_shortcode($shortcode); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+        echo $output; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
         echo '</div>';
     }
 
@@ -447,20 +453,115 @@ class ZAU_Union_Cabinet_Section_Widget extends ZAU_Union_Elementor_Widget_Base {
         $this->add_control('show_quick_actions', ['label'=>'Быстрые действия на главной','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes','condition'=>['section_type'=>'full']]);
         $this->add_control('show_document_search', ['label'=>'Поиск и фильтр документов','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes','condition'=>['section_type'=>'full']]);
         $this->add_control('show_member_card', ['label'=>'Показывать личную карточку','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes','condition'=>['section_type'=>'full'],'description'=>'Скрывает вкладку, быстрый переход и содержимое личной карточки в этом экземпляре кабинета.']);
-        $this->add_control('mobile_bottom_nav', ['label'=>'Закреплённые вкладки на телефоне','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes','condition'=>['section_type'=>'full']]);
+        $this->add_control('mobile_bottom_nav', ['label'=>'Закреплённые вкладки на телефоне','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes','prefix_class'=>'zau-nav-mobile-fixed-','condition'=>['section_type'=>'full']]);
         $this->add_control('custom_title', ['label'=>'Свой заголовок','type'=>\Elementor\Controls_Manager::TEXT,'condition'=>['section_type'=>['documents','submissions','card','benefits','members','info','logins']]]);
         $this->add_control('custom_subtitle', ['label'=>'Своё описание','type'=>\Elementor\Controls_Manager::TEXTAREA,'rows'=>3,'condition'=>['section_type'=>['documents','submissions','card','benefits','members','info','logins']]]);
         $this->add_control('show_heading', ['label'=>'Показывать заголовок раздела','type'=>\Elementor\Controls_Manager::SWITCHER,'label_on'=>'Да','label_off'=>'Нет','return_value'=>'yes','default'=>'yes','condition'=>['section_type'=>['documents','submissions','card','benefits','members','info','logins']]]);
         $this->add_control('nav_items', ['label'=>'Пункты навигации','type'=>\Elementor\Controls_Manager::TEXT,'default'=>'home,documents,submissions,card,benefits,members,registry,info,logins','description'=>'Допустимо: home, documents, submissions, card, benefits, members, registry, info, logins.','condition'=>['section_type'=>'navigation']]);
         $this->end_controls_section();
+
+        $this->start_controls_section('content_nav_style', ['label'=>'Пункты меню: иконки и подписи','condition'=>['section_type'=>['full','navigation']]]);
+        $iconGlyphs=['' =>'По умолчанию','dashicons-admin-home'=>'⌂ Дом','dashicons-media-document'=>'▤ Документ','dashicons-yes-alt'=>'✓ Галочка','dashicons-id-alt'=>'▣ Карточка','dashicons-tag'=>'% Процент/тег','dashicons-groups'=>'◎ Люди','dashicons-list-view'=>'☰ Список','dashicons-info'=>'ℹ Информация','dashicons-clock'=>'⏱ Часы','dashicons-star-filled'=>'★ Звезда','dashicons-heart'=>'♥ Сердце','dashicons-flag'=>'⚑ Флаг','dashicons-admin-generic'=>'⚙ Шестерня','dashicons-email-alt'=>'✉ Конверт','custom'=>'Свой символ / эмодзи… (может задваиваться на некоторых телефонах)'];
+        $repeater = new \Elementor\Repeater();
+        $repeater->add_control('tab_key', ['label'=>'Вкладка','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'home','options'=>$builtInTabs]);
+        $repeater->add_control('icon_choice', ['label'=>'Иконка','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'','options'=>$iconGlyphs]);
+        $repeater->add_control('icon_custom', ['label'=>'Свой символ / эмодзи','type'=>\Elementor\Controls_Manager::TEXT,'condition'=>['icon_choice'=>'custom']]);
+        $repeater->add_control('label_short', ['label'=>'Короткое название (телефон)','type'=>\Elementor\Controls_Manager::TEXT,'placeholder'=>'Например: Акции']);
+        $repeater->add_control('label_full', ['label'=>'Полное название (компьютер)','type'=>\Elementor\Controls_Manager::TEXT,'placeholder'=>'Оставьте пустым для стандартного']);
+        $this->add_control('nav_item_styles', [
+            'label'=>'Пункты меню','type'=>\Elementor\Controls_Manager::REPEATER,
+            'fields'=>$repeater->get_controls(),'title_field'=>'{{{ tab_key }}}',
+            'description'=>'Переопределяет иконку и подписи выбранной вкладки. Короткая подпись используется на телефоне, полная — на компьютере. Вкладки, не добавленные сюда, используют стандартный вид.',
+        ]);
+        $this->end_controls_section();
+
+        $this->start_controls_section('content_benefits', ['label'=>'Акции: содержимое карточек','condition'=>['section_type'=>'benefits']]);
+        $this->add_responsive_control('benefits_columns', ['label'=>'Колонок в сетке','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'3','options'=>['1'=>'1','2'=>'2','3'=>'3','4'=>'4'],'selectors'=>['{{WRAPPER}} .zau-elementor-interface .zau-benefit-grid'=>'grid-template-columns:repeat({{VALUE}},minmax(0,1fr));']]);
+        $this->add_control('benefits_order_by', ['label'=>'Сортировка','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'menu_order','options'=>['menu_order'=>'Порядок в списке акций','date'=>'Дата публикации','title'=>'Название']]);
+        $this->add_control('benefits_order', ['label'=>'Направление','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'ASC','options'=>['ASC'=>'По возрастанию','DESC'=>'По убыванию']]);
+        $this->add_control('benefits_limit', ['label'=>'Максимум карточек','type'=>\Elementor\Controls_Manager::NUMBER,'default'=>0,'min'=>0,'max'=>100,'description'=>'0 — показать все доступные (до 100).']);
+        $this->add_control('benefits_image_ratio', ['label'=>'Пропорции изображения','type'=>\Elementor\Controls_Manager::SELECT,'default'=>'','options'=>['' =>'Как в оригинале (180px)','1:1'=>'Квадрат 1:1','4:3'=>'Альбомное 4:3','16:9'=>'Широкое 16:9']]);
+        $this->add_control('benefits_show_image', ['label'=>'Показывать изображение','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']);
+        $this->add_control('benefits_show_title', ['label'=>'Показывать название','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']);
+        $this->add_control('benefits_show_badge', ['label'=>'Показывать бейдж скидки','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']);
+        $this->add_control('benefits_show_partner', ['label'=>'Показывать партнёра','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']);
+        $this->add_control('benefits_show_description', ['label'=>'Показывать описание','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']);
+        $this->add_control('benefits_show_promo', ['label'=>'Показывать промокод','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']);
+        $this->add_control('benefits_show_expiry', ['label'=>'Показывать срок действия','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']);
+        $this->add_control('benefits_show_button', ['label'=>'Показывать кнопку','type'=>\Elementor\Controls_Manager::SWITCHER,'return_value'=>'yes','default'=>'yes']);
+        $this->end_controls_section();
+
         $this->register_auth_method_controls();
         $this->register_common_content_controls();
         $this->register_style_controls();
+        $this->register_mobile_nav_style_controls();
+        $this->register_benefits_style_controls();
+    }
+
+    protected function register_mobile_nav_style_controls() {
+        $this->start_controls_section('style_nav_mobile', ['label'=>'Навигация на телефоне','tab'=>\Elementor\Controls_Manager::TAB_STYLE,'condition'=>['section_type'=>'full']]);
+        $this->add_control('nav_mobile_hint', ['type'=>\Elementor\Controls_Manager::RAW_HTML,'raw'=>'Действует, когда включено «Закреплённые вкладки на телефоне» на вкладке «Содержимое».']);
+        $this->add_control('nav_mobile_z_index', ['label'=>'Z-index (поверх других элементов)','type'=>\Elementor\Controls_Manager::NUMBER,'min'=>1,'max'=>2147483647,'placeholder'=>'999999','selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav'=>'z-index:{{VALUE}};'],'description'=>'Увеличьте, если футер или другой блок сайта перекрывает панель.']);
+        $this->add_responsive_control('nav_mobile_icon_size', ['label'=>'Размер иконки, px','type'=>\Elementor\Controls_Manager::SLIDER,'range'=>['px'=>['min'=>12,'max'=>36]],'selectors'=>['{{WRAPPER}} .zau-cabinet-nav-icon'=>'font-size:{{SIZE}}{{UNIT}};']]);
+        $this->add_group_control(\Elementor\Group_Control_Typography::get_type(), ['name'=>'nav_mobile_label_typography','label'=>'Шрифт подписи','selector'=>'{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav-label-short, {{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav-label-full']);
+        $this->add_responsive_control('nav_mobile_gap', ['label'=>'Промежуток между пунктами, px','type'=>\Elementor\Controls_Manager::SLIDER,'range'=>['px'=>['min'=>0,'max'=>40]],'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav'=>'gap:{{SIZE}}{{UNIT}};']]);
+        $this->add_responsive_control('nav_mobile_padding', ['label'=>'Внутренние отступы панели','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','em'],'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav'=>'padding:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+        $this->add_responsive_control('nav_mobile_radius', ['label'=>'Скругление верхних углов','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','%'],'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav'=>'border-radius:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} 0 0;']]);
+        $this->add_control('nav_mobile_background', ['label'=>'Фон нижнего меню','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav'=>'background-color:{{VALUE}};']]);
+        $this->add_control('nav_mobile_border_color', ['label'=>'Верхняя граница','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav'=>'border-top:1px solid {{VALUE}};']]);
+        $this->add_control('nav_mobile_text_color', ['label'=>'Цвет текста и иконок','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav a'=>'color:{{VALUE}};']]);
+        $this->add_control('nav_mobile_active_color', ['label'=>'Цвет активного пункта','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav a.is-active'=>'color:{{VALUE}}!important;']]);
+        $this->add_control('nav_mobile_active_background', ['label'=>'Фон-«таблетка» активного пункта','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>['{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav a.is-active'=>'background-color:{{VALUE}};border-radius:12px;']]);
+        $this->add_group_control(\Elementor\Group_Control_Box_Shadow::get_type(), ['name'=>'nav_mobile_shadow','selector'=>'{{WRAPPER}}.zau-nav-mobile-fixed-yes .zau-cabinet-nav']);
+        $this->end_controls_section();
+    }
+
+    protected function register_benefits_style_controls() {
+        $scope = '{{WRAPPER}} .zau-elementor-interface';
+        $this->start_controls_section('style_benefits', ['label'=>'Оформление акций (сетка и карточка)','tab'=>\Elementor\Controls_Manager::TAB_STYLE,'condition'=>['section_type'=>'benefits']]);
+        $this->add_responsive_control('benefits_gap', ['label'=>'Промежуток между карточками, px','type'=>\Elementor\Controls_Manager::SLIDER,'range'=>['px'=>['min'=>0,'max'=>60]],'selectors'=>[$scope.' .zau-benefit-grid'=>'gap:{{SIZE}}{{UNIT}};']]);
+        $this->add_control('benefit_card_heading', ['type'=>\Elementor\Controls_Manager::HEADING,'label'=>'Карточка']);
+        $this->add_control('benefit_card_background', ['label'=>'Фон карточки','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-benefit-card'=>'background-color:{{VALUE}};']]);
+        $this->add_group_control(\Elementor\Group_Control_Border::get_type(), ['name'=>'benefit_card_border','selector'=>$scope.' .zau-benefit-card']);
+        $this->add_responsive_control('benefit_card_radius', ['label'=>'Скругление','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','%'],'selectors'=>[$scope.' .zau-benefit-card'=>'border-radius:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+        $this->add_responsive_control('benefit_card_padding', ['label'=>'Внутренние отступы','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','em','%'],'selectors'=>[$scope.' .zau-benefit-content'=>'padding:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+        $this->add_group_control(\Elementor\Group_Control_Box_Shadow::get_type(), ['name'=>'benefit_card_shadow','selector'=>$scope.' .zau-benefit-card']);
+        $this->add_control('benefit_badge_heading', ['type'=>\Elementor\Controls_Manager::HEADING,'label'=>'Бейдж скидки','separator'=>'before']);
+        $this->add_control('benefit_badge_background', ['label'=>'Фон бейджа','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-benefit-badge'=>'background-color:{{VALUE}};']]);
+        $this->add_control('benefit_badge_color', ['label'=>'Цвет текста бейджа','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-benefit-badge'=>'color:{{VALUE}};']]);
+        $this->add_control('benefit_title_heading', ['type'=>\Elementor\Controls_Manager::HEADING,'label'=>'Название и текст','separator'=>'before']);
+        $this->add_control('benefit_title_color', ['label'=>'Цвет названия','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-benefit-card h4'=>'color:{{VALUE}};']]);
+        $this->add_group_control(\Elementor\Group_Control_Typography::get_type(), ['name'=>'benefit_title_typography','selector'=>$scope.' .zau-benefit-card h4']);
+        $this->add_control('benefit_partner_color', ['label'=>'Цвет партнёра','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-benefit-partner'=>'color:{{VALUE}};']]);
+        $this->add_control('benefit_description_color', ['label'=>'Цвет описания','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-benefit-description'=>'color:{{VALUE}};']]);
+        $this->add_group_control(\Elementor\Group_Control_Typography::get_type(), ['name'=>'benefit_description_typography','selector'=>$scope.' .zau-benefit-description']);
+        $this->add_control('benefit_button_heading', ['type'=>\Elementor\Controls_Manager::HEADING,'label'=>'Кнопка','separator'=>'before']);
+        $this->add_control('benefit_button_background', ['label'=>'Фон кнопки','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-benefit-card .zau-union-button'=>'background-color:{{VALUE}}!important;']]);
+        $this->add_control('benefit_button_color', ['label'=>'Цвет текста кнопки','type'=>\Elementor\Controls_Manager::COLOR,'selectors'=>[$scope.' .zau-benefit-card .zau-union-button'=>'color:{{VALUE}}!important;']]);
+        $this->add_responsive_control('benefit_button_radius', ['label'=>'Скругление кнопки','type'=>\Elementor\Controls_Manager::DIMENSIONS,'size_units'=>['px','%'],'selectors'=>[$scope.' .zau-benefit-card .zau-union-button'=>'border-radius:{{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};']]);
+        $this->end_controls_section();
+    }
+
+    protected function nav_style_json($s) {
+        $rows=is_array($s['nav_item_styles']??null)?$s['nav_item_styles']:[];
+        if(!$rows)return '';
+        $clean=[];
+        foreach($rows as $row){
+            if(empty($row['tab_key']))continue;
+            $clean[]=['tab_key'=>$row['tab_key'],'icon_choice'=>$row['icon_choice']??'','icon_custom'=>$row['icon_custom']??'','label_short'=>$row['label_short']??'','label_full'=>$row['label_full']??''];
+        }
+        if (!$clean) { return ''; }
+        // base64-wrapped: a raw JSON array contains literal [ and ] characters,
+        // which are also WordPress's shortcode tag delimiters — embedding that
+        // directly as a shortcode attribute value corrupts parsing of the
+        // whole tag (the browser then shows the unparsed shortcode as text).
+        return base64_encode(wp_json_encode($clean, JSON_UNESCAPED_UNICODE));
     }
     protected function render() {
         $s = $this->get_settings_for_display();
         $auth = $this->auth_shortcode_attributes($s);
         $type = sanitize_key($s['section_type'] ?? 'full');
+        $navStyle = $this->nav_style_json($s);
         if ($type === 'full') {
             $defaultTab=sanitize_key($s['cabinet_default_tab']??'home');
             $tabs=is_array($s['cabinet_tabs']??null)?array_values(array_filter(array_map('sanitize_key',$s['cabinet_tabs']))):['home','documents','submissions','members','registry','info','logins'];
@@ -470,12 +571,15 @@ class ZAU_Union_Cabinet_Section_Widget extends ZAU_Union_Elementor_Widget_Base {
             $memberCard=(($s['show_member_card']??'yes')==='yes')?'yes':'no';
             if($memberCard==='no')$tabs=array_values(array_diff($tabs,['card']));
             $bottomNav=(($s['mobile_bottom_nav']??'yes')==='yes')?'yes':'no';
-            $shortcode = '[zau_union_cabinet default_tab="'.esc_attr($defaultTab).'" tabs="'.esc_attr(implode(',',$tabs)).'" custom_tabs="'.$showCustom.'" quick_actions="'.$quick.'" document_search="'.$docSearch.'" member_card="'.$memberCard.'" mobile_bottom_nav="'.$bottomNav.'"' . $auth . ']';
+            $shortcode = '[zau_union_cabinet default_tab="'.esc_attr($defaultTab).'" tabs="'.esc_attr(implode(',',$tabs)).'" custom_tabs="'.$showCustom.'" quick_actions="'.$quick.'" document_search="'.$docSearch.'" member_card="'.$memberCard.'" mobile_bottom_nav="'.$bottomNav.'" nav_style="'.esc_attr($navStyle).'"' . $auth . ']';
         }
         elseif ($type === 'registry') { $shortcode = '[zau_union_org_registry' . $auth . ']'; }
         elseif (get_page_by_path($type,OBJECT,'zau_union_tab') || get_posts(['post_type'=>'zau_union_tab','post_status'=>'publish','numberposts'=>1,'meta_key'=>'_zau_tab_slug','meta_value'=>$type])) { $shortcode = '[zau_union_custom_tab slug="'.esc_attr($type).'"' . $auth . ']'; }
+        elseif ($type === 'benefits') {
+            $shortcode = '[zau_union_benefits title="'.esc_attr(sanitize_text_field($s['custom_title'] ?? '')).'" subtitle="'.esc_attr(sanitize_text_field($s['custom_subtitle'] ?? '')).'" show_heading="'.((($s['show_heading'] ?? 'yes')==='yes')?'yes':'no').'" order_by="'.esc_attr(sanitize_key($s['benefits_order_by']??'menu_order')).'" order="'.esc_attr(sanitize_key($s['benefits_order']??'ASC')).'" limit="'.(int)($s['benefits_limit']??0).'" image_ratio="'.esc_attr(sanitize_text_field($s['benefits_image_ratio']??'')).'" show_image="'.((($s['benefits_show_image']??'yes')==='yes')?'yes':'no').'" show_title="'.((($s['benefits_show_title']??'yes')==='yes')?'yes':'no').'" show_badge="'.((($s['benefits_show_badge']??'yes')==='yes')?'yes':'no').'" show_partner="'.((($s['benefits_show_partner']??'yes')==='yes')?'yes':'no').'" show_description="'.((($s['benefits_show_description']??'yes')==='yes')?'yes':'no').'" show_promo="'.((($s['benefits_show_promo']??'yes')==='yes')?'yes':'no').'" show_expiry="'.((($s['benefits_show_expiry']??'yes')==='yes')?'yes':'no').'" show_button="'.((($s['benefits_show_button']??'yes')==='yes')?'yes':'no').'"' . $auth . ']';
+        }
         else {
-            $shortcode = '[zau_union_cabinet_section section="'.esc_attr($type).'" title="'.esc_attr(sanitize_text_field($s['custom_title'] ?? '')).'" subtitle="'.esc_attr(sanitize_text_field($s['custom_subtitle'] ?? '')).'" show_heading="'.((($s['show_heading'] ?? 'yes')==='yes')?'yes':'no').'" nav_items="'.esc_attr(sanitize_text_field($s['nav_items'] ?? '')).'"' . $auth . ']';
+            $shortcode = '[zau_union_cabinet_section section="'.esc_attr($type).'" title="'.esc_attr(sanitize_text_field($s['custom_title'] ?? '')).'" subtitle="'.esc_attr(sanitize_text_field($s['custom_subtitle'] ?? '')).'" show_heading="'.((($s['show_heading'] ?? 'yes')==='yes')?'yes':'no').'" nav_items="'.esc_attr(sanitize_text_field($s['nav_items'] ?? '')).'" nav_style="'.esc_attr($navStyle).'"' . $auth . ']';
         }
         $this->render_shortcode_in_wrapper($shortcode, $this->wrapper_classes_from_settings($s));
     }

@@ -57,7 +57,7 @@ final class ZAU_Universal_Import {
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             import_token varchar(64) NOT NULL,
             source_hash varchar(64) NOT NULL,
-            row_number bigint(20) unsigned NOT NULL DEFAULT 0,
+            `row_number` bigint(20) unsigned NOT NULL DEFAULT 0,
             legacy_user_id varchar(100) NULL,
             legacy_entry_id varchar(100) NULL,
             target_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
@@ -78,8 +78,8 @@ final class ZAU_Universal_Import {
     public function admin_menu() {
         add_submenu_page(
             'zau-certificates',
-            'Перенос аккаунтов и заявлений',
-            'Импорт аккаунтов',
+            'Импорт и перенос данных',
+            'Импорт и перенос',
             ZAU_Certificate_PDF_Generator::CAP_MANAGE,
             'zau-universal-import',
             [$this, 'page']
@@ -1130,6 +1130,7 @@ final class ZAU_Universal_Import {
         $job = (array)get_option($this->job_option_key(), []);
         ?>
         <div class="wrap zau-universal-wrap">
+            <?php zau_admin_hub_nav('import'); ?>
             <h1>Перенос аккаунтов и старых заявлений</h1>
             <div class="notice notice-warning inline"><p><strong>Перед импортом сделайте резервную копию базы данных.</strong> Импортёр не удаляет пользователей и не заменяет существующие данные без отдельной галочки.</p></div>
 

@@ -261,6 +261,7 @@
                     <label>Выравнивание<select name="field_align"><option value="left">Слева</option><option value="center">По центру</option><option value="right">Справа</option></select></label>
                     <label>Интервал строк<input type="number" min="0.8" max="2.5" step="0.05" name="field_lineHeight" value="${esc(f.lineHeight)}"></label>
                     <label>Макс. строк<input type="number" min="1" max="10" name="field_maxLines" value="${esc(f.maxLines)}"></label>
+                    <label>Направление роста текста<select name="field_growDirection"><option value="down">Вниз (Y — верхняя граница)</option><option value="up">Вверх (Y — нижняя граница)</option></select></label>
                 </div>
                 <div class="zau-check-row"><label><input type="checkbox" name="field_bold" ${Number(f.bold) ? 'checked' : ''}> Жирный</label><label><input type="checkbox" name="field_italic" ${Number(f.italic) ? 'checked' : ''}> Курсив</label></div>`);
 
@@ -279,6 +280,7 @@
             const font = fieldPanel.querySelector('[name="field_fontFamily"]'); if (font) font.value = f.fontFamily || 'Arial';
             const align = fieldPanel.querySelector('[name="field_align"]'); if (align) align.value = f.align || 'center';
             const fit = fieldPanel.querySelector('[name="field_fit"]'); if (fit) fit.value = f.fit || 'contain';
+            const grow = fieldPanel.querySelector('[name="field_growDirection"]'); if (grow) grow.value = f.growDirection || 'down';
 
             fieldPanel.querySelectorAll('input,select').forEach(input => input.addEventListener('input', () => {
                 const name = input.name.replace('field_', '');
@@ -744,7 +746,11 @@
         ctx.font=style+size+'px "'+(cfg.fontFamily||'Arial')+'"'; ctx.fillStyle=cfg.color||'#111'; ctx.textBaseline='top'; ctx.textAlign=cfg.align||'center';
         const lines=splitText(ctx,value,maxWidth).slice(0,Number(cfg.maxLines||2)); const lh=size*Number(cfg.lineHeight||1.2);
         const tx=cfg.align==='left'?x:(cfg.align==='right'?x+maxWidth:x+maxWidth/2);
-        lines.forEach((line,i)=>ctx.fillText(line,tx,y+i*lh,maxWidth));
+        // growDirection 'up' anchors Y to the bottom of the block, so extra
+        // wrapped lines push upward and stay within the field's top border
+        // instead of overflowing past Y as before.
+        const startY = cfg.growDirection==='up' ? y-lines.length*lh : y;
+        lines.forEach((line,i)=>ctx.fillText(line,tx,startY+i*lh,maxWidth));
     }
 
     async function drawPlacedImage(ctx, cfg, url, w, h) {

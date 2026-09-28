@@ -3,3 +3,6 @@
 /* 2.6 — массовая вставка филиалов */
 .zau-branch-text-import{margin-bottom:18px}.zau-branch-text-import textarea{width:100%;min-height:190px}.zau-branch-text-import details{margin:10px 0;color:#57655e}.zau-branch-text-import code{white-space:normal}
 .zau-benefit-meta-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px}.zau-bulk-status-bar{position:sticky;top:32px;z-index:20;display:flex;gap:8px;flex-wrap:wrap;padding:12px;background:#fff;border:1px solid #c3c4c7;box-shadow:0 4px 16px rgba(0,0,0,.08);margin:14px 0}.zau-bulk-status-bar select,.zau-bulk-status-bar input{min-height:36px}@media(max-width:782px){.zau-benefit-meta-grid{grid-template-columns:1fr}.zau-bulk-status-bar{top:46px}}
+
+/* 2.23 — вкладки хабов «Пользователи» / «Оформление и данные» без перезагрузки страницы */
+.zau-hub-loading{opacity:.45;pointer-events:none;transition:opacity .15s ease}
