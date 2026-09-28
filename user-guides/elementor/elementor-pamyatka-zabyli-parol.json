@@ -1,0 +1,787 @@
+{
+ "version": "0.4",
+ "title": "Памятка: забыли пароль или PIN",
+ "type": "page",
+ "content": [
+  {
+   "id": "93be563",
+   "elType": "section",
+   "settings": {
+    "gap": "no",
+    "layout": "boxed",
+    "content_width": {
+     "unit": "px",
+     "size": 760,
+     "sizes": []
+    },
+    "padding": {
+     "unit": "px",
+     "top": "28",
+     "right": "16",
+     "bottom": "34",
+     "left": "16",
+     "isLinked": false
+    },
+    "css_classes": "zau-g zau-g-hero",
+    "background_background": "gradient",
+    "background_color": "#0d47a1",
+    "background_color_b": "#1e88e5",
+    "background_gradient_angle": {
+     "unit": "deg",
+     "size": 135,
+     "sizes": []
+    }
+   },
+   "elements": [
+    {
+     "id": "da3c707",
+     "elType": "column",
+     "settings": {
+      "_column_size": 100,
+      "_inline_size": null,
+      "css_classes": ""
+     },
+     "elements": [
+      {
+       "id": "9b45115",
+       "elType": "widget",
+       "widgetType": "html",
+       "settings": {
+        "html": "<style>.zau-g{--blue:#1565c0;--blue-d:#0d47a1;--blue-l:#e8f1fc;--ink:#101828;--muted:#475467;--line:#e4e7ec;--bg:#f5f7fb;--card:#fff;--warn:#f79009;--warn-l:#fff7e6;--red:#d92d20;--red-l:#fef3f2;--green:#12b76a;--green-l:#ecfdf3;font-family:-apple-system,\"Segoe UI\",Roboto,Arial,sans-serif;font-size:17px;line-height:1.55;color:var(--ink)}\n.zau-g .elementor-widget,.zau-g .elementor-heading-title{font-family:inherit}\n.zau-g .elementor-widget:not(:last-child){margin-block-end:12px}\n.zau-g .elementor-widget p{margin:6px 0}\n.zau-g .elementor-widget :is(.elementor-widget-container,.elementor-text-editor)>*:first-child,.zau-g .elementor-text-editor>*:first-child{margin-top:0}.zau-g .elementor-widget-text-editor>*:first-child,.zau-g .elementor-widget-text-editor .elementor-widget-container>*:first-child{margin-top:0}.zau-g .elementor-widget-text-editor>*:last-child,.zau-g .elementor-widget-text-editor .elementor-widget-container>*:last-child{margin-bottom:0}\n.zau-g a{color:var(--blue)}\n.zau-g .elementor-heading-title{color:var(--ink);font-weight:800;line-height:1.2;text-wrap:balance}\n.zau-g h2.elementor-heading-title{font-size:24px}\n/* шапка */\n.zau-g-hero,.zau-g-hero .elementor-heading-title,.zau-g-hero .elementor-widget{color:#fff}\n.zau-g-hero h1.elementor-heading-title{font-size:clamp(28px,7vw,40px);line-height:1.12}\n.zau-g-kicker{font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;opacity:.85}\n.zau-g-lead{font-size:18px;opacity:.95}\n.zau-g-pill span{display:inline-block;padding:6px 12px;border-radius:999px;background:rgba(255,255,255,.16);font-weight:700;font-size:15px}\n/* оглавление */\n.zau-g .zau-toc{display:flex;gap:8px;overflow-x:auto;padding:4px 0;-webkit-overflow-scrolling:touch}\n.zau-g .zau-toc a{flex:0 0 auto;padding:8px 14px;border-radius:999px;background:var(--blue-l);color:var(--blue-d);font-weight:700;font-size:15px;text-decoration:none}\n/* общие элементы */\n.zau-g .btn{display:inline-block;padding:2px 10px;border-radius:8px;background:var(--blue);color:#fff;font-weight:700;font-size:.92em;line-height:1.45}\n.zau-g .btn.link{background:none;color:var(--blue);text-decoration:underline;padding:0 2px}\n.zau-g-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 6px 20px rgba(16,24,40,.04)}\n.zau-g .prep{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;list-style:none;padding:0;margin:0}\n.zau-g .prep li{display:flex;gap:12px;align-items:flex-start;padding:12px;border-radius:14px;background:var(--bg)}\n.zau-g .prep .ic{flex:0 0 38px;height:38px;border-radius:12px;display:grid;place-items:center;background:var(--blue-l);font-size:20px}\n.zau-g .prep b{display:block}.zau-g .prep small{color:var(--muted);font-size:14px;line-height:1.4}\n.zau-g .next{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}\n.zau-g .next div{padding:14px;border-radius:14px;background:var(--bg)}.zau-g .next b{display:block}.zau-g .next small{color:var(--muted)}\n/* шаги: номер считается автоматически по порядку виджетов «Шаг» */\n.zau-g-steps .elementor-widget-wrap{counter-reset:zaustep}\n.zau-g-step{counter-increment:zaustep;position:relative;padding:18px 18px 18px 70px;background:var(--card);border:1px solid var(--line);border-radius:18px}\n.zau-g-step::before{content:counter(zaustep);position:absolute;left:16px;top:16px;width:40px;height:40px;border-radius:50%;background:var(--blue);color:#fff;display:grid;place-items:center;font-weight:800;font-size:19px}\n.zau-g-step h3{margin:4px 0 6px;font-size:19px;line-height:1.3;color:var(--ink)}\n.zau-g-step p,.zau-g-step ul{color:var(--muted)}.zau-g-step ul{margin:6px 0;padding-left:20px}.zau-g-step ul li{margin:4px 0}\n.zau-g-mock,.zau-g-important{margin-left:56px}\n.zau-g-important{padding:12px 14px;border-radius:12px;background:var(--red-l);border-left:5px solid var(--red);color:#7a271a;font-size:16px}\n.zau-g-important b:first-child{display:block;color:var(--red);text-transform:uppercase;font-size:13px;letter-spacing:.06em;margin-bottom:2px}\n.zau-g-note{padding:14px 16px;border-radius:14px;background:var(--warn-l);border-left:5px solid var(--warn)}\n.zau-g-note.is-good{background:var(--green-l);border-left-color:var(--green)}\n.zau-g-note b.t{display:block;font-size:18px;margin-bottom:4px}.zau-g-note p{color:#344054}\n/* макет экрана телефона */\n.zau-g .phone{margin:4px auto;max-width:300px;width:100%;border:10px solid #1d2939;border-radius:30px;background:#fff;padding:14px 12px 16px;box-shadow:0 10px 30px rgba(16,24,40,.18);font-size:14px;line-height:1.4}\n.zau-g .phone .ttl{font-weight:800;font-size:16px;margin:0 0 10px}\n.zau-g .phone .opt{display:flex;gap:10px;align-items:center;padding:10px;border:2px solid var(--line);border-radius:14px;margin:8px 0}\n.zau-g .phone .opt i{flex:0 0 32px;height:32px;border-radius:10px;background:var(--blue-l);display:grid;place-items:center;font-style:normal;color:var(--blue);font-weight:800}\n.zau-g .phone .opt small{display:block;color:var(--muted);font-size:12px}\n.zau-g .phone .field{border:1px solid #d0d5dd;border-radius:10px;padding:8px 10px;margin:6px 0;color:#98a2b3}\n.zau-g .phone .tabs{display:flex;gap:4px;background:var(--bg);border-radius:10px;padding:3px;margin-bottom:8px}\n.zau-g .phone .tabs span{flex:1;text-align:center;padding:6px 2px;border-radius:8px;font-size:12px;font-weight:700;color:var(--muted)}\n.zau-g .phone .tabs span.on{background:#fff;color:var(--blue)}\n.zau-g .phone .big{display:block;text-align:center;padding:10px;border-radius:12px;background:var(--blue);color:#fff;font-weight:800;margin-top:8px}\n.zau-g .phone .lnk{display:block;text-align:center;color:var(--blue);text-decoration:underline;margin-top:8px;font-size:13px}\n.zau-g .phone .sig{height:70px;border:2px dashed #d0d5dd;border-radius:10px;display:grid;place-items:center;color:#98a2b3;margin:6px 0}\n.zau-g .hl{position:relative;border-color:var(--red)!important;box-shadow:0 0 0 4px rgba(217,45,32,.25);animation:zaupulse 1.8s ease-in-out infinite}\n.zau-g .hl::after{content:attr(data-tag);position:absolute;right:-8px;top:-12px;background:var(--red);color:#fff;font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;white-space:nowrap}\n@keyframes zaupulse{50%{box-shadow:0 0 0 8px rgba(217,45,32,.12)}}\n@media (prefers-reduced-motion:reduce){.zau-g .hl{animation:none}}\n/* выбор способа */\n.zau-g .choose{display:grid;gap:10px}\n.zau-g .choose a{display:flex;gap:14px;align-items:center;padding:16px;border-radius:16px;background:var(--card);border:2px solid var(--line);text-decoration:none;color:var(--ink)}\n.zau-g .choose a:hover,.zau-g .choose a:focus-visible{border-color:var(--blue)}\n.zau-g .choose .n{flex:0 0 44px;height:44px;border-radius:14px;display:grid;place-items:center;background:var(--blue);color:#fff;font-size:22px}\n.zau-g .choose b{display:block;font-size:18px}.zau-g .choose small{color:var(--muted);font-size:15px}\n.zau-g .choose .rec{border-color:var(--green);background:var(--green-l)}.zau-g .choose .rec .n{background:var(--green)}\n.zau-g .tag{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;background:var(--green);color:#fff;font-size:12px;font-weight:800;vertical-align:middle}\n/* вопросы и ответы (виджет «Переключатель») */\n.zau-g-faq-group .elementor-heading-title{font-size:15px!important;color:var(--blue-d)!important;text-transform:uppercase;letter-spacing:.05em;margin-top:10px}\n.zau-g .elementor-toggle .elementor-toggle-item{background:var(--card);border:1px solid var(--line);border-radius:14px;margin-bottom:8px;overflow:hidden}\n.zau-g .elementor-toggle .elementor-tab-title{border:0!important;padding:14px 16px!important;font-weight:700;font-size:17px;color:var(--ink)!important}\n.zau-g .elementor-toggle .elementor-tab-title a{color:var(--ink)!important}\n.zau-g .elementor-toggle .elementor-toggle-icon{color:var(--blue)!important}\n.zau-g .elementor-toggle .elementor-tab-content{border:0!important;padding:0 16px 14px!important;color:var(--muted);font-size:16px}\n/* подвал */\n.zau-g-footer{padding:18px;border-radius:18px;background:#1d2939;color:#e4e7ec}\n.zau-g-footer b{color:#fff}.zau-g-footer a{color:#90caf9}\n@media (max-width:480px){.zau-g{font-size:16px}.zau-g-step{padding:16px 14px 16px 62px}.zau-g-step::before{left:12px;width:36px;height:36px}.zau-g-mock,.zau-g-important{margin-left:0}.zau-g .phone{border-width:7px}}\n</style>",
+        "_title": "Стили памятки — не удалять"
+       },
+       "elements": []
+      },
+      {
+       "id": "c91c1df",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "Памятка участника профсоюза",
+        "_css_classes": "zau-g-kicker"
+       },
+       "elements": []
+      },
+      {
+       "id": "bed3e98",
+       "elType": "widget",
+       "widgetType": "heading",
+       "settings": {
+        "title": "Забыли пароль или PIN?",
+        "header_size": "h1"
+       },
+       "elements": []
+      },
+      {
+       "id": "8db81ff",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "Не страшно. Войти можно без пароля — одноразовым кодом на вашу почту.",
+        "_css_classes": "zau-g-lead"
+       },
+       "elements": []
+      },
+      {
+       "id": "7953f7b",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<span>new.zdravunion.kz</span>",
+        "_css_classes": "zau-g-pill"
+       },
+       "elements": []
+      }
+     ],
+     "isInner": false
+    }
+   ],
+   "isInner": false
+  },
+  {
+   "id": "c795610",
+   "elType": "section",
+   "settings": {
+    "gap": "no",
+    "layout": "boxed",
+    "content_width": {
+     "unit": "px",
+     "size": 760,
+     "sizes": []
+    },
+    "padding": {
+     "unit": "px",
+     "top": "12",
+     "right": "16",
+     "bottom": "12",
+     "left": "16",
+     "isLinked": false
+    },
+    "css_classes": "zau-g",
+    "background_background": "classic",
+    "background_color": "#ffffff"
+   },
+   "elements": [
+    {
+     "id": "e860a24",
+     "elType": "column",
+     "settings": {
+      "_column_size": 100,
+      "_inline_size": null,
+      "css_classes": ""
+     },
+     "elements": [
+      {
+       "id": "f06443f",
+       "elType": "widget",
+       "widgetType": "html",
+       "settings": {
+        "html": "<nav class=\"zau-toc\" aria-label=\"Разделы\"><a href=\"#choose\">Что выбрать</a><a href=\"#code\">Вход по коду</a><a href=\"#pin\">Новый PIN</a><a href=\"#password\">Новый пароль</a><a href=\"#faq\">Вопросы и ответы</a></nav>",
+        "_title": "Оглавление"
+       },
+       "elements": []
+      }
+     ],
+     "isInner": false
+    }
+   ],
+   "isInner": false
+  },
+  {
+   "id": "ea8704f",
+   "elType": "section",
+   "settings": {
+    "gap": "no",
+    "layout": "boxed",
+    "content_width": {
+     "unit": "px",
+     "size": 760,
+     "sizes": []
+    },
+    "padding": {
+     "unit": "px",
+     "top": "12",
+     "right": "16",
+     "bottom": "12",
+     "left": "16",
+     "isLinked": false
+    },
+    "css_classes": "zau-g",
+    "_element_id": "choose"
+   },
+   "elements": [
+    {
+     "id": "4f8c2ca",
+     "elType": "column",
+     "settings": {
+      "_column_size": 100,
+      "_inline_size": null,
+      "css_classes": ""
+     },
+     "elements": [
+      {
+       "id": "1cd9ec3",
+       "elType": "widget",
+       "widgetType": "heading",
+       "settings": {
+        "title": "Что вам подходит?",
+        "header_size": "h2"
+       },
+       "elements": []
+      },
+      {
+       "id": "035310c",
+       "elType": "widget",
+       "widgetType": "html",
+       "settings": {
+        "html": "<div class=\"choose\">\n<a class=\"rec\" href=\"#code\"><span class=\"n\">✉️</span><div><b>Хочу просто войти <span class=\"tag\">проще всего</span></b><small>Код на email — пароль и PIN не нужны</small></div></a>\n<a href=\"#pin\"><span class=\"n\">🔢</span><div><b>Забыл(а) PIN</b><small>Создать новый PIN по коду из письма</small></div></a>\n<a href=\"#password\"><span class=\"n\">🔑</span><div><b>Забыл(а) пароль</b><small>Получить ссылку для нового пароля</small></div></a>\n</div>",
+        "_title": "Выбор способа"
+       },
+       "elements": []
+      },
+      {
+       "id": "21432c7",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<b class=\"t\">Были на старом сайте uchet.zdravunion.kz?</b><p>Ваш кабинет перенесён. Используйте <b>тот же email</b>, что был на старом сайте, и войдите по коду (способ 1).</p>",
+        "_css_classes": "zau-g-note is-good",
+        "_title": "Заметка"
+       },
+       "elements": []
+      }
+     ],
+     "isInner": false
+    }
+   ],
+   "isInner": false
+  },
+  {
+   "id": "8ccd7cf",
+   "elType": "section",
+   "settings": {
+    "gap": "no",
+    "layout": "boxed",
+    "content_width": {
+     "unit": "px",
+     "size": 760,
+     "sizes": []
+    },
+    "padding": {
+     "unit": "px",
+     "top": "12",
+     "right": "16",
+     "bottom": "12",
+     "left": "16",
+     "isLinked": false
+    },
+    "css_classes": "zau-g",
+    "_element_id": "code"
+   },
+   "elements": [
+    {
+     "id": "bbd08b9",
+     "elType": "column",
+     "settings": {
+      "_column_size": 100,
+      "_inline_size": null,
+      "css_classes": "zau-g-steps"
+     },
+     "elements": [
+      {
+       "id": "7734944",
+       "elType": "widget",
+       "widgetType": "heading",
+       "settings": {
+        "title": "Способ 1. Вход по коду — самый простой",
+        "header_size": "h2"
+       },
+       "elements": []
+      },
+      {
+       "id": "cbefcb5",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<h3>Нажмите <span class=\"btn\">Войти</span>, затем вкладку <span class=\"btn\">Код на email</span></h3>",
+        "_css_classes": "zau-g-step",
+        "_title": "Шаг"
+       },
+       "elements": []
+      },
+      {
+       "id": "c85ceca",
+       "elType": "widget",
+       "widgetType": "html",
+       "settings": {
+        "html": "<div aria-hidden=\"true\" class=\"phone\"><div class=\"tabs\"><span class=\"on hl\" data-tag=\"Эта вкладка\">Код на email</span><span>Постоянный PIN</span><span>Логин и пароль</span></div>\n<div class=\"field\">name@example.kz</div><span class=\"big\">Получить код для входа</span></div>",
+        "_css_classes": "zau-g-mock",
+        "_title": "Макет экрана"
+       },
+       "elements": []
+      },
+      {
+       "id": "691ee4b",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<h3>Введите email и нажмите <span class=\"btn\">Получить код для входа</span></h3>",
+        "_css_classes": "zau-g-step",
+        "_title": "Шаг"
+       },
+       "elements": []
+      },
+      {
+       "id": "bf013bf",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<b>Важно</b>Указывайте тот же email, что при регистрации (или на старом сайте). Проверьте, что в адресе нет опечаток и лишних пробелов.",
+        "_css_classes": "zau-g-important",
+        "_title": "Важно"
+       },
+       "elements": []
+      },
+      {
+       "id": "42c42c9",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<h3>Введите 6 цифр из письма и нажмите <span class=\"btn\">Войти в кабинет</span></h3>",
+        "_css_classes": "zau-g-step",
+        "_title": "Шаг"
+       },
+       "elements": []
+      },
+      {
+       "id": "65c39e3",
+       "elType": "widget",
+       "widgetType": "html",
+       "settings": {
+        "html": "<div aria-hidden=\"true\" class=\"phone\"><div class=\"field hl\" data-tag=\"6 цифр из письма\">000000</div><span class=\"big\">Войти в кабинет</span></div>",
+        "_css_classes": "zau-g-mock",
+        "_title": "Макет экрана"
+       },
+       "elements": []
+      },
+      {
+       "id": "762f87f",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<b>Важно</b>Код действует несколько минут и подходит только один раз. Если запросили код дважды — вводите <b>последний</b> пришедший.",
+        "_css_classes": "zau-g-important",
+        "_title": "Важно"
+       },
+       "elements": []
+      }
+     ],
+     "isInner": false
+    }
+   ],
+   "isInner": false
+  },
+  {
+   "id": "bb32959",
+   "elType": "section",
+   "settings": {
+    "gap": "no",
+    "layout": "boxed",
+    "content_width": {
+     "unit": "px",
+     "size": 760,
+     "sizes": []
+    },
+    "padding": {
+     "unit": "px",
+     "top": "12",
+     "right": "16",
+     "bottom": "12",
+     "left": "16",
+     "isLinked": false
+    },
+    "css_classes": "zau-g",
+    "_element_id": "pin"
+   },
+   "elements": [
+    {
+     "id": "0e68891",
+     "elType": "column",
+     "settings": {
+      "_column_size": 100,
+      "_inline_size": null,
+      "css_classes": "zau-g-steps"
+     },
+     "elements": [
+      {
+       "id": "909ceae",
+       "elType": "widget",
+       "widgetType": "heading",
+       "settings": {
+        "title": "Способ 2. Забыли PIN — создайте новый",
+        "header_size": "h2"
+       },
+       "elements": []
+      },
+      {
+       "id": "6a6b2b1",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<h3><span class=\"btn\">Войти</span> → вкладка <span class=\"btn\">Постоянный PIN</span> → <span class=\"btn link\">Не помню PIN</span></h3>",
+        "_css_classes": "zau-g-step",
+        "_title": "Шаг"
+       },
+       "elements": []
+      },
+      {
+       "id": "a2a94d9",
+       "elType": "widget",
+       "widgetType": "html",
+       "settings": {
+        "html": "<div aria-hidden=\"true\" class=\"phone\"><div class=\"tabs\"><span>Код</span><span class=\"on\">Постоянный PIN</span><span>Пароль</span></div><div class=\"field\">Введите PIN</div><span class=\"big\">Войти</span><span class=\"lnk hl\" data-tag=\"Нажмите сюда\">Не помню PIN</span></div>",
+        "_css_classes": "zau-g-mock",
+        "_title": "Макет экрана"
+       },
+       "elements": []
+      },
+      {
+       "id": "3168691",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<h3>Введите email и нажмите <span class=\"btn\">Отправить код восстановления</span></h3><p>На почту придёт письмо с кодом.</p>",
+        "_css_classes": "zau-g-step",
+        "_title": "Шаг"
+       },
+       "elements": []
+      },
+      {
+       "id": "0a064e6",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<h3>Введите код из письма и новый PIN два раза</h3><p>Затем нажмите <span class=\"btn\">Сохранить новый PIN и войти</span> — вы сразу окажетесь в кабинете.</p>",
+        "_css_classes": "zau-g-step",
+        "_title": "Шаг"
+       },
+       "elements": []
+      },
+      {
+       "id": "e8447df",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<b>Важно</b>Новый PIN — 4–8 цифр. Запишите его. PIN работает на том устройстве, где создан: на новом телефоне сначала войдите по коду из письма (способ 1).",
+        "_css_classes": "zau-g-important",
+        "_title": "Важно"
+       },
+       "elements": []
+      }
+     ],
+     "isInner": false
+    }
+   ],
+   "isInner": false
+  },
+  {
+   "id": "5553c25",
+   "elType": "section",
+   "settings": {
+    "gap": "no",
+    "layout": "boxed",
+    "content_width": {
+     "unit": "px",
+     "size": 760,
+     "sizes": []
+    },
+    "padding": {
+     "unit": "px",
+     "top": "12",
+     "right": "16",
+     "bottom": "12",
+     "left": "16",
+     "isLinked": false
+    },
+    "css_classes": "zau-g",
+    "_element_id": "password"
+   },
+   "elements": [
+    {
+     "id": "c0b43bf",
+     "elType": "column",
+     "settings": {
+      "_column_size": 100,
+      "_inline_size": null,
+      "css_classes": "zau-g-steps"
+     },
+     "elements": [
+      {
+       "id": "f8b024a",
+       "elType": "widget",
+       "widgetType": "heading",
+       "settings": {
+        "title": "Способ 3. Забыли пароль",
+        "header_size": "h2"
+       },
+       "elements": []
+      },
+      {
+       "id": "2202dad",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<h3><span class=\"btn\">Войти</span> → вкладка <span class=\"btn\">Логин и пароль</span> → <span class=\"btn link\">Восстановить пароль по email</span></h3>",
+        "_css_classes": "zau-g-step",
+        "_title": "Шаг"
+       },
+       "elements": []
+      },
+      {
+       "id": "855ecbc",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<h3>Введите логин или email и получите письмо</h3><p>Откройте письмо и нажмите на ссылку.</p>",
+        "_css_classes": "zau-g-step",
+        "_title": "Шаг"
+       },
+       "elements": []
+      },
+      {
+       "id": "9150c4c",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<b>Важно</b>Ссылка одноразовая и действует ограниченное время. Если открыли старое письмо — запросите новое.",
+        "_css_classes": "zau-g-important",
+        "_title": "Важно"
+       },
+       "elements": []
+      },
+      {
+       "id": "8cfa266",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<h3>Придумайте новый пароль и войдите с ним</h3><p>Придумайте надёжный пароль: не короче 8 символов, буквы и цифры.</p>",
+        "_css_classes": "zau-g-step",
+        "_title": "Шаг"
+       },
+       "elements": []
+      }
+     ],
+     "isInner": false
+    }
+   ],
+   "isInner": false
+  },
+  {
+   "id": "d0283de",
+   "elType": "section",
+   "settings": {
+    "gap": "no",
+    "layout": "boxed",
+    "content_width": {
+     "unit": "px",
+     "size": 760,
+     "sizes": []
+    },
+    "padding": {
+     "unit": "px",
+     "top": "12",
+     "right": "16",
+     "bottom": "12",
+     "left": "16",
+     "isLinked": false
+    },
+    "css_classes": "zau-g",
+    "_element_id": "faq"
+   },
+   "elements": [
+    {
+     "id": "c49b3ea",
+     "elType": "column",
+     "settings": {
+      "_column_size": 100,
+      "_inline_size": null,
+      "css_classes": ""
+     },
+     "elements": [
+      {
+       "id": "8154a03",
+       "elType": "widget",
+       "widgetType": "heading",
+       "settings": {
+        "title": "Вопросы и ответы",
+        "header_size": "h2"
+       },
+       "elements": []
+      },
+      {
+       "id": "7b821dc",
+       "elType": "widget",
+       "widgetType": "heading",
+       "settings": {
+        "title": "Код и письма",
+        "header_size": "h4",
+        "_css_classes": "zau-g-faq-group"
+       },
+       "elements": []
+      },
+      {
+       "id": "b588950",
+       "elType": "widget",
+       "widgetType": "toggle",
+       "settings": {
+        "tabs": [
+         {
+          "_id": "35b5d03",
+          "tab_title": "Код или письмо не пришли",
+          "tab_content": "<p>1. Подождите 1–2 минуты.<br/>2. Проверьте папки «Спам», «Промоакции», «Рассылки».<br/>3. Проверьте, что email/телефон введён без ошибок.<br/>4. Запросите код ещё раз. Если письма всё равно нет — обратитесь к председателю профкома.</p>"
+         },
+         {
+          "_id": "ba71068",
+          "tab_title": "Код не подходит",
+          "tab_content": "<p>Вводите только 6 цифр без пробелов. Используйте последний присланный код — предыдущие перестают действовать. Если прошло больше нескольких минут — запросите новый.</p>"
+         },
+         {
+          "_id": "d15af11",
+          "tab_title": "Не помню, какой email указывал(а)",
+          "tab_content": "<p>Поищите в своих почтовых ящиках письма от сайта new.zdravunion.kz или uchet.zdravunion.kz. Если не нашли — обратитесь к председателю профкома: администратор найдёт ваш аккаунт и подскажет email.</p>"
+         },
+         {
+          "_id": "568edde",
+          "tab_title": "Нет доступа к старой почте",
+          "tab_content": "<p>Если вы помните PIN или пароль — войдите ими. Если нет — обратитесь к председателю профкома: администратор поменяет email в вашем аккаунте, после чего войдите по коду на новую почту.</p>"
+         }
+        ],
+        "title_html_tag": "div",
+        "selected_icon": {
+         "value": "fas fa-plus",
+         "library": "fa-solid"
+        },
+        "selected_active_icon": {
+         "value": "fas fa-minus",
+         "library": "fa-solid"
+        },
+        "icon_align": "right",
+        "_title": "Вопросы и ответы"
+       },
+       "elements": []
+      },
+      {
+       "id": "fecc656",
+       "elType": "widget",
+       "widgetType": "heading",
+       "settings": {
+        "title": "PIN и пароль",
+        "header_size": "h4",
+        "_css_classes": "zau-g-faq-group"
+       },
+       "elements": []
+      },
+      {
+       "id": "d663f21",
+       "elType": "widget",
+       "widgetType": "toggle",
+       "settings": {
+        "tabs": [
+         {
+          "_id": "18107b8",
+          "tab_title": "PIN не подходит на новом телефоне",
+          "tab_content": "<p>Так и должно быть: для безопасности PIN работает на том устройстве, где его создали. На новом телефоне войдите по коду из письма, а затем при желании создайте PIN заново через «Не помню PIN».</p>"
+         },
+         {
+          "_id": "6d2dccb",
+          "tab_title": "Пишет, что вход по PIN заблокирован",
+          "tab_content": "<p>После нескольких неверных попыток вход по PIN временно блокируется (примерно на 15 минут). Подождите или сразу войдите по коду из письма.</p>"
+         },
+         {
+          "_id": "7a4d288",
+          "tab_title": "Подойдёт ли пароль со старого сайта?",
+          "tab_content": "<p>Возможно — если при переносе его сохранили. Если не подходит, не подбирайте: войдите по коду (способ 1) — это быстрее.</p>"
+         },
+         {
+          "_id": "b5e11fb",
+          "tab_title": "Нужно ли вообще помнить пароль?",
+          "tab_content": "<p>Нет. Код на email заменяет пароль. PIN — удобный быстрый вход на своём телефоне.</p>"
+         }
+        ],
+        "title_html_tag": "div",
+        "selected_icon": {
+         "value": "fas fa-plus",
+         "library": "fa-solid"
+        },
+        "selected_active_icon": {
+         "value": "fas fa-minus",
+         "library": "fa-solid"
+        },
+        "icon_align": "right",
+        "_title": "Вопросы и ответы"
+       },
+       "elements": []
+      },
+      {
+       "id": "4d54f22",
+       "elType": "widget",
+       "widgetType": "heading",
+       "settings": {
+        "title": "Безопасность",
+        "header_size": "h4",
+        "_css_classes": "zau-g-faq-group"
+       },
+       "elements": []
+      },
+      {
+       "id": "541c5ff",
+       "elType": "widget",
+       "widgetType": "toggle",
+       "settings": {
+        "tabs": [
+         {
+          "_id": "e552488",
+          "tab_title": "Мне звонят и просят продиктовать код",
+          "tab_content": "<p><b>Никому не сообщайте коды и PIN</b> — ни коллегам, ни «сотрудникам сайта». Администраторы никогда не просят код из сообщения.</p>"
+         },
+         {
+          "_id": "19eed87",
+          "tab_title": "Вошёл(-ла) с чужого компьютера",
+          "tab_content": "<p>После работы нажмите «Выйти» в кабинете и не ставьте галочку «Запомнить меня» на чужих устройствах.</p>"
+         }
+        ],
+        "title_html_tag": "div",
+        "selected_icon": {
+         "value": "fas fa-plus",
+         "library": "fa-solid"
+        },
+        "selected_active_icon": {
+         "value": "fas fa-minus",
+         "library": "fa-solid"
+        },
+        "icon_align": "right",
+        "_title": "Вопросы и ответы"
+       },
+       "elements": []
+      }
+     ],
+     "isInner": false
+    }
+   ],
+   "isInner": false
+  },
+  {
+   "id": "4064bd7",
+   "elType": "section",
+   "settings": {
+    "gap": "no",
+    "layout": "boxed",
+    "content_width": {
+     "unit": "px",
+     "size": 760,
+     "sizes": []
+    },
+    "padding": {
+     "unit": "px",
+     "top": "12",
+     "right": "16",
+     "bottom": "40",
+     "left": "16",
+     "isLinked": false
+    },
+    "css_classes": "zau-g"
+   },
+   "elements": [
+    {
+     "id": "840f19d",
+     "elType": "column",
+     "settings": {
+      "_column_size": 100,
+      "_inline_size": null,
+      "css_classes": ""
+     },
+     "elements": [
+      {
+       "id": "3402dcb",
+       "elType": "widget",
+       "widgetType": "text-editor",
+       "settings": {
+        "editor": "<b>Не получилось?</b> Обратитесь к председателю профкома вашей организации.<br/>Ещё не зарегистрированы — <a href=\"/pamyatka-registraciya/\">памятка по регистрации</a>.",
+        "_css_classes": "zau-g-footer",
+        "_title": "Подвал"
+       },
+       "elements": []
+      }
+     ],
+     "isInner": false
+    }
+   ],
+   "isInner": false
+  }
+ ],
+ "page_settings": {
+  "hide_title": "yes",
+  "background_background": "classic",
+  "background_color": "#f5f7fb"
+ }
+}

@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.28.1';
+    const VERSION = '2.28.2';
     const DB_VERSION = '2.18.2';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
@@ -2221,6 +2221,14 @@ final class ZAU_Union_Module {
      * Текст строится по текущим настройкам входа, поэтому всегда совпадает с тем,
      * что человек видит в форме. Показывается во всплывающем окне.
      */
+    /** Подпись вкладки одноразового кода: только то, что реально включено (email и/или SMS). */
+    private function otp_method_label($channels) {
+        $channels=array_values((array)$channels);
+        if($channels===['email'])return 'Код на email';
+        if($channels===['phone'])return 'Код в SMS';
+        return 'Код из email или SMS';
+    }
+
     private function help_step($title,$text='') {
         return '<li><div><strong>'.$title.'</strong>'.($text!==''?'<span>'.$text.'</span>':'').'</div></li>';
     }
@@ -2256,9 +2264,9 @@ final class ZAU_Union_Module {
         $n=0;
         if(in_array('otp',$cfg['methods'],true)){
             $rec.='<h4 class="zau-help-subtitle">Способ '.(++$n).'. Вход по коду — самый простой</h4><ol class="zau-help-steps">';
-            $rec.=$this->help_step($b('Войти').' → '.$b('Код из email или SMS'));
+            $rec.=$this->help_step($b('Войти').' → '.$b($this->otp_method_label($channels)));
             $rec.=$this->help_step('Введите '.$contact,'Тот же, что при регистрации, и нажмите '.$b('Получить код для входа'));
-            $rec.=$this->help_step('Введите 6 цифр из сообщения','и нажмите '.$b('Войти в кабинет'));
+            $rec.=$this->help_step('Введите 6 цифр из '.($channels===['email']?'письма':'сообщения'),'и нажмите '.$b('Войти в кабинет'));
             $rec.='</ol>';
         }
         if(in_array('pin',$cfg['methods'],true) && $cfg['show_recovery']){
@@ -2324,7 +2332,7 @@ final class ZAU_Union_Module {
         if ($registrationMode==='otp' && !in_array('otp',$cfg['methods'],true) && in_array($cfg['flow'],['register','combined'],true)) {
             return '<div class="zau-union-panel zau-auth-disabled"><strong>Регистрация временно недоступна.</strong><p>Для регистрации с подтверждением должен быть включён одноразовый код на email или телефон.</p></div>';
         }
-        $methodLabels=['otp'=>'Код из email или SMS','pin'=>'Постоянный PIN','password'=>'Логин и пароль'];
+        $methodLabels=['otp'=>$this->otp_method_label($cfg['otp_channels']),'pin'=>'Постоянный PIN','password'=>'Логин и пароль'];
         $otpLabel=count($cfg['otp_channels'])===1?($cfg['otp_channels'][0]==='email'?'Email':'Телефон'):'Email или телефон';
         $otpPlaceholder=count($cfg['otp_channels'])===1?($cfg['otp_channels'][0]==='email'?'name@example.kz':'+7 700 000 00 00'):'name@example.kz или +7 700 000 00 00';
         $activeFlow=$cfg['flow']==='combined'&&$cfg['start_screen']?'choice':($cfg['flow']==='combined'?$cfg['default_flow']:$cfg['flow']);
