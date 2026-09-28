@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.28.3';
+    const VERSION = '2.28.4';
     const DB_VERSION = '2.18.2';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
@@ -131,7 +131,31 @@ final class ZAU_Union_Module {
         add_filter('zau_cert_field_types', [$this, 'certificate_field_types']);
     }
 
+    /**
+     * Встроенные шаблоны заявлений хранят полный адрес фона внутри папки плагина.
+     * Если плагин поставили в папку с другим именем (например, zau-profsoyuz-2.28.3
+     * вместо zau-profsoyuz-2.28.1) и старую удалили, фон пропал бы из новых PDF.
+     * Переводим такие адреса на текущую папку один раз после каждой смены папки.
+     */
+    private function repair_bundled_template_backgrounds() {
+        $pluginFile = dirname(__DIR__) . '/zau-certificate-generator.php';
+        $base = plugins_url('', $pluginFile);
+        if (get_option('zau_union_bundled_bg_base') === $base) { return; }
+        global $wpdb;
+        if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $this->templates_table)) === $this->templates_table) {
+            foreach (['zau-membership-application-bg.png', 'zau-contribution-application-bg.png'] as $file) {
+                $current = plugins_url('assets/templates/' . $file, $pluginFile);
+                $wpdb->query($wpdb->prepare(
+                    "UPDATE {$this->templates_table} SET background_url=%s WHERE background_url LIKE %s AND background_url<>%s",
+                    $current, '%/assets/templates/' . $wpdb->esc_like($file), $current
+                ));
+            }
+        }
+        update_option('zau_union_bundled_bg_base', $base, false);
+    }
+
     public function maybe_upgrade() {
+        $this->repair_bundled_template_backgrounds();
         if (get_option(self::OPT_DB_VERSION) !== self::DB_VERSION) {
             $this->install_tables();
             $this->install_defaults();
