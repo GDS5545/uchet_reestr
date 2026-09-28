@@ -25,7 +25,7 @@ if (!defined('ABSPATH')) { exit; }
  *     данные»; администратор разбирает такие отметки в очереди.
  */
 final class ZAU_Exact_Migration {
-    const VERSION = '2.28.7';
+    const VERSION = '2.28.8';
     const DB_VERSION = '1.1.0';
     const OPT_DB = 'zau_exact_migration_db_version';
     const OPT = 'zau_exact_migration_settings';
@@ -825,14 +825,19 @@ final class ZAU_Exact_Migration {
         return $name !== '' ? ($display !== '' && $display !== $name ? $name . ' / ' . $display : $name) : $display;
     }
 
-    private function report_prior_mismatch($job, $oldId, array $item, $prior, $createdId, $dry) {
-        $this->add_stat($job, 'possible_duplicate');
-        $this->report($job, 'user', $oldId, 'possible_duplicate',
-            'Прежний перенос записал этот старый аккаунт в аккаунт #' . (int)$prior->ID . ' «' . $prior->display_name . '» (без email), но ФИО там другое, чем в старом аккаунте («' . $this->old_display_name($item) . '»). Автоматически НЕ связано: ' . ($dry ? 'будет создан отдельный аккаунт, пара попадёт в очередь «Возможные дубли».' : 'создан отдельный аккаунт, проверьте пару в очереди «Возможные дубли».'),
-            (int)$createdId, 0, ['candidates'=>[['id'=>(int)$prior->ID, 'name'=>$prior->display_name, 'email'=>'']], 'old_name'=>$this->old_display_name($item)]);
-        if (!$dry && $createdId) {
-            $list = (array)get_user_meta((int)$createdId, 'zau_exact_possible_duplicate', true);
-            update_user_meta((int)$createdId, 'zau_exact_possible_duplicate', array_values(array_unique(array_filter(array_map('intval', array_merge($list, [(int)$prior->ID]))))));
+    /**
+     * Номер старого аккаунта записан в аккаунт другого человека (старый мост брал ФИО
+     * руководителя/председателя из заявления). Это НЕ дубль: такой аккаунт ошибочный.
+     * Он не предлагается для объединения, а попадает в отдельную очередь, где его можно скрыть.
+     */
+    private function report_prior_mismatch(&$job, $oldId, array $item, $prior, $createdId, $dry) {
+        $this->add_stat($job, 'prior_account_mismatch');
+        $this->report($job, 'user', $oldId, 'prior_account_mismatch',
+            'Прежний перенос записал этот старый аккаунт в аккаунт #' . (int)$prior->ID . ' «' . $prior->display_name . '» (без email), но это другой человек (в старом аккаунте «' . $this->old_display_name($item) . '»). Не связано: ' . ($dry ? 'человеку будет создан свой аккаунт, а ошибочный аккаунт #' . (int)$prior->ID . ' попадёт в очередь «Ошибочные аккаунты прежнего переноса».' : 'человеку создан свой аккаунт, ошибочный аккаунт #' . (int)$prior->ID . ' — в очереди «Ошибочные аккаунты прежнего переноса».'),
+            (int)$createdId, 0, ['prior_account'=>(int)$prior->ID, 'prior_name'=>$prior->display_name, 'old_name'=>$this->old_display_name($item)]);
+        if (!$dry) {
+            update_user_meta((int)$prior->ID, 'zau_exact_prior_wrong', (int)$oldId);
+            if ($createdId) { update_user_meta((int)$prior->ID, 'zau_exact_prior_wrong_real', (int)$createdId); }
         }
     }
 
@@ -1033,7 +1038,7 @@ final class ZAU_Exact_Migration {
      * другим email: скорее всего, человек уже зарегистрировался заново. Такие пары
      * не объединяются автоматически — они попадают в отчёт и в очередь «Возможные дубли».
      */
-    private function duplicate_candidates($first, $last, $display, $excludeUserId, $job) {
+    private function duplicate_candidates($first, $last, $display, $excludeUserId, $job, $oldId = 0) {
         global $wpdb;
         $first = trim((string)$first); $last = trim((string)$last); $display = trim((string)$display);
         $want = $this->name_tokens($last . ' ' . $first);
@@ -1058,6 +1063,10 @@ final class ZAU_Exact_Migration {
             $user = get_user_by('id', $id);
             if (!$user || user_can($user, 'manage_options')) { continue; }
             if (get_user_meta($id, 'zau_legacy_duplicate_of', true) || get_user_meta($id, 'zau_member_status', true) === 'Дубликат переноса') { continue; }
+            // Аккаунт, в который прежний перенос записал ДРУГОЙ старый аккаунт, не предлагаем:
+            // его данные собраны из чужих заявлений, объединение перепутало бы людей.
+            $priorLegacy = (string)get_user_meta($id, 'zau_legacy_user_id', true);
+            if (($priorLegacy !== '' && (int)$priorLegacy !== (int)$oldId) || get_user_meta($id, 'zau_exact_prior_wrong', true)) { continue; }
             // Аккаунт уже принадлежит ДРУГОМУ старому пользователю — это однофамилец, не дубль.
             $taken = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->map_table} WHERE site_hash=%s AND source_type='user' AND target_user_id=%d", $this->site_hash(), $id))
                 + (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->report_table} WHERE job_token=%s AND source_type='user' AND target_user_id=%d AND decision IN ('would_link_existing','linked_existing','would_link_prior_import','linked_prior_import','unchanged','updated','would_update')", (string)$job['token'], $id));
@@ -1079,7 +1088,7 @@ final class ZAU_Exact_Migration {
             $job['cursor'] = (int)$row->id;
             $d = json_decode((string)$row->details, true);
             if (!is_array($d)) { continue; }
-            $found = $this->duplicate_candidates($d['first'] ?? '', $d['last'] ?? '', $d['display'] ?? '', (int)$row->target_user_id, $job);
+            $found = $this->duplicate_candidates($d['first'] ?? '', $d['last'] ?? '', $d['display'] ?? '', (int)$row->target_user_id, $job, (int)$row->source_id);
             if (!$found) { continue; }
             $list = implode('; ', array_map(function ($c) { return '#' . $c['id'] . ' ' . $c['name'] . ' <' . $c['email'] . '>'; }, $found));
             $this->add_stat($job, 'possible_duplicate');
@@ -1105,6 +1114,7 @@ final class ZAU_Exact_Migration {
         global $wpdb;
         $from = get_user_by('id', (int)$fromId); $into = get_user_by('id', (int)$intoId);
         if (!$from || !$into || $from->ID === $into->ID) { return false; }
+        if (get_user_meta((int)$into->ID, 'zau_exact_prior_wrong', true)) { return false; }
         $wpdb->update($this->map_table, ['target_user_id'=>(int)$into->ID, 'updated_at'=>current_time('mysql')], ['target_user_id'=>(int)$from->ID]);
         $wpdb->update($this->submissions_table, ['user_id'=>(int)$into->ID], ['user_id'=>(int)$from->ID]);
         $wpdb->update($this->docs_table, ['user_id'=>(int)$into->ID], ['user_id'=>(int)$from->ID]);
@@ -1209,7 +1219,7 @@ final class ZAU_Exact_Migration {
         global $wpdb;
         if (empty($job['token'])) { return []; }
         $details = $wpdb->get_var($wpdb->prepare(
-            "SELECT details FROM {$this->report_table} WHERE job_token=%s AND source_type='user' AND {$where}=%d AND decision<>'possible_duplicate' ORDER BY id DESC LIMIT 1",
+            "SELECT details FROM {$this->report_table} WHERE job_token=%s AND source_type='user' AND {$where}=%d AND decision NOT IN ('possible_duplicate','prior_account_mismatch') ORDER BY id DESC LIMIT 1",
             (string)$job['token'], (int)$value
         ));
         $details = json_decode((string)$details, true);
@@ -1237,7 +1247,7 @@ final class ZAU_Exact_Migration {
             }
             if ($dry) {
                 $row = $wpdb->get_row($wpdb->prepare(
-                    "SELECT decision,target_user_id FROM {$this->report_table} WHERE job_token=%s AND source_type='user' AND source_id=%d AND decision<>'possible_duplicate' ORDER BY id DESC LIMIT 1",
+                    "SELECT decision,target_user_id FROM {$this->report_table} WHERE job_token=%s AND source_type='user' AND source_id=%d AND decision NOT IN ('possible_duplicate','prior_account_mismatch') ORDER BY id DESC LIMIT 1",
                     (string)$job['token'], $oldUser
                 ));
                 if ($row && in_array($row->decision, ['would_create', 'would_link_existing', 'would_link_prior_import', 'would_update', 'unchanged'], true)) {
@@ -1721,6 +1731,48 @@ final class ZAU_Exact_Migration {
         return true;
     }
 
+    /** Скрывать безопасно, если аккаунтом не пользовались: нет email, входов, обычных заявлений и документов. */
+    private function junk_account_info($userId) {
+        global $wpdb;
+        $user = get_user_by('id', (int)$userId);
+        $logs = $wpdb->prefix . 'zau_cert_logs';
+        $logins = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $logs)) === $logs
+            ? (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$logs} WHERE user_id=%d AND action IN ('otp_login','pin_login','password_login','pin_reset_login')", (int)$userId)) : 0;
+        $ph = implode(',', array_fill(0, count(self::archive_statuses()), '%s'));
+        $subs = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->submissions_table} WHERE user_id=%d AND status NOT IN ($ph)", array_merge([(int)$userId], self::archive_statuses())));
+        $docs = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->docs_table} WHERE user_id=%d", (int)$userId));
+        $reasons = [];
+        if ($user && trim((string)$user->user_email) !== '') { $reasons[] = 'есть email'; }
+        if ($logins) { $reasons[] = 'в аккаунт входили'; }
+        if ($subs) { $reasons[] = 'есть обычные заявления'; }
+        if ($docs) { $reasons[] = 'есть документы'; }
+        return ['logins'=>$logins, 'subs'=>$subs, 'docs'=>$docs, 'safe'=>!$reasons, 'reasons'=>$reasons];
+    }
+
+    private function hide_junk($userId) {
+        $userId = (int)$userId;
+        if (!get_user_meta($userId, 'zau_exact_prior_wrong', true) || get_user_meta($userId, 'zau_exact_junk_hidden', true)) { return false; }
+        update_user_meta($userId, 'zau_exact_junk_prev_status', (string)get_user_meta($userId, 'zau_member_status', true));
+        update_user_meta($userId, 'zau_exact_junk_prev_hidden', get_user_meta($userId, 'zau_hidden_from_registry', true) ? 1 : 0);
+        update_user_meta($userId, 'zau_member_status', 'Дубликат переноса');
+        update_user_meta($userId, 'zau_hidden_from_registry', 1);
+        $real = (int)get_user_meta($userId, 'zau_exact_prior_wrong_real', true);
+        if ($real) { update_user_meta($userId, 'zau_legacy_duplicate_of', $real); }
+        update_user_meta($userId, 'zau_exact_junk_hidden', current_time('mysql'));
+        return true;
+    }
+
+    private function restore_junk($userId) {
+        $userId = (int)$userId;
+        if (!get_user_meta($userId, 'zau_exact_junk_hidden', true)) { return false; }
+        $prev = (string)get_user_meta($userId, 'zau_exact_junk_prev_status', true);
+        if ($prev !== '') { update_user_meta($userId, 'zau_member_status', $prev); } else { delete_user_meta($userId, 'zau_member_status'); }
+        if (!get_user_meta($userId, 'zau_exact_junk_prev_hidden', true)) { delete_user_meta($userId, 'zau_hidden_from_registry'); }
+        delete_user_meta($userId, 'zau_legacy_duplicate_of');
+        delete_user_meta($userId, 'zau_exact_junk_hidden');
+        return true;
+    }
+
     public function queue_action() {
         if (!$this->can_manage()) { wp_die('Недостаточно прав.', 403); }
         check_admin_referer(self::NONCE);
@@ -1745,6 +1797,18 @@ final class ZAU_Exact_Migration {
         } elseif ($do === 'merge' && $userId) {
             $into = absint($_POST['into'] ?? 0);
             $msg = $this->merge_accounts($userId, $into) ? 'Аккаунты объединены: всё перенесено в аккаунт #' . $into . '. Созданный переносом аккаунт #' . $userId . ' скрыт как дубль.' : 'Не удалось объединить аккаунты.';
+        } elseif ($do === 'junk_hide' && $userId) {
+            $msg = $this->hide_junk($userId) ? 'Ошибочный аккаунт #' . $userId . ' скрыт.' : 'Аккаунт не скрыт.';
+        } elseif ($do === 'junk_restore' && $userId) {
+            $msg = $this->restore_junk($userId) ? 'Аккаунт #' . $userId . ' возвращён.' : 'Аккаунт не был скрыт.';
+        } elseif ($do === 'junk_hide_all') {
+            global $wpdb;
+            $n = 0;
+            foreach ((array)$wpdb->get_col("SELECT DISTINCT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_prior_wrong'") as $id) {
+                $info = $this->junk_account_info((int)$id);
+                if ($info['safe'] && $this->hide_junk((int)$id)) { $n++; }
+            }
+            $msg = 'Скрыто ошибочных аккаунтов: ' . $n . '. Аккаунты, которыми пользовались, оставлены для ручной проверки.';
         } elseif ($do === 'not_duplicate' && $userId) {
             delete_user_meta($userId, 'zau_exact_possible_duplicate');
             $msg = 'Отмечено: это разные люди.';
@@ -1809,6 +1873,7 @@ final class ZAU_Exact_Migration {
             'unassigned'=>(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->submissions_table} WHERE status=%s", self::S_UNASSIGNED)),
             'other'=>(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->submissions_table} WHERE status=%s", self::S_OTHER)),
             'duplicates'=>(int)$wpdb->get_var("SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_possible_duplicate'"),
+            'junk'=>(int)$wpdb->get_var("SELECT COUNT(DISTINCT m.user_id) FROM {$wpdb->usermeta} m LEFT JOIN {$wpdb->usermeta} h ON h.user_id=m.user_id AND h.meta_key='zau_exact_junk_hidden' WHERE m.meta_key='zau_exact_prior_wrong' AND h.umeta_id IS NULL"),
         ];
     }
 
@@ -1823,9 +1888,9 @@ final class ZAU_Exact_Migration {
     private function render_queue() {
         global $wpdb;
         $view = sanitize_key((string)($_GET['view'] ?? 'disputed'));
-        if (!in_array($view, ['disputed', 'profiles', 'duplicates', 'unassigned', 'other'], true)) { $view = 'disputed'; }
+        if (!in_array($view, ['disputed', 'profiles', 'duplicates', 'junk', 'unassigned', 'other'], true)) { $view = 'disputed'; }
         $counts = $this->queue_counts();
-        $labels = ['disputed'=>'Пользователь отметил «не моё»', 'profiles'=>'Профили на проверку', 'duplicates'=>'Возможные дубли', 'unassigned'=>'Без владельца', 'other'=>'Поданы за другого человека'];
+        $labels = ['disputed'=>'Пользователь отметил «не моё»', 'profiles'=>'Профили на проверку', 'duplicates'=>'Возможные дубли', 'junk'=>'Ошибочные аккаунты прежнего переноса', 'unassigned'=>'Без владельца', 'other'=>'Поданы за другого человека'];
         echo '<section class="zau-rb-card" id="zau-exact-queue"><h2>5. Очередь проверки</h2>';
         if (!empty($_GET['msg'])) { echo '<div class="notice notice-info inline"><p>' . esc_html(rawurldecode(sanitize_text_field(wp_unslash($_GET['msg'])))) . '</p></div>'; }
         echo '<p class="zau-exact-tabs">';
@@ -1833,6 +1898,30 @@ final class ZAU_Exact_Migration {
             echo '<a class="button' . ($key === $view ? ' button-primary' : '') . '" href="' . esc_url(add_query_arg(['page'=>'zau-exact-migration', 'view'=>$key], admin_url('admin.php')) . '#zau-exact-queue') . '">' . esc_html($label) . ' (' . (int)$counts[$key] . ')</a> ';
         }
         echo '</p>';
+        if ($view === 'junk') {
+            $ids = $wpdb->get_col("SELECT DISTINCT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_prior_wrong' ORDER BY user_id ASC LIMIT 1000");
+            echo '<p class="description">Прежний перенос создал эти аккаунты без email и записал в них номер старого аккаунта, но с ФИО другого человека (чаще всего руководителя или председателя из заявления). Настоящим владельцам точный перенос создал их собственные аккаунты. «Скрыть» ставит статус «Дубликат переноса» и убирает аккаунт из реестра; ничего не удаляется, «Вернуть» отменяет. Сначала выполните «Скрыть дубли прежних переносов» — тогда заявки и PDF уйдут из этих аккаунтов к настоящим владельцам.</p>';
+            $safe = 0;
+            $rowsHtml = '';
+            foreach ((array)$ids as $id) {
+                $id = (int)$id;
+                $user = get_user_by('id', $id);
+                if (!$user) { continue; }
+                $info = $this->junk_account_info($id);
+                $real = (int)get_user_meta($id, 'zau_exact_prior_wrong_real', true);
+                $realUser = $real ? get_user_by('id', $real) : false;
+                $hidden = (bool)get_user_meta($id, 'zau_exact_junk_hidden', true);
+                if (!$hidden && $info['safe']) { $safe++; }
+                $state = $hidden ? '<strong>Скрыт</strong>' : ($info['safe'] ? 'Можно скрыть' : '<span style="color:#b42318">Проверить вручную: ' . esc_html(implode(', ', $info['reasons'])) . '</span>');
+                $action = $hidden ? $this->queue_form('junk_restore', 'Вернуть', ['user_id'=>$id, 'view'=>$view]) : $this->queue_form('junk_hide', 'Скрыть', ['user_id'=>$id, 'view'=>$view], '', $info['safe'] ? 'button button-primary' : 'button');
+                $rowsHtml .= '<tr><td><a href="' . esc_url(get_edit_user_link($id)) . '">#' . $id . '</a> ' . esc_html($user->display_name) . '</td><td>' . ($realUser ? '<a href="' . esc_url(get_edit_user_link($real)) . '">#' . $real . '</a> ' . esc_html($realUser->display_name) . '<br><small>' . esc_html($realUser->user_email) . '</small>' : 'старый #' . (int)get_user_meta($id, 'zau_exact_prior_wrong', true)) . '</td><td>' . esc_html('входов: ' . $info['logins'] . ', заявлений: ' . $info['subs'] . ', документов: ' . $info['docs']) . '</td><td>' . $state . '</td><td>' . $action . '</td></tr>';
+            }
+            if ($safe) { echo '<p>' . $this->queue_form('junk_hide_all', 'Скрыть все безопасные (' . $safe . ')', ['view'=>$view], '', 'button button-primary') . '</p>'; }
+            echo '<table class="widefat striped"><thead><tr><th>Ошибочный аккаунт</th><th>Настоящий владелец (создан точным переносом)</th><th>Что в аккаунте</th><th>Состояние</th><th>Действие</th></tr></thead><tbody>';
+            echo $rowsHtml ?: '<tr><td colspan="5">Ошибочных аккаунтов нет.</td></tr>';
+            echo '</tbody></table></section>';
+            return;
+        }
         if ($view === 'duplicates') {
             $ids = $wpdb->get_col("SELECT DISTINCT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_possible_duplicate' ORDER BY user_id DESC LIMIT 200");
             echo '<p class="description">Перенос создал аккаунт по email со старого сайта, а на новом сайте уже есть аккаунт с тем же ФИО и другим email. Если это один человек — «Объединить»: заявления, документы и данные старого аккаунта перейдут в существующий аккаунт, его email не изменится, а созданный аккаунт станет скрытым дублем без email. Если это однофамильцы — «Это разные люди».</p>';

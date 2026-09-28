@@ -38,7 +38,7 @@
     entries_stored_mismatch: 'Копий заявлений не совпало', users_deleted_on_old_site: 'Аккаунтов удалено на старом',
     entrys_deleted_on_old_site: 'Заявлений удалено на старом',
     prior_submissions: 'Заявок прежних переносов', would_supersede: 'Будет скрыто', superseded: 'Скрыто',
-    prior_wrong_owner: 'Были у чужого аккаунта', possible_duplicate: 'Возможных дублей', no_exact_copy: 'Без точной копии', restored: 'Возвращено'
+    prior_wrong_owner: 'Были у чужого аккаунта', possible_duplicate: 'Возможных дублей', prior_account_mismatch: 'Ошибочных аккаунтов прежнего переноса', no_exact_copy: 'Без точной копии', restored: 'Возвращено'
   };
   var phases = { forms: 'формы', users: 'аккаунты', entries: 'заявления', profiles: 'профили', v_users: 'сверка аккаунтов',
     v_entries: 'сверка заявлений', v_orphans: 'поиск удалённых', dupcheck: 'проверка дублей', cleanup: 'прежние переносы', rollback: 'откат', finished: 'завершено' };
