@@ -470,14 +470,14 @@ final class ZAU_Remote_Bridge_Import {
         header('Content-Disposition: attachment; filename="zau-smart-import-report-'.wp_date('Y-m-d-H-i').'.csv"');
         echo "\xEF\xBB\xBF";
         $out=fopen('php://output','w');
-        fputcsv($out,['Тип','Старый User ID','Старый Entry ID','Форма','Дата','Решение','Причина','Сила совпадения','ФИО','ИИН','Email','Телефон','Новый User ID','Новая заявка ID'],';');
+        zau_fputcsv($out,['Тип','Старый User ID','Старый Entry ID','Форма','Дата','Решение','Причина','Сила совпадения','ФИО','ИИН','Email','Телефон','Новый User ID','Новая заявка ID'],';');
         $offset=0;
         do {
             $rows=ZAU_Remote_Smart_Dedup::instance()->report_rows($token,$offset,1000);
             foreach ($rows as $row) {
                 $canonical=json_decode((string)$row['canonical_json'],true);
                 if (!is_array($canonical)) $canonical=[];
-                fputcsv($out,[
+                zau_fputcsv($out,[
                     $row['record_type'],$row['legacy_user_id'],$row['legacy_entry_id'],$row['form_title'],$row['record_at'],
                     $row['decision'],$row['message'] ?: $row['person_message'],$row['identity_strength'],
                     $canonical['full_name'] ?? '',$this->mask_iin($canonical['iin'] ?? ''),$this->mask_email($canonical['email'] ?? ''),$this->mask_phone($canonical['phone'] ?? ''),
@@ -687,8 +687,8 @@ final class ZAU_Remote_Bridge_Import {
         header('Content-Disposition: attachment; filename="' . sanitize_file_name($prefix . '-' . wp_date('Y-m-d-H-i') . '.csv') . '"');
         echo "\xEF\xBB\xBF";
         $out = fopen('php://output', 'w');
-        fputcsv($out, $headers, ';');
-        foreach ($rows as $row) { fputcsv($out, call_user_func($mapper, $row), ';'); }
+        zau_fputcsv($out, $headers, ';');
+        foreach ($rows as $row) { zau_fputcsv($out, call_user_func($mapper, $row), ';'); }
         fclose($out); exit;
     }
 

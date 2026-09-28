@@ -60,7 +60,7 @@
     if (job.summary) {
       var s = job.summary;
       summary.innerHTML = '<div class="zau-exact-summary ' + (s.complete ? 'is-ok' : 'is-bad') + '"><strong>' +
-        (s.complete ? '100% — все данные старого сайта есть на новом и совпадают побайтно.' : 'Есть расхождения: ' + esc(s.problems) + '. Скачайте отчёт и запустите перенос ещё раз.') +
+        (s.complete ? '100% — все данные старого сайта есть на новом и совпадают побайтно.' : (s.not_imported ? 'Перенос ещё не выполнен: на новом сайте нет ни одной перенесённой записи. Нажмите «Перенести», дождитесь окончания и повторите сверку.' : 'Есть расхождения: ' + esc(s.problems) + '. Скачайте отчёт и запустите перенос ещё раз.')) +
         '</strong><span>Аккаунты: ' + esc(s.users_ok) + ' из ' + esc(s.users_total) + ' · Заявления: ' + esc(s.entries_ok) + ' из ' + esc(s.entries_total) +
         (s.unassigned ? ' · без владельца: ' + esc(s.unassigned) + ' (см. очередь)' : '') + '</span></div>';
     } else { summary.innerHTML = ''; }

@@ -25,8 +25,8 @@ if (!defined('ABSPATH')) { exit; }
  *     данные»; администратор разбирает такие отметки в очереди.
  */
 final class ZAU_Exact_Migration {
-    const VERSION = '2.28.0';
-    const DB_VERSION = '1.0.0';
+    const VERSION = '2.28.3';
+    const DB_VERSION = '1.1.0';
     const OPT_DB = 'zau_exact_migration_db_version';
     const OPT = 'zau_exact_migration_settings';
     const JOB_OPT = 'zau_exact_migration_job';
@@ -99,6 +99,7 @@ final class ZAU_Exact_Migration {
     public function maybe_upgrade() {
         if (get_option(self::OPT_DB) !== self::DB_VERSION) {
             $this->install_tables();
+            $this->migrate_site_hash();
             update_option(self::OPT_DB, self::DB_VERSION, false);
         }
     }
@@ -170,8 +171,34 @@ final class ZAU_Exact_Migration {
         ]);
     }
 
-    private function site_hash() {
-        return hash('sha256', untrailingslashit(strtolower((string)$this->settings()['old_url'])));
+    /**
+     * Ключ старого сайта: только имя хоста без www, поэтому смена http↔https,
+     * «www.» или слэша в настройках не «теряет» уже перенесённые записи.
+     */
+    private function site_hash($url = null) {
+        $url = strtolower(trim((string)($url === null ? $this->settings()['old_url'] : $url)));
+        $host = (string)wp_parse_url(strpos($url, '://') === false ? 'https://' . $url : $url, PHP_URL_HOST);
+        $host = preg_replace('/^www\./', '', $host);
+        return hash('sha256', 'host:' . ($host !== '' ? $host : $url));
+    }
+
+    /** До 2.28.3 ключ считался от полного адреса. Если источник был один — переводим его записи на новый ключ. */
+    private function migrate_site_hash() {
+        global $wpdb;
+        if ((string)$this->settings()['old_url'] === '') { return; }
+        $new = $this->site_hash();
+        $hashes = (array)$wpdb->get_col("SELECT DISTINCT site_hash FROM {$this->map_table}");
+        if (count($hashes) === 1 && $hashes[0] !== $new) {
+            $wpdb->update($this->map_table, ['site_hash'=>$new], ['site_hash'=>$hashes[0]]);
+        }
+    }
+
+    private function progress_counts() {
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT source_type,COUNT(*) c FROM {$this->map_table} WHERE site_hash=%s GROUP BY source_type", $this->site_hash()));
+        $out = ['user'=>0, 'entry'=>0, 'other_sources'=>(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->map_table} WHERE site_hash<>%s", $this->site_hash()))];
+        foreach ((array)$rows as $r) { $out[$r->source_type] = (int)$r->c; }
+        return $out;
     }
 
     private static function canonicalize(&$value) {
@@ -375,6 +402,7 @@ final class ZAU_Exact_Migration {
             'skip_admins'=>!empty($_POST['skip_admins']) ? 1 : 0,
             'download_files'=>!empty($_POST['download_files']) ? 1 : 0,
         ], false);
+        $this->migrate_site_hash();
         wp_safe_redirect(add_query_arg(['page'=>'zau-exact-migration', 'saved'=>1], admin_url('admin.php')));
         exit;
     }
@@ -1324,6 +1352,7 @@ final class ZAU_Exact_Migration {
             'unassigned'=>(int)($s['entries_ok_unassigned'] ?? 0),
             'problems'=>$problems,
             'complete'=>$problems === 0 && $usersOk === (int)$job['processed']['users'] && $entriesOk === (int)$job['processed']['entries'],
+            'not_imported'=>(int)($s['users_ok'] ?? 0) === 0 && $entriesOk === 0 && $problems > 0,
         ];
     }
 
@@ -1419,18 +1448,21 @@ final class ZAU_Exact_Migration {
         $token = sanitize_text_field(wp_unslash($_GET['token'] ?? ''));
         if ($token === '') { $job = (array)get_option(self::JOB_OPT, []); $token = (string)($job['token'] ?? ''); }
         if ($token === '') { wp_die('Отчёт не найден.'); }
+        // Предупреждения PHP других плагинов не должны попадать внутрь CSV.
+        @ini_set('display_errors', '0');
+        while (ob_get_level() > 0) { ob_end_clean(); }
         nocache_headers();
         header('Content-Type: text/csv; charset=UTF-8');
         header('Content-Disposition: attachment; filename="zau-exact-report-' . wp_date('Y-m-d-H-i') . '.csv"');
         echo "\xEF\xBB\xBF";
         $out = fopen('php://output', 'w');
-        fputcsv($out, ['Тип', 'Старый ID', 'Решение', 'Пояснение', 'Аккаунт нового сайта', 'Заявка нового сайта', 'ФИО в заявлении', 'Совпадение ФИО'], ';');
+        zau_fputcsv($out, ['Тип', 'Старый ID', 'Решение', 'Пояснение', 'Аккаунт нового сайта', 'Заявка нового сайта', 'ФИО в заявлении', 'Совпадение ФИО'], ';');
         $offset = 0;
         do {
             $rows = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$this->report_table} WHERE job_token=%s ORDER BY id ASC LIMIT 2000 OFFSET %d", $token, $offset));
             foreach ((array)$rows as $row) {
                 $details = json_decode((string)$row->details, true);
-                fputcsv($out, [$row->source_type, $row->source_id, $row->decision, $row->message, $row->target_user_id ?: '', $row->target_submission_id ?: '', $details['applicant'] ?? '', $details['match'] ?? ''], ';');
+                zau_fputcsv($out, [$row->source_type, $row->source_id, $row->decision, $row->message, $row->target_user_id ?: '', $row->target_submission_id ?: '', $details['applicant'] ?? '', $details['match'] ?? ''], ';');
             }
             $offset += count((array)$rows);
         } while (count((array)$rows) === 2000);
@@ -1675,6 +1707,15 @@ final class ZAU_Exact_Migration {
                 </form>
             </section>
 
+            <?php $pc = $this->progress_counts(); ?>
+            <div class="notice <?php echo ($pc['user'] || $pc['entry']) ? 'notice-info' : 'notice-warning'; ?> inline"><p>
+                <?php if ($pc['user'] || $pc['entry']): ?>
+                    <strong>Уже перенесено с этого старого сайта:</strong> аккаунтов <?php echo (int)$pc['user']; ?>, записей WPForms <?php echo (int)$pc['entry']; ?>.
+                <?php else: ?>
+                    <strong>Настоящий перенос с этого сайта ещё не выполнялся.</strong> Пробный перенос ничего не записывает — после него нажмите «Перенести», и только потом «Сверка 100%».
+                <?php endif; ?>
+                <?php if ($pc['other_sources']): ?> В базе есть ещё <?php echo (int)$pc['other_sources']; ?> записей, перенесённых с другого адреса старого сайта — проверьте поле «Адрес старого сайта».<?php endif; ?>
+            </p></div>
             <section class="zau-rb-card">
                 <h2>2. Перенос и 3. Сверка</h2>
                 <p>Сначала — <strong>пробный перенос</strong> (ничего не меняет) и отчёт. Затем <strong>перенос</strong>. После — <strong>сверка</strong>: она должна показать 100%. Перенос можно запускать повторно: уже перенесённое не дублируется, изменённое на старом сайте обновляется, ручные решения сохраняются.</p>

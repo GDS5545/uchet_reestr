@@ -766,9 +766,9 @@ final class ZAU_Remote_Profile_Repair {
         header('Content-Disposition: attachment; filename="'.sanitize_file_name('zau-profile-repair-'.wp_date('Y-m-d-H-i').'.csv').'"');
         echo "\xEF\xBB\xBF";
         $out=fopen('php://output','w');
-        fputcsv($out,['User ID','ФИО','Результат','Статус','Исходная организация','Действие с организацией','Исходный филиал','Действие с филиалом','Заполненные поля','Сообщение'],';');
+        zau_fputcsv($out,['User ID','ФИО','Результат','Статус','Исходная организация','Действие с организацией','Исходный филиал','Действие с филиалом','Заполненные поля','Сообщение'],';');
         foreach ((array)$rows as $row) {
-            fputcsv($out,[$row['user_id'],$row['display_name'],$row['result'],$row['status_action'],$row['organization_source'],$row['organization_action'],$row['branch_source'],$row['branch_action'],$row['profile_fields'],$row['message']],';');
+            zau_fputcsv($out,[$row['user_id'],$row['display_name'],$row['result'],$row['status_action'],$row['organization_source'],$row['organization_action'],$row['branch_source'],$row['branch_action'],$row['profile_fields'],$row['message']],';');
         }
         fclose($out);exit;
     }

@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.28.2';
+    const VERSION = '2.28.3';
     const DB_VERSION = '2.18.2';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
@@ -2043,9 +2043,9 @@ final class ZAU_Union_Module {
         header('Content-Disposition: attachment; filename="'.sanitize_file_name('zau-org-mismatch-'.wp_date('Y-m-d-H-i').'.csv').'"');
         echo "\xEF\xBB\xBF";
         $out = fopen('php://output', 'w');
-        fputcsv($out, ['User ID','ФИО','Email','Организация в реестре','БИН в реестре','Организация в заявлении','БИН в заявлении','ID заявления','Дата заявления','Предлагаемое исправление','Действие'], ';');
+        zau_fputcsv($out, ['User ID','ФИО','Email','Организация в реестре','БИН в реестре','Организация в заявлении','БИН в заявлении','ID заявления','Дата заявления','Предлагаемое исправление','Действие'], ';');
         foreach ($rows as $row) {
-            fputcsv($out, [$row['user_id'],$row['display_name'],$row['email'],$row['registry_org'],$row['registry_bin'],$row['declared_org'],$row['declared_bin'],$row['submission_id'],$row['submission_date'],$row['proposed_org_name'],$this->organization_mismatch_action_label($row['proposed_action'])], ';');
+            zau_fputcsv($out, [$row['user_id'],$row['display_name'],$row['email'],$row['registry_org'],$row['registry_bin'],$row['declared_org'],$row['declared_bin'],$row['submission_id'],$row['submission_date'],$row['proposed_org_name'],$this->organization_mismatch_action_label($row['proposed_action'])], ';');
         }
         fclose($out);
         exit;

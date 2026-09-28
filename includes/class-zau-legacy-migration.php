@@ -688,7 +688,7 @@ final class ZAU_Legacy_Migration {
         if (!current_user_can(ZAU_Certificate_PDF_Generator::CAP_MANAGE) && !current_user_can('manage_options')) { wp_die('Недостаточно прав.'); }
         check_admin_referer(self::NONCE);
         global $wpdb;$rows=$wpdb->get_results("SELECT * FROM {$this->map_table} ORDER BY id ASC",ARRAY_A);
-        nocache_headers();header('Content-Type: text/csv; charset=UTF-8');header('Content-Disposition: attachment; filename="zau-migration-report-'.wp_date('Y-m-d-His').'.csv"');$out=fopen('php://output','w');fwrite($out,"\xEF\xBB\xBF");fputcsv($out,['Источник','ID источника','Цель','ID цели','Статус','Детали','Дата'],';');foreach((array)$rows as $row)fputcsv($out,[$row['source_type'],$row['source_id'],$row['target_type'],$row['target_id'],$row['status'],$row['details'],$row['created_at']],';');fclose($out);exit;
+        nocache_headers();header('Content-Type: text/csv; charset=UTF-8');header('Content-Disposition: attachment; filename="zau-migration-report-'.wp_date('Y-m-d-His').'.csv"');$out=fopen('php://output','w');fwrite($out,"\xEF\xBB\xBF");zau_fputcsv($out,['Источник','ID источника','Цель','ID цели','Статус','Детали','Дата'],';');foreach((array)$rows as $row)zau_fputcsv($out,[$row['source_type'],$row['source_id'],$row['target_type'],$row['target_id'],$row['status'],$row['details'],$row['created_at']],';');fclose($out);exit;
     }
 }
 

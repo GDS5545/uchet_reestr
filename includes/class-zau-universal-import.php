@@ -1117,9 +1117,9 @@ final class ZAU_Universal_Import {
         header('Content-Disposition: attachment; filename="zau-import-report-' . wp_date('Y-m-d-H-i') . '.csv"');
         echo "\xEF\xBB\xBF";
         $out = fopen('php://output', 'w');
-        fputcsv($out, ['Строка','Результат','Сообщение','Новый User ID','Новая заявка ID','Старый User ID','Старый Entry ID','ФИО','Email','Телефон'], ';');
+        zau_fputcsv($out, ['Строка','Результат','Сообщение','Новый User ID','Новая заявка ID','Старый User ID','Старый Entry ID','ФИО','Email','Телефон'], ';');
         foreach ($rows as $row) {
-            fputcsv($out, [$row['row'],$row['result'],$row['message'],$row['user_id'],$row['submission_id'],$row['legacy_user_id'],$row['legacy_entry_id'],$row['full_name'],$row['email'],$row['phone']], ';');
+            zau_fputcsv($out, [$row['row'],$row['result'],$row['message'],$row['user_id'],$row['submission_id'],$row['legacy_user_id'],$row['legacy_entry_id'],$row['full_name'],$row['email'],$row['phone']], ';');
         }
         fclose($out);
         exit;
