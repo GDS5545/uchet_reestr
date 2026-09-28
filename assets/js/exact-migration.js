@@ -27,7 +27,7 @@
 
   var labels = {
     created: 'Создано аккаунтов', linked_existing: 'Связано по email', updated: 'Обновлено', unchanged: 'Без изменений',
-    would_create: 'Будет создано аккаунтов', would_link_existing: 'Будет связано по email', would_update: 'Будет обновлено',
+    would_create: 'Будет создано аккаунтов', would_link_existing: 'Будет связано по email', would_link_prior_import: 'Будет связано с аккаунтом прежнего переноса', linked_prior_import: 'Связано с аккаунтом прежнего переноса', would_update: 'Будет обновлено',
     conflict: 'Конфликтов email', skipped_admin: 'Администраторов пропущено', skipped_no_create: 'Не создано (выключено)',
     own: 'Заявлений владельцев', other_person: 'Поданы за другого', unassigned: 'Без владельца',
     profile_filled: 'Профилей дополнено', transfer_error: 'Ошибок передачи', error: 'Ошибок',

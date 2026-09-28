@@ -25,7 +25,7 @@ if (!defined('ABSPATH')) { exit; }
  *     данные»; администратор разбирает такие отметки в очереди.
  */
 final class ZAU_Exact_Migration {
-    const VERSION = '2.28.5';
+    const VERSION = '2.28.6';
     const DB_VERSION = '1.1.0';
     const OPT_DB = 'zau_exact_migration_db_version';
     const OPT = 'zau_exact_migration_settings';
@@ -760,6 +760,27 @@ final class ZAU_Exact_Migration {
             }
         }
         if (!$target) {
+            // Прежние инструменты переноса часто создавали аккаунт без email, но записывали
+            // в него номер старого аккаунта. Такой аккаунт — тот же человек: связываем его,
+            // а не создаём второй, и записываем в него email со старого сайта.
+            $prior = $this->prior_import_account($oldId);
+            if ($prior) {
+                $target = (int)$prior->ID;
+                $decision = $dry ? 'would_link_prior_import' : 'linked_prior_import';
+                $message = 'Найден аккаунт #' . $target . ', созданный прежним переносом из этого же старого аккаунта, без email' . ($email ? '; в него будет записан email ' . $email : '') . '.';
+                $sameName = count(array_intersect($this->old_user_name_tokens($item), array_merge($this->name_tokens($prior->last_name . ' ' . $prior->first_name), $this->name_tokens($prior->display_name)))) >= 2;
+                if (!$sameName) { $message .= ' ФИО в этом аккаунте отличается от старого аккаунта — профиль стоит проверить.'; }
+                if (!$dry) {
+                    if ($email && !email_exists($email)) {
+                        add_filter('send_email_change_email', '__return_false');
+                        wp_update_user(['ID'=>$target, 'user_email'=>$email]);
+                        remove_filter('send_email_change_email', '__return_false');
+                    }
+                    if (!$sameName) { update_user_meta($target, 'zau_exact_prior_mismatch', 'name'); }
+                }
+            }
+        }
+        if (!$target) {
             if (empty($settings['create_users'])) {
                 $this->add_stat($job, 'skipped_no_create');
                 $this->report($job, 'user', $oldId, 'skipped_no_create', 'Аккаунт не найден по email, а создание новых аккаунтов выключено.');
@@ -790,6 +811,22 @@ final class ZAU_Exact_Migration {
         $this->save_map('user', $oldId, ['target_user_id'=>$target, 'checksum'=>$compare, 'decision'=>$decision, 'message'=>$message]);
         $this->add_stat($job, $decision);
         $this->report($job, 'user', $oldId, $decision, $message, $target, 0, $tokens);
+    }
+
+    /** Единственный аккаунт без email с zau_legacy_user_id = старому ID, не занятый другим старым аккаунтом и не помеченный как дубль. */
+    private function prior_import_account($oldId) {
+        global $wpdb;
+        $ids = (array)$wpdb->get_col($wpdb->prepare("SELECT DISTINCT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_legacy_user_id' AND meta_value=%s LIMIT 10", (string)(int)$oldId));
+        $found = [];
+        foreach ($ids as $id) {
+            $user = get_user_by('id', (int)$id);
+            if (!$user || trim((string)$user->user_email) !== '' || user_can($user, 'manage_options')) { continue; }
+            if (get_user_meta((int)$id, 'zau_legacy_duplicate_of', true) || get_user_meta((int)$id, 'zau_member_status', true) === 'Дубликат переноса') { continue; }
+            $taken = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->map_table} WHERE site_hash=%s AND source_type='user' AND target_user_id=%d AND source_id<>%d", $this->site_hash(), (int)$id, (int)$oldId));
+            if ($taken) { continue; }
+            $found[] = $user;
+        }
+        return count($found) === 1 ? $found[0] : null;
     }
 
     private function create_user(array $item, $email) {
@@ -997,9 +1034,10 @@ final class ZAU_Exact_Migration {
             if (!$id || $id === (int)$excludeUserId) { continue; }
             $user = get_user_by('id', $id);
             if (!$user || user_can($user, 'manage_options')) { continue; }
+            if (get_user_meta($id, 'zau_legacy_duplicate_of', true) || get_user_meta($id, 'zau_member_status', true) === 'Дубликат переноса') { continue; }
             // Аккаунт уже принадлежит ДРУГОМУ старому пользователю — это однофамилец, не дубль.
             $taken = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->map_table} WHERE site_hash=%s AND source_type='user' AND target_user_id=%d", $this->site_hash(), $id))
-                + (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->report_table} WHERE job_token=%s AND source_type='user' AND target_user_id=%d AND decision IN ('would_link_existing','linked_existing','unchanged','updated','would_update')", (string)$job['token'], $id));
+                + (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->report_table} WHERE job_token=%s AND source_type='user' AND target_user_id=%d AND decision IN ('would_link_existing','linked_existing','would_link_prior_import','linked_prior_import','unchanged','updated','would_update')", (string)$job['token'], $id));
             if ($taken) { continue; }
             $have = array_values(array_unique(array_merge($this->name_tokens($user->last_name . ' ' . $user->first_name), $this->name_tokens($user->display_name))));
             if (count(array_intersect($want, $have)) < 2) { continue; }
@@ -1067,6 +1105,11 @@ final class ZAU_Exact_Migration {
         // Освобождаем email, чтобы вход по коду на старый email не открывал пустой аккаунт-дубль.
         $wpdb->update($wpdb->users, ['user_email'=>''], ['ID'=>(int)$from->ID]);
         clean_user_cache((int)$from->ID);
+        // У существующего аккаунта не было email — отдаём ему email со старого сайта, иначе человек не сможет войти по коду.
+        if (trim((string)$into->user_email) === '' && is_email($from->user_email)) {
+            $wpdb->update($wpdb->users, ['user_email'=>$from->user_email], ['ID'=>(int)$into->ID]);
+            clean_user_cache((int)$into->ID);
+        }
         return true;
     }
 
@@ -1173,7 +1216,7 @@ final class ZAU_Exact_Migration {
                     "SELECT decision,target_user_id FROM {$this->report_table} WHERE job_token=%s AND source_type='user' AND source_id=%d AND decision<>'possible_duplicate' ORDER BY id DESC LIMIT 1",
                     (string)$job['token'], $oldUser
                 ));
-                if ($row && in_array($row->decision, ['would_create', 'would_link_existing', 'would_update', 'unchanged'], true)) {
+                if ($row && in_array($row->decision, ['would_create', 'would_link_existing', 'would_link_prior_import', 'would_update', 'unchanged'], true)) {
                     return ['user_id'=>(int)$row->target_user_id, 'method'=>'account', 'pending'=>1, 'tokens'=>$this->report_tokens($job, 'source_id', $oldUser)];
                 }
             }
@@ -1801,7 +1844,7 @@ final class ZAU_Exact_Migration {
                 $old = $raw ? esc_html('#' . (int)$raw['id'] . ' ' . trim($this->meta_first((array)$raw['meta'], 'last_name') . ' ' . $this->meta_first((array)$raw['meta'], 'first_name')) . ' / ' . ($raw['display_name'] ?? '') . ' · ' . ($raw['user_email'] ?? '')) : '<em>нет копии — сначала выполните точный перенос</em>';
                 $mark = [];
                 if (($dispute['status'] ?? '') === 'open') { $mark[] = 'Пользователь: «' . esc_html((string)($dispute['comment'] ?? '')) . '» (' . esc_html((string)($dispute['at'] ?? '')) . ')'; }
-                if ($prior !== '') { $mark[] = 'Прежний перенос: старый #' . esc_html($prior); }
+                if ($prior !== '') { $mark[] = ctype_digit($prior) ? 'Прежний перенос связывал со старым #' . esc_html($prior) : 'ФИО в аккаунте отличается от старого аккаунта'; }
                 $actions = '';
                 if ($raw) { $actions .= $this->queue_form('restore_profile', 'Пересобрать профиль', ['user_id'=>(int)$id, 'view'=>$view], '', 'button button-primary'); }
                 if ($this->user_json_meta((int)$id, 'zau_exact_profile_backups')) { $actions .= $this->queue_form('undo_restore', 'Вернуть как было', ['user_id'=>(int)$id, 'view'=>$view]); }
