@@ -125,3 +125,26 @@
   // Показать состояние последнего задания после перезагрузки страницы.
   if (cfg.job && cfg.job.token) { render(cfg.job); }
 })();
+/* Проверка ФИО и подписей: пакетный запуск */
+(function () {
+  'use strict';
+  var cfg = window.ZAUExactMigration || {};
+  var btn = document.querySelector('[data-zau-audit-run]');
+  if (!btn) { return; }
+  var out = document.querySelector('[data-zau-audit-progress]');
+  function step(cursor, tries) {
+    var body = new FormData();
+    body.set('action', 'zau_exact_audit_run'); body.set('nonce', cfg.nonce); body.set('cursor', cursor);
+    fetch(cfg.ajaxUrl, { method: 'POST', body: body, credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || !j.success) { throw new Error((j && j.data && j.data.message) || 'Ошибка'); }
+      var d = j.data;
+      out.textContent = 'Проверено ' + d.done + ' из ' + d.total + '…';
+      if (d.finished) { out.textContent = 'Готово: проверено ' + d.total + '. Обновляем страницу…'; setTimeout(function () { window.location.reload(); }, 800); }
+      else { step(d.cursor, 0); }
+    }).catch(function (e) {
+      if (tries < 5) { out.textContent = 'Повтор… ' + e.message; setTimeout(function () { step(cursor, tries + 1); }, 2000 * (tries + 1)); }
+      else { out.textContent = 'Остановлено: ' + e.message + '. Нажмите кнопку ещё раз — проверка начнётся сначала.'; btn.disabled = false; }
+    });
+  }
+  btn.addEventListener('click', function () { btn.disabled = true; out.textContent = 'Запуск…'; step(0, 0); });
+})();

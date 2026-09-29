@@ -25,7 +25,7 @@ if (!defined('ABSPATH')) { exit; }
  *     данные»; администратор разбирает такие отметки в очереди.
  */
 final class ZAU_Exact_Migration {
-    const VERSION = '2.28.8';
+    const VERSION = '2.28.9';
     const DB_VERSION = '1.1.0';
     const OPT_DB = 'zau_exact_migration_db_version';
     const OPT = 'zau_exact_migration_settings';
@@ -77,6 +77,9 @@ final class ZAU_Exact_Migration {
         add_action('admin_post_zau_exact_save', [$this, 'save_settings']);
         add_action('admin_post_zau_exact_report', [$this, 'download_report']);
         add_action('admin_post_zau_exact_queue_action', [$this, 'queue_action']);
+        add_action('admin_post_zau_exact_audit_action', [$this, 'audit_action']);
+        add_action('admin_post_zau_exact_audit_csv', [$this, 'audit_csv']);
+        add_action('wp_ajax_zau_exact_audit_run', [$this, 'ajax_audit_run']);
 
         add_action('wp_ajax_zau_exact_test', [$this, 'ajax_test']);
         add_action('wp_ajax_zau_exact_start', [$this, 'ajax_start']);
@@ -393,10 +396,11 @@ final class ZAU_Exact_Migration {
 
     public function admin_menu() {
         add_submenu_page(null, 'Точный перенос 1:1', 'Точный перенос 1:1', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-exact-migration', [$this, 'page']);
+        add_submenu_page(null, 'Проверка ФИО и подписей', 'Проверка ФИО и подписей', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-exact-audit', [$this, 'audit_page']);
     }
 
     public function admin_assets($hook) {
-        if (strpos((string)$hook, 'zau-exact-migration') === false) { return; }
+        if (strpos((string)$hook, 'zau-exact-migration') === false && strpos((string)$hook, 'zau-exact-audit') === false) { return; }
         wp_enqueue_style('zau-remote-bridge', plugins_url('../assets/css/remote-bridge.css', __FILE__), [], self::VERSION);
         wp_enqueue_style('zau-exact-migration', plugins_url('../assets/css/exact-migration.css', __FILE__), ['zau-remote-bridge'], self::VERSION);
         wp_enqueue_script('zau-exact-migration', plugins_url('../assets/js/exact-migration.js', __FILE__), [], self::VERSION, true);
@@ -2093,6 +2097,247 @@ final class ZAU_Exact_Migration {
             <?php $this->render_queue(); ?>
         </div>
         <?php
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Проверка ФИО и подписей                                            */
+    /* ------------------------------------------------------------------ */
+
+    /** yes / no / none — совпадают ли два набора слов ФИО (порядок и написание не важны). */
+    private function tokens_match(array $a, array $b) {
+        if (count($a) < 1 || count($b) < 1) { return 'none'; }
+        $common = count(array_intersect($a, $b));
+        if ($common >= 2) { return 'yes'; }
+        if ($common === 1 && (count($a) === 1 || count($b) === 1)) { return 'yes'; }
+        return 'no';
+    }
+
+    private function first_signature_url(array $fields, array $files = []) {
+        foreach ($fields as $f) {
+            $isSig = ($f['type'] ?? '') === 'signature' || preg_match('/подпис|signature|қолы/u', $this->lower($f['label'] ?? ''));
+            if (!$isSig) { continue; }
+            if (preg_match('#https?://[^\s,"\'<>]+#iu', (string)($f['value'] ?? ''), $m)) {
+                return !empty($files[$m[0]]) ? (string)$files[$m[0]] : $m[0];
+            }
+        }
+        return '';
+    }
+
+    /** Считает и сохраняет результат проверки одного участника. */
+    private function audit_user($userId) {
+        global $wpdb;
+        $user = get_user_by('id', (int)$userId);
+        if (!$user) { return null; }
+        $raw = $this->user_json_meta((int)$userId, 'zau_exact_legacy_raw');
+        $newTokens = array_values(array_unique(array_merge($this->name_tokens($user->last_name . ' ' . $user->first_name), $this->name_tokens($user->display_name))));
+        $oldName = $raw ? $this->old_display_name($raw) : '';
+        $oldTokens = $raw ? $this->old_user_name_tokens($raw) : [];
+
+        $appName = ''; $sigOld = ''; $appDate = '';
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT data_json,created_at FROM {$this->submissions_table} WHERE user_id=%d AND status=%s ORDER BY created_at DESC,id DESC LIMIT 20", (int)$userId, self::S_OWN));
+        foreach ((array)$rows as $row) {
+            $d = json_decode((string)$row->data_json, true);
+            if (!is_array($d)) { continue; }
+            if ($appName === '' && ($d['legacy_applicant_name'] ?? '') !== '') { $appName = (string)$d['legacy_applicant_name']; $appDate = substr((string)$row->created_at, 0, 10); }
+            if ($sigOld === '') { $sigOld = $this->first_signature_url((array)($d['legacy_fields'] ?? []), (array)($d['legacy_files'] ?? [])); }
+            if ($appName !== '' && $sigOld !== '') { break; }
+        }
+        $sigNew = ''; $newAppName = '';
+        $ph = implode(',', array_fill(0, count(self::archive_statuses()), '%s'));
+        $newRows = $wpdb->get_results($wpdb->prepare("SELECT data_json,signature_urls_json FROM {$this->submissions_table} WHERE user_id=%d AND status NOT IN ($ph) ORDER BY id DESC LIMIT 10", array_merge([(int)$userId], self::archive_statuses())));
+        foreach ((array)$newRows as $row) {
+            $sigs = json_decode((string)$row->signature_urls_json, true);
+            if ($sigNew === '' && is_array($sigs)) { foreach ($sigs as $url) { if (is_string($url) && preg_match('#^https?://#', $url)) { $sigNew = $url; break; } } }
+            $d = json_decode((string)$row->data_json, true);
+            if ($newAppName === '' && is_array($d) && empty($d['legacy_entry_id']) && empty($d['legacy_wpforms_entry_id'])) {
+                $newAppName = trim((string)($d['full_name'] ?? trim(($d['last_name'] ?? '') . ' ' . ($d['first_name'] ?? '') . ' ' . ($d['middle_name'] ?? ''))));
+            }
+        }
+        $result = [
+            'name_old'=>$this->tokens_match($newTokens, $oldTokens),
+            'name_app'=>$this->tokens_match($newTokens, $this->name_tokens($appName)),
+            'name_new_app'=>$newAppName !== '' ? $this->tokens_match($newTokens, $this->name_tokens($newAppName)) : 'none',
+            'old_name'=>$oldName, 'app_name'=>$appName, 'app_date'=>$appDate, 'new_app_name'=>$newAppName,
+            'sig_old'=>$sigOld, 'sig_new'=>$sigNew,
+            'at'=>current_time('mysql'),
+        ];
+        $result['status'] = in_array('no', [$result['name_old'], $result['name_app'], $result['name_new_app']], true) ? 'diff' : 'ok';
+        $prev = $this->user_json_meta((int)$userId, 'zau_exact_audit');
+        if (!empty($prev['reviewed'])) { $result['reviewed'] = $prev['reviewed']; }
+        $this->update_user_json_meta((int)$userId, 'zau_exact_audit', $result);
+        return $result;
+    }
+
+    public function ajax_audit_run() {
+        $this->require_access();
+        global $wpdb;
+        $cursor = absint($_POST['cursor'] ?? 0);
+        $ids = $wpdb->get_col($wpdb->prepare("SELECT DISTINCT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_legacy_user_id' AND user_id>%d ORDER BY user_id ASC LIMIT 150", $cursor));
+        $total = (int)$wpdb->get_var("SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_legacy_user_id'");
+        $done = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_legacy_user_id' AND user_id<=%d", $cursor));
+        foreach ((array)$ids as $id) { $this->audit_user((int)$id); $cursor = (int)$id; }
+        wp_send_json_success(['cursor'=>$cursor, 'done'=>min($total, $done + count((array)$ids)), 'total'=>$total, 'finished'=>count((array)$ids) < 150]);
+    }
+
+    private function audit_where($filter, $search) {
+        global $wpdb;
+        $join = "JOIN {$wpdb->usermeta} a ON a.user_id=u.ID AND a.meta_key='zau_exact_audit'";
+        $where = '1=1';
+        if ($filter === 'diff') { $where .= " AND a.meta_value LIKE '%\"status\":\"diff\"%' AND a.meta_value NOT LIKE '%\"reviewed\"%'"; }
+        elseif ($filter === 'nosig') { $where .= " AND a.meta_value LIKE '%\"sig_old\":\"\"%' AND a.meta_value LIKE '%\"sig_new\":\"\"%'"; }
+        elseif ($filter === 'bothsig') { $where .= " AND a.meta_value NOT LIKE '%\"sig_old\":\"\"%' AND a.meta_value NOT LIKE '%\"sig_new\":\"\"%'"; }
+        elseif ($filter === 'reviewed') { $where .= " AND a.meta_value LIKE '%\"reviewed\"%'"; }
+        if ($search !== '') {
+            $like = '%' . $wpdb->esc_like($search) . '%';
+            $where .= $wpdb->prepare(' AND (u.display_name LIKE %s OR u.user_email LIKE %s OR a.meta_value LIKE %s)', $like, $like, $like);
+        }
+        return [$join, $where];
+    }
+
+    private function audit_badge($value) {
+        $map = ['yes'=>['ok', 'совпадает'], 'no'=>['bad', 'отличается'], 'none'=>['none', 'нет данных']];
+        $v = $map[$value] ?? $map['none'];
+        return '<span class="zau-audit-badge is-' . $v[0] . '">' . $v[1] . '</span>';
+    }
+
+    private function audit_img($url, $label) {
+        if ($url === '') { return '<span class="zau-audit-nosig">нет</span>'; }
+        return '<a href="' . esc_url($url) . '" target="_blank" rel="noopener" title="' . esc_attr($label) . '"><img class="zau-audit-sig" src="' . esc_url($url) . '" alt="' . esc_attr($label) . '" loading="lazy"></a>';
+    }
+
+    public function audit_page() {
+        if (!$this->can_manage()) { wp_die('Недостаточно прав.'); }
+        global $wpdb;
+        $filter = sanitize_key((string)($_GET['filter'] ?? 'diff'));
+        $search = sanitize_text_field(wp_unslash($_GET['s'] ?? ''));
+        $paged = max(1, absint($_GET['paged'] ?? 1));
+        $per = 50;
+        list($join, $where) = $this->audit_where($filter, $search);
+        $total = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->users} u $join WHERE $where");
+        $rows = $wpdb->get_results("SELECT u.ID,a.meta_value audit FROM {$wpdb->users} u $join WHERE $where ORDER BY u.display_name ASC LIMIT $per OFFSET " . (($paged - 1) * $per));
+        $migrated = (int)$wpdb->get_var("SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_legacy_user_id'");
+        $checked = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_audit'");
+        $diff = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_audit' AND meta_value LIKE '%\"status\":\"diff\"%' AND meta_value NOT LIKE '%\"reviewed\"%'");
+        $base = admin_url('admin.php?page=zau-exact-audit');
+        ?>
+        <div class="wrap zau-remote-wrap zau-exact-wrap">
+            <?php if (function_exists('zau_admin_hub_nav')) { zau_admin_hub_nav('import'); } ?>
+            <h1>Проверка ФИО и подписей перенесённых участников</h1>
+            <?php if (!empty($_GET['msg'])): ?><div class="notice notice-info is-dismissible"><p><?php echo esc_html(rawurldecode(sanitize_text_field(wp_unslash($_GET['msg'])))); ?></p></div><?php endif; ?>
+            <section class="zau-rb-card">
+                <p>Для каждого участника, перенесённого точным переносом, сравниваются три ФИО: <strong>в аккаунте на новом сайте</strong>, <strong>в старом аккаунте</strong> (Ultimate Member) и <strong>в его последнем старом заявлении</strong>, а также ФИО в новом заявлении, если он уже подавал его на новом сайте. Порядок слов, регистр, «ё», казахские буквы и латиница не считаются расхождением. Подписи показываются рядом — старая из заявления со старого сайта и новая с нового сайта — для проверки на глаз.</p>
+                <p><strong>Перенесено участников:</strong> <?php echo (int)$migrated; ?> · <strong>проверено:</strong> <?php echo (int)$checked; ?> · <strong>с расхождениями ФИО:</strong> <?php echo (int)$diff; ?></p>
+                <p><button class="button button-primary" data-zau-audit-run>Проверить всех заново</button> <span data-zau-audit-progress></span></p>
+                <p class="description">Проверка ничего не меняет — только сравнивает и запоминает результат. Запускайте после переноса и после исправлений.</p>
+            </section>
+            <form method="get" class="zau-audit-filter">
+                <input type="hidden" name="page" value="zau-exact-audit">
+                <?php foreach (['diff'=>'Расхождения ФИО', 'all'=>'Все', 'bothsig'=>'Есть старая и новая подпись', 'nosig'=>'Нет ни одной подписи', 'reviewed'=>'Отмечены «всё верно»'] as $key => $label): ?>
+                    <a class="button<?php echo $filter === $key ? ' button-primary' : ''; ?>" href="<?php echo esc_url(add_query_arg(['filter'=>$key, 's'=>$search], $base)); ?>"><?php echo esc_html($label); ?></a>
+                <?php endforeach; ?>
+                <input type="hidden" name="filter" value="<?php echo esc_attr($filter); ?>">
+                <input type="search" name="s" value="<?php echo esc_attr($search); ?>" placeholder="ФИО или email">
+                <button class="button">Найти</button>
+                <a class="button" href="<?php echo esc_url(wp_nonce_url(add_query_arg(['action'=>'zau_exact_audit_csv', 'filter'=>$filter, 's'=>$search], admin_url('admin-post.php')), self::NONCE)); ?>">Скачать CSV</a>
+            </form>
+            <p>Найдено: <?php echo (int)$total; ?></p>
+            <table class="widefat striped zau-audit-table">
+                <thead><tr><th>Аккаунт на новом сайте</th><th>ФИО в старом аккаунте</th><th>ФИО в старом заявлении</th><th>ФИО в новом заявлении</th><th>Подпись: старая</th><th>Подпись: новая</th><th>Действия</th></tr></thead>
+                <tbody>
+                <?php if (!$rows): ?><tr><td colspan="7"><?php echo $checked ? 'Нет участников по этому фильтру.' : 'Проверка ещё не запускалась — нажмите «Проверить всех заново».'; ?></td></tr><?php endif; ?>
+                <?php foreach ((array)$rows as $row):
+                    $a = json_decode((string)$row->audit, true) ?: [];
+                    $user = get_user_by('id', (int)$row->ID);
+                    if (!$user) { continue; }
+                    $hidden = ['user_id'=>(int)$row->ID, 'filter'=>$filter, 's'=>$search, 'paged'=>$paged];
+                ?>
+                    <tr class="<?php echo ($a['status'] ?? '') === 'diff' && empty($a['reviewed']) ? 'is-diff' : ''; ?>">
+                        <td><a href="<?php echo esc_url(get_edit_user_link((int)$row->ID)); ?>">#<?php echo (int)$row->ID; ?></a> <strong><?php echo esc_html($user->display_name); ?></strong><br><small><?php echo esc_html(trim($user->last_name . ' ' . $user->first_name)); ?> · <?php echo esc_html($user->user_email); ?></small><?php if (!empty($a['reviewed'])): ?><br><span class="zau-audit-badge is-ok">отмечено: всё верно</span><?php endif; ?></td>
+                        <td><?php echo esc_html($a['old_name'] ?? ''); ?><br><?php echo $this->audit_badge($a['name_old'] ?? 'none'); ?></td>
+                        <td><?php echo esc_html($a['app_name'] ?? ''); ?><?php if (!empty($a['app_date'])): ?> <small>(<?php echo esc_html($a['app_date']); ?>)</small><?php endif; ?><br><?php echo $this->audit_badge($a['name_app'] ?? 'none'); ?></td>
+                        <td><?php echo esc_html($a['new_app_name'] ?? ''); ?><br><?php echo $this->audit_badge($a['name_new_app'] ?? 'none'); ?></td>
+                        <td><?php echo $this->audit_img((string)($a['sig_old'] ?? ''), 'Подпись со старого сайта'); ?></td>
+                        <td><?php echo $this->audit_img((string)($a['sig_new'] ?? ''), 'Подпись с нового сайта'); ?></td>
+                        <td>
+                            <?php if (($a['old_name'] ?? '') !== '' && ($a['name_old'] ?? '') === 'no') { echo $this->audit_form('fix_name', 'ФИО как в старом аккаунте', $hidden, 'button button-primary'); } ?>
+                            <?php echo empty($a['reviewed']) ? $this->audit_form('mark_ok', 'Всё верно', $hidden) : $this->audit_form('unmark', 'Снять отметку', $hidden); ?>
+                            <?php if ($this->user_json_meta((int)$row->ID, 'zau_exact_profile_backups')) { echo $this->audit_form('undo_name', 'Вернуть прежнее ФИО', $hidden); } ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            <?php $pages = max(1, (int)ceil($total / $per)); if ($pages > 1): ?>
+                <p class="zau-audit-pages"><?php for ($i = 1; $i <= $pages; $i++): if ($i > 3 && $i < $pages - 2 && abs($i - $paged) > 2) { if ($i === 4 || $i === $pages - 3) { echo '… '; } continue; } ?>
+                    <a class="button<?php echo $i === $paged ? ' button-primary' : ''; ?>" href="<?php echo esc_url(add_query_arg(['filter'=>$filter, 's'=>$search, 'paged'=>$i], $base)); ?>"><?php echo (int)$i; ?></a>
+                <?php endfor; ?></p>
+            <?php endif; ?>
+        </div>
+        <?php
+    }
+
+    private function audit_form($do, $label, array $hidden, $class = 'button') {
+        $html = '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="zau-exact-inline"><input type="hidden" name="action" value="zau_exact_audit_action"><input type="hidden" name="do" value="' . esc_attr($do) . '">' . wp_nonce_field(self::NONCE, '_wpnonce', true, false);
+        foreach ($hidden as $k => $v) { $html .= '<input type="hidden" name="' . esc_attr($k) . '" value="' . esc_attr($v) . '">'; }
+        return $html . '<button class="' . esc_attr($class) . '">' . esc_html($label) . '</button></form>';
+    }
+
+    public function audit_action() {
+        if (!$this->can_manage()) { wp_die('Недостаточно прав.', 403); }
+        check_admin_referer(self::NONCE);
+        $userId = absint($_POST['user_id'] ?? 0);
+        $do = sanitize_key((string)($_POST['do'] ?? ''));
+        $msg = 'Готово.';
+        $user = get_user_by('id', $userId);
+        if ($user && $do === 'fix_name') {
+            $raw = $this->user_json_meta($userId, 'zau_exact_legacy_raw');
+            $meta = (array)($raw['meta'] ?? []);
+            $first = $this->meta_first($meta, 'first_name');
+            $last = $this->meta_first($meta, 'last_name');
+            $display = trim((string)($raw['display_name'] ?? ''));
+            if ($display === '' || $display === (string)($raw['user_login'] ?? '')) { $display = trim($last . ' ' . $first); }
+            if ($display === '' && $first === '' && $last === '') { $msg = 'В старом аккаунте нет ФИО.'; }
+            else {
+                $backups = $this->user_json_meta($userId, 'zau_exact_profile_backups');
+                $backups[] = ['at'=>current_time('mysql'), 'by'=>get_current_user_id(), 'reason'=>'fix_name', 'user'=>['first_name'=>$user->first_name, 'last_name'=>$user->last_name, 'display_name'=>$user->display_name], 'meta'=>[]];
+                $this->update_user_json_meta($userId, 'zau_exact_profile_backups', array_slice($backups, -5));
+                wp_update_user(['ID'=>$userId, 'first_name'=>$first, 'last_name'=>$last, 'display_name'=>$display ?: $user->display_name]);
+                $msg = 'ФИО участника #' . $userId . ' заменено на данные старого аккаунта: ' . $display . '. Прежнее значение: ' . $user->display_name . '.';
+            }
+        } elseif ($user && $do === 'undo_name') {
+            $msg = $this->undo_restore($userId) ? 'Прежнее ФИО участника #' . $userId . ' возвращено.' : 'Резервной копии нет.';
+        } elseif ($user && in_array($do, ['mark_ok', 'unmark'], true)) {
+            $a = $this->user_json_meta($userId, 'zau_exact_audit');
+            if ($do === 'mark_ok') { $a['reviewed'] = ['by'=>get_current_user_id(), 'at'=>current_time('mysql')]; } else { unset($a['reviewed']); }
+            $this->update_user_json_meta($userId, 'zau_exact_audit', $a);
+            $msg = $do === 'mark_ok' ? 'Отмечено: всё верно.' : 'Отметка снята.';
+        }
+        if ($user) { $this->audit_user($userId); }
+        wp_safe_redirect(add_query_arg(['page'=>'zau-exact-audit', 'filter'=>sanitize_key((string)($_POST['filter'] ?? 'diff')), 's'=>sanitize_text_field(wp_unslash($_POST['s'] ?? '')), 'paged'=>absint($_POST['paged'] ?? 1), 'msg'=>rawurlencode($msg)], admin_url('admin.php')));
+        exit;
+    }
+
+    public function audit_csv() {
+        if (!$this->can_manage()) { wp_die('Недостаточно прав.', 403); }
+        check_admin_referer(self::NONCE);
+        global $wpdb;
+        list($join, $where) = $this->audit_where(sanitize_key((string)($_GET['filter'] ?? 'all')), sanitize_text_field(wp_unslash($_GET['s'] ?? '')));
+        @ini_set('display_errors', '0');
+        while (ob_get_level() > 0) { ob_end_clean(); }
+        nocache_headers();
+        header('Content-Type: text/csv; charset=UTF-8');
+        header('Content-Disposition: attachment; filename="zau-proverka-fio-' . wp_date('Y-m-d-H-i') . '.csv"');
+        echo "\xEF\xBB\xBF";
+        $out = fopen('php://output', 'w');
+        zau_fputcsv($out, ['ID', 'ФИО на новом сайте', 'Email', 'ФИО в старом аккаунте', 'Совпадение', 'ФИО в старом заявлении', 'Совпадение', 'ФИО в новом заявлении', 'Совпадение', 'Подпись старая', 'Подпись новая', 'Итог', 'Проверено вручную'], ';');
+        $rows = $wpdb->get_results("SELECT u.ID,u.display_name,u.user_email,a.meta_value audit FROM {$wpdb->users} u $join WHERE $where ORDER BY u.display_name ASC LIMIT 50000");
+        $w = ['yes'=>'совпадает', 'no'=>'отличается', 'none'=>'нет данных'];
+        foreach ((array)$rows as $r) {
+            $a = json_decode((string)$r->audit, true) ?: [];
+            zau_fputcsv($out, [$r->ID, $r->display_name, $r->user_email, $a['old_name'] ?? '', $w[$a['name_old'] ?? 'none'], $a['app_name'] ?? '', $w[$a['name_app'] ?? 'none'], $a['new_app_name'] ?? '', $w[$a['name_new_app'] ?? 'none'], $a['sig_old'] ?? '', $a['sig_new'] ?? '', ($a['status'] ?? '') === 'diff' ? 'расхождение' : 'ок', empty($a['reviewed']) ? '' : 'да'], ';');
+        }
+        fclose($out);
+        exit;
     }
 
     /* ------------------------------------------------------------------ */
