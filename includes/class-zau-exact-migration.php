@@ -25,7 +25,7 @@ if (!defined('ABSPATH')) { exit; }
  *     данные»; администратор разбирает такие отметки в очереди.
  */
 final class ZAU_Exact_Migration {
-    const VERSION = '2.28.9';
+    const VERSION = '2.29.0';
     const DB_VERSION = '1.1.0';
     const OPT_DB = 'zau_exact_migration_db_version';
     const OPT = 'zau_exact_migration_settings';
@@ -1596,6 +1596,63 @@ final class ZAU_Exact_Migration {
         return 0;
     }
 
+    /**
+     * Что делать с заявкой прежнего переноса, у которой есть точная копия:
+     *  supersede      — скрыть прежнюю; документы к владельцу точной копии;
+     *  reassign_exact — прежняя привязка верна (ФИО заявителя = владелец прежней заявки),
+     *                   точную копию отдать этому владельцу, прежнюю скрыть;
+     *  review         — ничего не менять, показать администратору.
+     */
+    private function cleanup_plan($prior, $exact, $map) {
+        if ((int)$prior->user_id === (int)$exact->user_id) {
+            return ['action'=>'supersede', 'message'=>'та же заявка у того же аккаунта — прежняя копия скрывается, остаётся точная.'];
+        }
+        if ($exact->status === self::S_DISPUTED) {
+            return ['action'=>'review', 'message'=>'пользователь отметил точную копию «не моё» — ждёт решения администратора, ничего не меняется.'];
+        }
+        $data = json_decode((string)$exact->data_json, true);
+        $applicant = is_array($data) ? (string)($data['legacy_applicant_name'] ?? '') : '';
+        $priorUser = get_user_by('id', (int)$prior->user_id);
+        $priorTokens = $priorUser ? array_values(array_unique(array_merge($this->name_tokens($priorUser->last_name . ' ' . $priorUser->first_name), $this->name_tokens($priorUser->display_name)))) : [];
+        $priorMatch = $this->tokens_match($this->name_tokens($applicant), $priorTokens);
+        $priorName = $priorUser ? '#' . (int)$priorUser->ID . ' «' . $priorUser->display_name . '»' : '#' . (int)$prior->user_id;
+        if ($priorMatch === 'yes') {
+            if (in_array($exact->status, [self::S_OTHER, self::S_UNASSIGNED], true) && empty($map->manual)) {
+                return ['action'=>'reassign_exact', 'message'=>'прежний перенос верно прикрепил заявку к заявителю ' . $priorName . ' («' . $applicant . '»); точная копия была ' . ((int)$exact->user_id ? 'у подавшего #' . (int)$exact->user_id : 'без владельца') . ' — передаётся заявителю, прежняя копия скрывается, документы остаются у заявителя.'];
+            }
+            return ['action'=>'review', 'message'=>'ФИО заявителя «' . $applicant . '» совпадает и с прежним аккаунтом ' . $priorName . ', и с владельцем точной копии #' . (int)$exact->user_id . ' — возможно, два аккаунта одного человека. Ничего не меняется.'];
+        }
+        // Есть другая прежняя копия той же записи у аккаунта самого заявителя — эта копия ошибочная.
+        $sibling = $this->prior_copy_owner_matching((int)($data['legacy_entry_id'] ?? 0), (int)$prior->id, $applicant);
+        if ($sibling && $exact->status !== self::S_OWN) {
+            return ['action'=>'supersede', 'docs_owner'=>$sibling, 'message'=>'заявка была у чужого аккаунта ' . $priorName . '; другая прежняя копия этой записи — у заявителя #' . $sibling . ' («' . $applicant . '»). Эта копия скрывается, документы переходят к заявителю.'];
+        }
+        if ($exact->status === self::S_OWN) {
+            return ['action'=>'supersede', 'message'=>'заявка была у чужого аккаунта ' . $priorName . '; заявитель «' . $applicant . '» — владелец точной копии #' . (int)$exact->user_id . '. Прежняя копия скрывается, документы переходят к владельцу.'];
+        }
+        return ['action'=>'review', 'message'=>'заявка у аккаунта ' . $priorName . ', а заявитель «' . $applicant . '» не совпадает ни с ним, ни с владельцем точной копии' . ((int)$exact->user_id ? ' #' . (int)$exact->user_id : ' (без владельца)') . '. Ничего не меняется — назначьте владельца вручную.'];
+    }
+
+    /** ID аккаунта заявителя, если у него есть другая (не скрытая) прежняя копия этой записи WPForms. */
+    private function prior_copy_owner_matching($entryId, $exceptSubmissionId, $applicant) {
+        global $wpdb;
+        if (!$entryId || $applicant === '') { return 0; }
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT id,user_id,data_json FROM {$this->submissions_table} WHERE id<>%d AND user_id>0 AND (data_json LIKE %s OR data_json LIKE %s OR data_json LIKE %s) LIMIT 20",
+            (int)$exceptSubmissionId, '%"legacy_entry_id":"' . (int)$entryId . '"%', '%"legacy_entry_id":' . (int)$entryId . ',%', '%"legacy_wpforms_entry_id":' . (int)$entryId . ',%'
+        ));
+        $want = $this->name_tokens($applicant);
+        foreach ((array)$rows as $r) {
+            $d = json_decode((string)$r->data_json, true);
+            if (!is_array($d) || !empty($d['legacy_exact']) || $this->prior_entry_id($d) !== (int)$entryId) { continue; }
+            $u = get_user_by('id', (int)$r->user_id);
+            if (!$u) { continue; }
+            $tokens = array_values(array_unique(array_merge($this->name_tokens($u->last_name . ' ' . $u->first_name), $this->name_tokens($u->display_name))));
+            if ($this->tokens_match($want, $tokens) === 'yes') { return (int)$u->ID; }
+        }
+        return 0;
+    }
+
     private function cleanup_step(&$job, $apply) {
         global $wpdb;
         $placeholders = implode(',', array_fill(0, count(self::archive_statuses()), '%s'));
@@ -1611,27 +1668,39 @@ final class ZAU_Exact_Migration {
             if (!$entryId) { continue; }
             $this->add_stat($job, 'prior_submissions');
             $map = $this->get_map('entry', $entryId);
-            $exact = ($map && (int)$map->target_submission_id) ? $wpdb->get_row($wpdb->prepare("SELECT id,user_id FROM {$this->submissions_table} WHERE id=%d", (int)$map->target_submission_id)) : null;
+            $exact = ($map && (int)$map->target_submission_id) ? $wpdb->get_row($wpdb->prepare("SELECT id,user_id,status,data_json FROM {$this->submissions_table} WHERE id=%d", (int)$map->target_submission_id)) : null;
             if (!$exact) {
                 $this->add_stat($job, 'no_exact_copy');
                 $this->report($job, 'prior', (int)$row->id, 'no_exact_copy', 'Нет точной копии записи WPForms #' . $entryId . ' — заявка оставлена как есть.', (int)$row->user_id, 0, ['entry_id'=>$entryId]);
                 continue;
             }
-            $wrongOwner = (int)$row->user_id !== (int)$exact->user_id;
-            if ($wrongOwner) { $this->add_stat($job, 'prior_wrong_owner'); }
             $docs = $wpdb->get_results($wpdb->prepare("SELECT id,user_id,source_submission_id FROM {$this->docs_table} WHERE source_submission_id=%d", (int)$row->id));
             $details = ['entry_id'=>$entryId, 'prev_status'=>(string)$row->status, 'prev_user_id'=>(int)$row->user_id, 'exact_submission_id'=>(int)$exact->id, 'exact_user_id'=>(int)$exact->user_id, 'docs'=>[]];
             foreach ((array)$docs as $doc) { $details['docs'][] = ['id'=>(int)$doc->id, 'user_id'=>(int)$doc->user_id, 'source_submission_id'=>(int)$doc->source_submission_id]; }
-            $message = 'Заявка прежнего переноса для записи #' . $entryId . ($wrongOwner ? ' была у ДРУГОГО аккаунта (#' . (int)$row->user_id . ' вместо #' . (int)$exact->user_id . ')' : '') . '; документов: ' . count($details['docs']) . '.';
-            if (!$apply) {
-                $this->add_stat($job, 'would_supersede');
-                $this->report($job, 'prior', (int)$row->id, 'would_supersede', $message, (int)$row->user_id, (int)$exact->id, $details);
+            $plan = $this->cleanup_plan($row, $exact, $map);
+            $details['plan'] = $plan['action'];
+            $message = 'Запись WPForms #' . $entryId . ': ' . $plan['message'] . ' Документов: ' . count($details['docs']) . '.';
+            $this->add_stat($job, 'plan_' . $plan['action']);
+            if ($plan['action'] === 'review') {
+                $this->report($job, 'prior', (int)$row->id, $apply ? 'needs_review' : 'would_review', $message, (int)$row->user_id, (int)$exact->id, $details);
                 continue;
+            }
+            if (!$apply) {
+                $this->report($job, 'prior', (int)$row->id, $plan['action'] === 'reassign_exact' ? 'would_reassign' : 'would_supersede', $message, (int)$row->user_id, (int)$exact->id, $details);
+                continue;
+            }
+            $docsOwner = !empty($plan['docs_owner']) ? (int)$plan['docs_owner'] : (int)$exact->user_id;
+            if ($plan['action'] === 'reassign_exact') {
+                // Прежняя привязка была верной (у заявителя), а точная копия — у подавшего или без
+                // владельца: отдаём точную копию заявителю, прежнюю заявку скрываем, документы остаются у него.
+                $details['exact_prev'] = ['user_id'=>(int)$exact->user_id, 'status'=>(string)$exact->status, 'manual'=>(int)($map->manual ?? 0), 'map_user'=>(int)($map->target_user_id ?? 0)];
+                $this->set_submission_state((int)$exact->id, self::S_OWN, (int)$row->user_id, ['legacy_reassigned'=>['from'=>(int)$exact->user_id, 'reason'=>'applicant_matches_prior_owner', 'at'=>current_time('mysql')]]);
+                $docsOwner = (int)$row->user_id;
             }
             $wpdb->update($this->submissions_table, ['status'=>self::S_SUPERSEDED, 'updated_at'=>current_time('mysql')], ['id'=>(int)$row->id]);
             foreach ($details['docs'] as $doc) {
                 $update = ['source_submission_id'=>(int)$exact->id];
-                if ((int)$exact->user_id) { $update['user_id'] = (int)$exact->user_id; }
+                if ($docsOwner) { $update['user_id'] = $docsOwner; }
                 $wpdb->update($this->docs_table, $update, ['id'=>(int)$doc['id']]);
             }
             $this->add_stat($job, 'superseded');
@@ -1656,6 +1725,11 @@ final class ZAU_Exact_Migration {
             $wpdb->update($this->submissions_table, ['status'=>(string)($details['prev_status'] ?? 'submitted'), 'user_id'=>(int)($details['prev_user_id'] ?? 0), 'updated_at'=>current_time('mysql')], ['id'=>(int)$row->source_id, 'status'=>self::S_SUPERSEDED]);
             foreach ((array)($details['docs'] ?? []) as $doc) {
                 $wpdb->update($this->docs_table, ['user_id'=>(int)$doc['user_id'], 'source_submission_id'=>(int)$doc['source_submission_id']], ['id'=>(int)$doc['id']]);
+            }
+            if (!empty($details['exact_prev']) && !empty($details['exact_submission_id'])) {
+                $ep = $details['exact_prev'];
+                $this->set_submission_state((int)$details['exact_submission_id'], (string)$ep['status'], (int)$ep['user_id'], ['legacy_reassigned'=>null]);
+                $this->save_map('entry', (int)$details['entry_id'], ['manual'=>(int)$ep['manual'], 'target_user_id'=>(int)$ep['map_user']]);
             }
             $this->add_stat($job, 'restored');
         }
@@ -1753,6 +1827,13 @@ final class ZAU_Exact_Migration {
         return ['logins'=>$logins, 'subs'=>$subs, 'docs'=>$docs, 'safe'=>!$reasons, 'reasons'=>$reasons];
     }
 
+    private function prior_review_count() {
+        global $wpdb;
+        $token = (string)get_option(self::LAST_CLEANUP_OPT, '');
+        if ($token === '') { return 0; }
+        return (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->report_table} r JOIN {$this->submissions_table} s ON s.id=r.source_id WHERE r.job_token=%s AND r.decision='needs_review' AND s.status<>%s", $token, self::S_SUPERSEDED));
+    }
+
     private function hide_junk($userId) {
         $userId = (int)$userId;
         if (!get_user_meta($userId, 'zau_exact_prior_wrong', true) || get_user_meta($userId, 'zau_exact_junk_hidden', true)) { return false; }
@@ -1801,6 +1882,16 @@ final class ZAU_Exact_Migration {
         } elseif ($do === 'merge' && $userId) {
             $into = absint($_POST['into'] ?? 0);
             $msg = $this->merge_accounts($userId, $into) ? 'Аккаунты объединены: всё перенесено в аккаунт #' . $into . '. Созданный переносом аккаунт #' . $userId . ' скрыт как дубль.' : 'Не удалось объединить аккаунты.';
+        } elseif ($do === 'prior_hide' && $submissionId) {
+            global $wpdb;
+            $token = (string)get_option(self::LAST_CLEANUP_OPT, '');
+            $row = $wpdb->get_row($wpdb->prepare("SELECT id,user_id,status FROM {$this->submissions_table} WHERE id=%d", $submissionId));
+            if ($token && $row && $row->status !== self::S_SUPERSEDED) {
+                $wpdb->update($this->submissions_table, ['status'=>self::S_SUPERSEDED, 'updated_at'=>current_time('mysql')], ['id'=>$submissionId]);
+                // Запись в отчёт последнего скрытия — «Откатить скрытие» вернёт и её.
+                $this->report(['token'=>$token], 'prior', $submissionId, 'superseded', 'Скрыто администратором вручную из очереди «Прежние заявки на проверку».', (int)$row->user_id, 0, ['prev_status'=>(string)$row->status, 'prev_user_id'=>(int)$row->user_id, 'docs'=>[], 'manual'=>1]);
+                $msg = 'Прежняя копия #' . $submissionId . ' скрыта.';
+            } else { $msg = 'Не удалось скрыть: нет данных последнего скрытия или копия уже скрыта.'; }
         } elseif ($do === 'junk_hide' && $userId) {
             $msg = $this->hide_junk($userId) ? 'Ошибочный аккаунт #' . $userId . ' скрыт.' : 'Аккаунт не скрыт.';
         } elseif ($do === 'junk_restore' && $userId) {
@@ -1877,6 +1968,7 @@ final class ZAU_Exact_Migration {
             'unassigned'=>(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->submissions_table} WHERE status=%s", self::S_UNASSIGNED)),
             'other'=>(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->submissions_table} WHERE status=%s", self::S_OTHER)),
             'duplicates'=>(int)$wpdb->get_var("SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_possible_duplicate'"),
+            'prior_review'=>$this->prior_review_count(),
             'junk'=>(int)$wpdb->get_var("SELECT COUNT(DISTINCT m.user_id) FROM {$wpdb->usermeta} m LEFT JOIN {$wpdb->usermeta} h ON h.user_id=m.user_id AND h.meta_key='zau_exact_junk_hidden' WHERE m.meta_key='zau_exact_prior_wrong' AND h.umeta_id IS NULL"),
         ];
     }
@@ -1892,9 +1984,9 @@ final class ZAU_Exact_Migration {
     private function render_queue() {
         global $wpdb;
         $view = sanitize_key((string)($_GET['view'] ?? 'disputed'));
-        if (!in_array($view, ['disputed', 'profiles', 'duplicates', 'junk', 'unassigned', 'other'], true)) { $view = 'disputed'; }
+        if (!in_array($view, ['disputed', 'profiles', 'duplicates', 'junk', 'prior_review', 'unassigned', 'other'], true)) { $view = 'disputed'; }
         $counts = $this->queue_counts();
-        $labels = ['disputed'=>'Пользователь отметил «не моё»', 'profiles'=>'Профили на проверку', 'duplicates'=>'Возможные дубли', 'junk'=>'Ошибочные аккаунты прежнего переноса', 'unassigned'=>'Без владельца', 'other'=>'Поданы за другого человека'];
+        $labels = ['disputed'=>'Пользователь отметил «не моё»', 'profiles'=>'Профили на проверку', 'duplicates'=>'Возможные дубли', 'junk'=>'Ошибочные аккаунты прежнего переноса', 'prior_review'=>'Прежние заявки на проверку', 'unassigned'=>'Без владельца', 'other'=>'Поданы за другого человека'];
         echo '<section class="zau-rb-card" id="zau-exact-queue"><h2>5. Очередь проверки</h2>';
         if (!empty($_GET['msg'])) { echo '<div class="notice notice-info inline"><p>' . esc_html(rawurldecode(sanitize_text_field(wp_unslash($_GET['msg'])))) . '</p></div>'; }
         echo '<p class="zau-exact-tabs">';
@@ -1902,6 +1994,19 @@ final class ZAU_Exact_Migration {
             echo '<a class="button' . ($key === $view ? ' button-primary' : '') . '" href="' . esc_url(add_query_arg(['page'=>'zau-exact-migration', 'view'=>$key], admin_url('admin.php')) . '#zau-exact-queue') . '">' . esc_html($label) . ' (' . (int)$counts[$key] . ')</a> ';
         }
         echo '</p>';
+        if ($view === 'prior_review') {
+            $token = (string)get_option(self::LAST_CLEANUP_OPT, '');
+            $rows = $token ? $wpdb->get_results($wpdb->prepare("SELECT r.source_id,r.message,s.user_id,s.status FROM {$this->report_table} r JOIN {$this->submissions_table} s ON s.id=r.source_id WHERE r.job_token=%s AND r.decision='needs_review' AND s.status<>%s ORDER BY r.id ASC LIMIT 500", $token, self::S_SUPERSEDED)) : [];
+            echo '<p class="description">Заявки прежних переносов, которые «Скрыть дубли прежних переносов» не стал трогать: по ФИО нельзя уверенно сказать, чья это заявка. Точная копия каждой записи уже есть (см. «Без владельца» или «Поданы за другого человека»). Если прежняя копия у чужого человека — «Скрыть прежнюю копию» (документы не переносятся, всё откатывается кнопкой «Откатить скрытие»).</p>';
+            echo '<table class="widefat striped"><thead><tr><th>Прежняя заявка</th><th>Сейчас у аккаунта</th><th>Почему не тронута</th><th>Действие</th></tr></thead><tbody>';
+            if (!$rows) { echo '<tr><td colspan="4">' . ($token ? 'Нет прежних заявок на проверку.' : 'Сначала выполните «Скрыть дубли прежних переносов».') . '</td></tr>'; }
+            foreach ((array)$rows as $r) {
+                $u = get_user_by('id', (int)$r->user_id);
+                echo '<tr><td>#' . (int)$r->source_id . '</td><td>' . ($u ? '<a href="' . esc_url(get_edit_user_link((int)$u->ID)) . '">#' . (int)$u->ID . '</a> ' . esc_html($u->display_name) . '<br><small>' . esc_html($u->user_email) . '</small>' : '—') . '</td><td>' . esc_html((string)$r->message) . '</td><td>' . $this->queue_form('prior_hide', 'Скрыть прежнюю копию', ['submission_id'=>(int)$r->source_id, 'view'=>$view]) . '</td></tr>';
+            }
+            echo '</tbody></table></section>';
+            return;
+        }
         if ($view === 'junk') {
             $ids = $wpdb->get_col("SELECT DISTINCT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_prior_wrong' ORDER BY user_id ASC LIMIT 1000");
             echo '<p class="description">Прежний перенос создал эти аккаунты без email и записал в них номер старого аккаунта, но с ФИО другого человека (чаще всего руководителя или председателя из заявления). Настоящим владельцам точный перенос создал их собственные аккаунты. «Скрыть» ставит статус «Дубликат переноса» и убирает аккаунт из реестра; ничего не удаляется, «Вернуть» отменяет. Сначала выполните «Скрыть дубли прежних переносов» — тогда заявки и PDF уйдут из этих аккаунтов к настоящим владельцам.</p>';
