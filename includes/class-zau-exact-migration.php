@@ -25,7 +25,7 @@ if (!defined('ABSPATH')) { exit; }
  *     данные»; администратор разбирает такие отметки в очереди.
  */
 final class ZAU_Exact_Migration {
-    const VERSION = '2.29.0';
+    const VERSION = '2.29.1';
     const DB_VERSION = '1.1.0';
     const OPT_DB = 'zau_exact_migration_db_version';
     const OPT = 'zau_exact_migration_settings';
@@ -491,7 +491,7 @@ final class ZAU_Exact_Migration {
             $job['rollback_token'] = $last;
             $job['log'][] = 'Откат: возвращаются статусы и документы, изменённые при скрытии дублей.';
         } else {
-            $job['phase'] = 'cleanup';
+            $job['phase'] = 'cleanup_index';
             $job['log'][] = $mode === 'cleanup_apply'
                 ? 'Скрытие заявок прежних переносов, у которых есть точная копия. Ничего не удаляется.'
                 : 'Проверка: какие заявки прежних переносов имеют точную копию. Изменений нет.';
@@ -668,6 +668,10 @@ final class ZAU_Exact_Migration {
                 $this->verify_orphans($job);
                 $this->finish($job, 'Сверка завершена.');
                 $job['summary'] = $this->verify_summary($job);
+                return true;
+
+            case 'cleanup_index':
+                $this->cleanup_index_step($job);
                 return true;
 
             case 'cleanup':
@@ -1603,7 +1607,7 @@ final class ZAU_Exact_Migration {
      *                   точную копию отдать этому владельцу, прежнюю скрыть;
      *  review         — ничего не менять, показать администратору.
      */
-    private function cleanup_plan($prior, $exact, $map) {
+    private function cleanup_plan($prior, $exact, $map, $jobToken = '') {
         if ((int)$prior->user_id === (int)$exact->user_id) {
             return ['action'=>'supersede', 'message'=>'та же заявка у того же аккаунта — прежняя копия скрывается, остаётся точная.'];
         }
@@ -1623,8 +1627,9 @@ final class ZAU_Exact_Migration {
             return ['action'=>'review', 'message'=>'ФИО заявителя «' . $applicant . '» совпадает и с прежним аккаунтом ' . $priorName . ', и с владельцем точной копии #' . (int)$exact->user_id . ' — возможно, два аккаунта одного человека. Ничего не меняется.'];
         }
         // Есть другая прежняя копия той же записи у аккаунта самого заявителя — эта копия ошибочная.
-        $sibling = $this->prior_copy_owner_matching((int)($data['legacy_entry_id'] ?? 0), (int)$prior->id, $applicant);
-        if ($sibling && $exact->status !== self::S_OWN) {
+        // (Медленный поиск по таблице нужен только когда точная копия не у заявителя.)
+        $sibling = $exact->status !== self::S_OWN ? $this->prior_copy_owner_matching((int)($data['legacy_entry_id'] ?? 0), (int)$prior->id, $applicant, $jobToken) : 0;
+        if ($sibling) {
             return ['action'=>'supersede', 'docs_owner'=>$sibling, 'message'=>'заявка была у чужого аккаунта ' . $priorName . '; другая прежняя копия этой записи — у заявителя #' . $sibling . ' («' . $applicant . '»). Эта копия скрывается, документы переходят к заявителю.'];
         }
         if ($exact->status === self::S_OWN) {
@@ -1634,18 +1639,42 @@ final class ZAU_Exact_Migration {
     }
 
     /** ID аккаунта заявителя, если у него есть другая (не скрытая) прежняя копия этой записи WPForms. */
-    private function prior_copy_owner_matching($entryId, $exceptSubmissionId, $applicant) {
+    /** Быстрый индекс «номер записи WPForms → прежние заявки и их аккаунты» на время задания. */
+    private function cleanup_index_step(&$job) {
         global $wpdb;
-        if (!$entryId || $applicant === '') { return 0; }
+        $started = microtime(true);
+        if ((int)$job['cursor'] === 0) { $wpdb->query($wpdb->prepare("DELETE FROM {$this->report_table} WHERE job_token=%s AND source_type='idx'", (string)$job['token'])); }
+        $placeholders = implode(',', array_fill(0, count(self::archive_statuses()), '%s'));
         $rows = $wpdb->get_results($wpdb->prepare(
-            "SELECT id,user_id,data_json FROM {$this->submissions_table} WHERE id<>%d AND user_id>0 AND (data_json LIKE %s OR data_json LIKE %s OR data_json LIKE %s) LIMIT 20",
-            (int)$exceptSubmissionId, '%"legacy_entry_id":"' . (int)$entryId . '"%', '%"legacy_entry_id":' . (int)$entryId . ',%', '%"legacy_wpforms_entry_id":' . (int)$entryId . ',%'
+            "SELECT id,user_id,data_json FROM {$this->submissions_table} WHERE id>%d AND status NOT IN ($placeholders) ORDER BY id ASC LIMIT 500",
+            array_merge([(int)$job['cursor']], self::archive_statuses())
+        ));
+        foreach ((array)$rows as $row) {
+            if (microtime(true) - $started > 15) { return; }
+            $job['cursor'] = (int)$row->id;
+            $data = json_decode((string)$row->data_json, true);
+            $entryId = is_array($data) ? $this->prior_entry_id($data) : 0;
+            if (!$entryId || !(int)$row->user_id) { continue; }
+            $wpdb->insert($this->report_table, ['job_token'=>(string)$job['token'], 'source_type'=>'idx', 'source_id'=>$entryId, 'decision'=>'idx', 'message'=>'', 'target_user_id'=>(int)$row->user_id, 'target_submission_id'=>(int)$row->id, 'details'=>null, 'created_at'=>current_time('mysql')]);
+        }
+        if (count((array)$rows) < 500) {
+            $job['phase'] = 'cleanup';
+            $job['cursor'] = 0;
+            $job['log'][] = 'Индекс прежних заявок построен. Проверка заявок…';
+        }
+    }
+
+    /** ID аккаунта заявителя, если у него есть другая прежняя копия этой записи WPForms (по индексу задания). */
+    private function prior_copy_owner_matching($entryId, $exceptSubmissionId, $applicant, $jobToken = '') {
+        global $wpdb;
+        if (!$entryId || $applicant === '' || $jobToken === '') { return 0; }
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT target_user_id,target_submission_id FROM {$this->report_table} WHERE job_token=%s AND source_type='idx' AND source_id=%d AND target_submission_id<>%d LIMIT 20",
+            $jobToken, (int)$entryId, (int)$exceptSubmissionId
         ));
         $want = $this->name_tokens($applicant);
         foreach ((array)$rows as $r) {
-            $d = json_decode((string)$r->data_json, true);
-            if (!is_array($d) || !empty($d['legacy_exact']) || $this->prior_entry_id($d) !== (int)$entryId) { continue; }
-            $u = get_user_by('id', (int)$r->user_id);
+            $u = get_user_by('id', (int)$r->target_user_id);
             if (!$u) { continue; }
             $tokens = array_values(array_unique(array_merge($this->name_tokens($u->last_name . ' ' . $u->first_name), $this->name_tokens($u->display_name))));
             if ($this->tokens_match($want, $tokens) === 'yes') { return (int)$u->ID; }
@@ -1655,12 +1684,18 @@ final class ZAU_Exact_Migration {
 
     private function cleanup_step(&$job, $apply) {
         global $wpdb;
+        $started = microtime(true);
+        // Строки отчёта от оборванной (не сохранившей курсор) партии удаляем, чтобы не было повторов.
+        $wpdb->query($wpdb->prepare("DELETE FROM {$this->report_table} WHERE job_token=%s AND source_type='prior' AND source_id>%d", (string)$job['token'], (int)$job['cursor']));
         $placeholders = implode(',', array_fill(0, count(self::archive_statuses()), '%s'));
         $rows = $wpdb->get_results($wpdb->prepare(
             "SELECT id,user_id,status,data_json FROM {$this->submissions_table} WHERE id>%d AND status NOT IN ($placeholders) ORDER BY id ASC LIMIT 200",
             array_merge([(int)$job['cursor']], self::archive_statuses())
         ));
+        $stoppedEarly = false;
         foreach ((array)$rows as $row) {
+            // Партия ограничена ~15 секундами, чтобы сервер не оборвал запрос.
+            if (microtime(true) - $started > 15) { $stoppedEarly = true; break; }
             $job['cursor'] = (int)$row->id;
             $data = json_decode((string)$row->data_json, true);
             if (!is_array($data)) { continue; }
@@ -1677,7 +1712,7 @@ final class ZAU_Exact_Migration {
             $docs = $wpdb->get_results($wpdb->prepare("SELECT id,user_id,source_submission_id FROM {$this->docs_table} WHERE source_submission_id=%d", (int)$row->id));
             $details = ['entry_id'=>$entryId, 'prev_status'=>(string)$row->status, 'prev_user_id'=>(int)$row->user_id, 'exact_submission_id'=>(int)$exact->id, 'exact_user_id'=>(int)$exact->user_id, 'docs'=>[]];
             foreach ((array)$docs as $doc) { $details['docs'][] = ['id'=>(int)$doc->id, 'user_id'=>(int)$doc->user_id, 'source_submission_id'=>(int)$doc->source_submission_id]; }
-            $plan = $this->cleanup_plan($row, $exact, $map);
+            $plan = $this->cleanup_plan($row, $exact, $map, (string)$job['token']);
             $details['plan'] = $plan['action'];
             $message = 'Запись WPForms #' . $entryId . ': ' . $plan['message'] . ' Документов: ' . count($details['docs']) . '.';
             $this->add_stat($job, 'plan_' . $plan['action']);
@@ -1706,7 +1741,8 @@ final class ZAU_Exact_Migration {
             $this->add_stat($job, 'superseded');
             $this->report($job, 'prior', (int)$row->id, 'superseded', $message, (int)$row->user_id, (int)$exact->id, $details);
         }
-        if (count((array)$rows) < 200) {
+        if (!$stoppedEarly && count((array)$rows) < 200) {
+            $wpdb->query($wpdb->prepare("DELETE FROM {$this->report_table} WHERE job_token=%s AND source_type='idx'", (string)$job['token']));
             if ($apply) { update_option(self::LAST_CLEANUP_OPT, (string)$job['token'], false); }
             $this->finish($job, $apply ? 'Скрытие завершено. Его можно откатить кнопкой «Откатить скрытие».' : 'Проверка завершена. Для применения нажмите «Скрыть дубли прежних переносов».');
         }

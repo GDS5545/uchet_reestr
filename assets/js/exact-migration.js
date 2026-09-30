@@ -41,7 +41,7 @@
     prior_wrong_owner: 'Были у чужого аккаунта', plan_supersede: 'Скрыть прежнюю копию', plan_reassign_exact: 'Отдать точную копию заявителю', plan_review: 'На ручную проверку (без изменений)', possible_duplicate: 'Возможных дублей', prior_account_mismatch: 'Ошибочных аккаунтов прежнего переноса', no_exact_copy: 'Без точной копии', restored: 'Возвращено'
   };
   var phases = { forms: 'формы', users: 'аккаунты', entries: 'заявления', profiles: 'профили', v_users: 'сверка аккаунтов',
-    v_entries: 'сверка заявлений', v_orphans: 'поиск удалённых', dupcheck: 'проверка дублей', cleanup: 'прежние переносы', rollback: 'откат', finished: 'завершено' };
+    v_entries: 'сверка заявлений', v_orphans: 'поиск удалённых', dupcheck: 'проверка дублей', cleanup_index: 'индекс прежних заявок', cleanup: 'прежние переносы', rollback: 'откат', finished: 'завершено' };
 
   function render(job) {
     if (!job) { return; }
@@ -76,7 +76,10 @@
       if (job.status === 'running') { setTimeout(loop, 150); } else { running = false; render(job); }
     }).catch(function (err) {
       if (err.data && err.data.job) { render(err.data.job); }
-      retries++;
+      // «Предыдущая партия ещё обрабатывается» — просто ждём снятия блокировки, это не ошибка.
+      var busy = /ещё обрабатывается/.test(err.message || '');
+      retries += busy ? 0.1 : 1;
+      if (busy) { $('[data-zau-exact-progress-text]').textContent = 'Ждём завершения предыдущей партии… (до 3 минут)'; }
       if (retries > 8) {
         running = false;
         $('[data-zau-exact-progress-text]').textContent = 'Остановлено: ' + err.message + ' Нажмите «Продолжить».';
