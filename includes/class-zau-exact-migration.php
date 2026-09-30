@@ -25,7 +25,7 @@ if (!defined('ABSPATH')) { exit; }
  *     данные»; администратор разбирает такие отметки в очереди.
  */
 final class ZAU_Exact_Migration {
-    const VERSION = '2.30.0';
+    const VERSION = '2.31.0';
     const DB_VERSION = '1.1.0';
     const OPT_DB = 'zau_exact_migration_db_version';
     const OPT = 'zau_exact_migration_settings';
@@ -81,6 +81,8 @@ final class ZAU_Exact_Migration {
         add_action('admin_post_zau_exact_audit_csv', [$this, 'audit_csv']);
         add_action('wp_ajax_zau_exact_audit_run', [$this, 'ajax_audit_run']);
         add_action('wp_ajax_zau_exact_namefix_run', [$this, 'ajax_namefix_run']);
+        add_action('wp_ajax_zau_exact_regen_run', [$this, 'ajax_regen_run']);
+        add_action('admin_post_zau_exact_regen_save', [$this, 'regen_save']);
 
         add_action('wp_ajax_zau_exact_test', [$this, 'ajax_test']);
         add_action('wp_ajax_zau_exact_start', [$this, 'ajax_start']);
@@ -398,10 +400,11 @@ final class ZAU_Exact_Migration {
     public function admin_menu() {
         add_submenu_page(null, 'Точный перенос 1:1', 'Точный перенос 1:1', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-exact-migration', [$this, 'page']);
         add_submenu_page(null, 'Проверка ФИО и подписей', 'Проверка ФИО и подписей', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-exact-audit', [$this, 'audit_page']);
+        add_submenu_page(null, 'Пересоздание перенесённых заявлений', 'Пересоздание перенесённых заявлений', ZAU_Certificate_PDF_Generator::CAP_MANAGE, 'zau-exact-regen', [$this, 'regen_page']);
     }
 
     public function admin_assets($hook) {
-        if (strpos((string)$hook, 'zau-exact-migration') === false && strpos((string)$hook, 'zau-exact-audit') === false) { return; }
+        if (strpos((string)$hook, 'zau-exact-migration') === false && strpos((string)$hook, 'zau-exact-audit') === false && strpos((string)$hook, 'zau-exact-regen') === false) { return; }
         wp_enqueue_style('zau-remote-bridge', plugins_url('../assets/css/remote-bridge.css', __FILE__), [], self::VERSION);
         wp_enqueue_style('zau-exact-migration', plugins_url('../assets/css/exact-migration.css', __FILE__), ['zau-remote-bridge'], self::VERSION);
         wp_enqueue_script('zau-exact-migration', plugins_url('../assets/js/exact-migration.js', __FILE__), [], self::VERSION, true);
@@ -2388,6 +2391,7 @@ final class ZAU_Exact_Migration {
         $oldId = (int)get_user_meta($userId, 'zau_exact_legacy_user_id', true);
         $card = json_decode((string)get_user_meta($userId, 'zau_member_card_data', true), true) ?: [];
         echo '<h1>Сверка участника: ' . esc_html($user->display_name) . '</h1>';
+        echo '<p><a class="button" href="' . esc_url(add_query_arg(['page'=>'zau-exact-regen', 'users'=>(int)$user->ID], admin_url('admin.php'))) . '">Пересоздать его перенесённые заявления по новым шаблонам</a></p>';
 
         // Итог простыми словами
         $checks = [];
@@ -2587,6 +2591,222 @@ final class ZAU_Exact_Migration {
         if ($user) { $this->audit_user($userId); }
         wp_safe_redirect(add_query_arg(['page'=>'zau-exact-audit', 'filter'=>sanitize_key((string)($_POST['filter'] ?? 'diff')), 's'=>sanitize_text_field(wp_unslash($_POST['s'] ?? '')), 'paged'=>absint($_POST['paged'] ?? 1), 'msg'=>rawurlencode($msg)], admin_url('admin.php')));
         exit;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Пересоздание перенесённых заявлений по новым шаблонам              */
+    /* ------------------------------------------------------------------ */
+
+    const REGEN_OPT = 'zau_exact_regen_settings';
+    const REGEN_STATE_OPT = 'zau_exact_regen_state';
+
+    private function regen_settings() {
+        return wp_parse_args((array)get_option(self::REGEN_OPT, []), ['map'=>[], 'skip_nosig'=>1, 'recreate'=>0]);
+    }
+
+    /** Архивные формы перенесённых заявлений (по одной на форму WPForms) с количеством своих заявлений. */
+    private function regen_source_forms() {
+        global $wpdb;
+        return (array)$wpdb->get_results($wpdb->prepare(
+            "SELECT f.id,f.name,COUNT(s.id) qty FROM {$this->forms_table} f JOIN {$this->submissions_table} s ON s.form_id=f.id AND s.status=%s WHERE f.slug LIKE %s GROUP BY f.id,f.name ORDER BY qty DESC",
+            self::S_OWN, 'legacy-exact-%'
+        ));
+    }
+
+    /** Файл подписи лежит в загрузках этого сайта и существует на диске (иначе PDF не нарисуется). */
+    private function is_local_url($url) {
+        $url = (string)$url;
+        if ($url === '') { return false; }
+        $up = wp_upload_dir();
+        if (!empty($up['error'])) { return false; }
+        $path = rawurldecode((string)wp_parse_url($url, PHP_URL_PATH));
+        $base = rawurldecode((string)wp_parse_url((string)$up['baseurl'], PHP_URL_PATH));
+        $host = strtolower((string)wp_parse_url($url, PHP_URL_HOST));
+        if ($host !== '' && $host !== strtolower((string)wp_parse_url((string)$up['baseurl'], PHP_URL_HOST))) { return false; }
+        if ($base === '' || strpos($path, trailingslashit($base)) !== 0) { return false; }
+        $relative = substr($path, strlen(trailingslashit($base)));
+        if (strpos($relative, '..') !== false) { return false; }
+        return is_file(trailingslashit((string)$up['basedir']) . $relative);
+    }
+
+    /** Данные для новой формы из перенесённого заявления: поля, подпись, исходная дата. */
+    private function regen_data($row, array $targetForm) {
+        $data = json_decode((string)$row->data_json, true);
+        if (!is_array($data)) { return new WP_Error('data', 'Данные заявления повреждены.'); }
+        $src = $this->legacy_source($data);
+        $signature = $this->first_signature_url((array)($data['legacy_fields'] ?? []), (array)($data['legacy_files'] ?? []));
+        if (!$this->is_local_url($signature)) { $signature = ''; }
+        $out = [];
+        $sigKeys = [];
+        foreach ((array)$targetForm['fields'] as $field) {
+            $key = (string)($field['key'] ?? '');
+            $type = (string)($field['type'] ?? '');
+            if ($key === '' || $type === 'heading') { continue; }
+            if ($type === 'signature') { $sigKeys[] = $key; continue; }
+            if ($type === 'checkbox') { $label = $this->normalize_label($field['label'] ?? ''); $out[$key] = ($label !== '' && !empty($src['by_label'][$label])) ? '1' : ''; continue; }
+            $out[$key] = $this->legacy_field_value($field, $src);
+        }
+        // Всё, что распознано в старом заявлении (ИИН, должность, организация, руководитель…), — важнее текущего профиля:
+        // профиль заполнит только то, чего в заявлении не было.
+        foreach ((array)$src['extracted'] as $k => $v) {
+            if (is_scalar($v) && trim((string)$v) !== '' && (!isset($out[$k]) || $out[$k] === '')) { $out[$k] = (string)$v; }
+        }
+        if ($signature !== '') {
+            foreach ($sigKeys as $k) { $out[$k] = $signature; }
+            $out['signature_url'] = $signature;
+        }
+        $user = get_user_by('id', (int)$row->user_id);
+        $fullName = trim(implode(' ', array_filter([$out['last_name'] ?? '', $out['first_name'] ?? '', $out['middle_name'] ?? ''])));
+        if ($fullName === '') { $fullName = trim((string)($out['full_name'] ?? '')); }
+        if ($fullName === '') { $fullName = trim((string)($data['legacy_applicant_name'] ?? '')); }
+        if ($fullName === '' && $user) { $fullName = (string)$user->display_name; }
+        $date = mysql2date('d.m.Y', (string)$row->created_at);
+        $out['full_name'] = $fullName;
+        $out['member_name_header'] = $fullName;
+        $out['submission_date'] = $date;
+        $out['issue_date'] = $date;
+        $out['legacy_entry_id'] = (int)($data['legacy_entry_id'] ?? 0);
+        $out['legacy_entry_date'] = (string)$row->created_at;
+        return $out;
+    }
+
+    public function regen_save() {
+        if (!$this->can_manage()) { wp_die('Недостаточно прав.', 403); }
+        check_admin_referer(self::NONCE);
+        $map = [];
+        foreach ((array)($_POST['map'] ?? []) as $from => $to) { $map[absint($from)] = absint($to); }
+        update_option(self::REGEN_OPT, ['map'=>$map, 'skip_nosig'=>empty($_POST['skip_nosig']) ? 0 : 1, 'recreate'=>empty($_POST['recreate']) ? 0 : 1], false);
+        wp_safe_redirect(add_query_arg(['page'=>'zau-exact-regen', 'users'=>sanitize_text_field(wp_unslash($_POST['users'] ?? '')), 'msg'=>rawurlencode('Настройки сохранены.')], admin_url('admin.php')));
+        exit;
+    }
+
+    public function ajax_regen_run() {
+        $this->require_access();
+        global $wpdb;
+        @set_time_limit(120);
+        $mode = sanitize_key((string)($_POST['mode'] ?? 'prepare'));
+        $cursor = absint($_POST['cursor'] ?? 0);
+        $state = (array)get_option(self::REGEN_STATE_OPT, []);
+        if (!class_exists('ZAU_Union_Module')) { wp_send_json_error(['message'=>'Модуль профсоюза не загружен.'], 500); }
+        $union = ZAU_Union_Module::instance();
+        if ($mode === 'delete') {
+            $n = $union->regen_delete_documents(200);
+            $done = absint($_POST['processed'] ?? 0) + $n;
+            if ($n < 200) { delete_option(self::REGEN_STATE_OPT); }
+            wp_send_json_success(['cursor'=>0, 'processed'=>$done, 'done'=>$done, 'total'=>0, 'finished'=>$n < 200, 'stats'=>['deleted'=>$done]]);
+        }
+        $settings = $this->regen_settings();
+        $map = array_filter(array_map('absint', (array)$settings['map']));
+        $targets = $union->regen_target_forms();
+        foreach ($map as $from => $to) { if (empty($targets[$to]['templates'])) { unset($map[$from]); } }
+        if (!$map) { wp_send_json_error(['message'=>'Выберите хотя бы для одной старой формы новую форму с PDF-шаблонами и сохраните.'], 400); }
+        $users = array_filter(array_map('absint', preg_split('/[\s,;]+/', (string)wp_unslash($_POST['users'] ?? ''), -1, PREG_SPLIT_NO_EMPTY)));
+        $formIn = implode(',', array_map('intval', array_keys($map)));
+        $userSql = $users ? ' AND user_id IN (' . implode(',', array_map('intval', $users)) . ')' : '';
+        if ($cursor === 0) {
+            $state = ['run'=>'r' . gmdate('YmdHis') . wp_generate_password(4, false, false), 'at'=>current_time('mysql'), 'users'=>implode(',', $users), 'finished'=>false, 'job_id'=>0];
+            update_option(self::REGEN_STATE_OPT, $state, false);
+        }
+        $limit = 25;
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$this->submissions_table} WHERE id>%d AND status=%s AND form_id IN ($formIn)$userSql ORDER BY id ASC LIMIT %d", $cursor, self::S_OWN, $limit));
+        $total = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->submissions_table} WHERE status=%s AND form_id IN ($formIn)$userSql", self::S_OWN));
+        $stats = array_map('absint', (array)($_POST['stats'] ?? []));
+        $errors = [];
+        $started = microtime(true);
+        foreach ((array)$rows as $row) {
+            if (microtime(true) - $started > 20) { break; }
+            $cursor = (int)$row->id;
+            $handled = ($handled ?? 0) + 1;
+            if (!get_user_by('id', (int)$row->user_id)) { $stats['no_user'] = ($stats['no_user'] ?? 0) + 1; continue; }
+            $target = $targets[$map[(int)$row->form_id]];
+            $data = $this->regen_data($row, $target);
+            if (is_wp_error($data)) { $stats['error'] = ($stats['error'] ?? 0) + 1; $errors[] = '#' . $row->id . ': ' . $data->get_error_message(); continue; }
+            if (empty($data['signature_url']) && !empty($settings['skip_nosig'])) { $stats['no_signature'] = ($stats['no_signature'] ?? 0) + 1; continue; }
+            $data['legacy_exact_regen_run'] = (string)$state['run'];
+            $result = $union->regen_prepare_documents($row, (int)$target['id'], $data, !empty($settings['recreate']));
+            if (is_wp_error($result)) { $stats['error'] = ($stats['error'] ?? 0) + 1; $errors[] = '#' . $row->id . ': ' . $result->get_error_message(); continue; }
+            foreach ($result as $r) { $stats[$r['state']] = ($stats[$r['state']] ?? 0) + 1; }
+            $stats['submissions'] = ($stats['submissions'] ?? 0) + 1;
+        }
+        $processed = absint($_POST['processed'] ?? 0) + (int)($handled ?? 0);
+        $finished = count((array)$rows) < $limit && (!$rows || $cursor === (int)end($rows)->id);
+        $jobUrl = '';
+        if ($finished) {
+            $docsTable = $wpdb->prefix . 'zau_certificates';
+            $ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$docsTable} WHERE data_json LIKE %s ORDER BY created_at ASC, id ASC", '%"legacy_exact_regen_run":"' . $wpdb->esc_like((string)$state['run']) . '"%'));
+            $jobId = ($ids && class_exists('ZAU_Bulk_Regeneration')) ? ZAU_Bulk_Regeneration::instance()->create_job_for_documents($ids, ['update_number'=>0, 'keep_old_files'=>0, 'skip_without_signature'=>0, 'delay_ms'=>100, 'max_retries'=>2]) : 0;
+            $state['finished'] = true; $state['job_id'] = $jobId; $state['stats'] = $stats; $state['queued'] = count((array)$ids);
+            update_option(self::REGEN_STATE_OPT, $state, false);
+            if ($jobId) { $jobUrl = admin_url('admin.php?page=zau-cert-bulk-regenerate&job=' . $jobId); }
+        }
+        wp_send_json_success(['cursor'=>$cursor, 'processed'=>$processed, 'done'=>min($total, $processed), 'total'=>$total, 'finished'=>$finished, 'stats'=>$stats, 'errors'=>$errors, 'job_url'=>$jobUrl]);
+    }
+
+    public function regen_page() {
+        if (!$this->can_manage()) { wp_die('Недостаточно прав.'); }
+        global $wpdb;
+        $settings = $this->regen_settings();
+        $sources = $this->regen_source_forms();
+        $targets = class_exists('ZAU_Union_Module') ? ZAU_Union_Module::instance()->regen_target_forms() : [];
+        $state = (array)get_option(self::REGEN_STATE_OPT, []);
+        $docsTable = $wpdb->prefix . 'zau_certificates';
+        $made = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$docsTable} WHERE data_json LIKE %s", '%"legacy_exact_regen":1%'));
+        $withPdf = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$docsTable} WHERE data_json LIKE %s AND pdf_url<>''", '%"legacy_exact_regen":1%'));
+        $users = sanitize_text_field(wp_unslash($_GET['users'] ?? ''));
+        ?>
+        <div class="wrap zau-remote-wrap zau-exact-wrap">
+            <?php if (function_exists('zau_admin_hub_nav')) { zau_admin_hub_nav('import'); } ?>
+            <h1>Пересоздание перенесённых заявлений по новым шаблонам</h1>
+            <?php if (!empty($_GET['msg'])): ?><div class="notice notice-info is-dismissible"><p><?php echo esc_html(rawurldecode(sanitize_text_field(wp_unslash($_GET['msg'])))); ?></p></div><?php endif; ?>
+            <section class="zau-rb-card">
+                <p>Для каждого заявления, перенесённого со старого сайта и закреплённого за своим владельцем, создаётся документ <strong>по шаблону новой формы</strong>: поля заполняются из старого заявления, ставится <strong>его подпись</strong>, дата документа и дата создания — <strong>дата старого заявления</strong>. Документ появляется в личном кабинете участника и в реестре.</p>
+                <p><strong>Не затрагиваются:</strong> заявления, поданные на новом сайте, и их документы; чужие, спорные и скрытые записи старого сайта; сами перенесённые заявления (архив остаётся как есть). Повторный запуск не создаёт дублей.</p>
+                <p>Создано этим инструментом документов: <strong><?php echo (int)$made; ?></strong>, из них с готовым PDF: <strong><?php echo (int)$withPdf; ?></strong>.</p>
+            </section>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="zau-rb-card">
+                <input type="hidden" name="action" value="zau_exact_regen_save"><?php wp_nonce_field(self::NONCE); ?>
+                <h2>1. Какая форма старого сайта — по какой новой форме пересоздавать</h2>
+                <?php if (!$targets): ?><p class="zau-rb-message error">На новом сайте нет активных форм. Создайте форму и привяжите к ней PDF-шаблоны.</p><?php endif; ?>
+                <table class="widefat striped">
+                    <thead><tr><th>Форма старого сайта</th><th>Своих заявлений</th><th>Новая форма (её PDF-шаблоны)</th></tr></thead>
+                    <tbody>
+                    <?php if (!$sources): ?><tr><td colspan="3">Перенесённых заявлений нет.</td></tr><?php endif; ?>
+                    <?php foreach ($sources as $f): $sel = (int)($settings['map'][(int)$f->id] ?? 0); ?>
+                        <tr><td><?php echo esc_html($f->name); ?></td><td><?php echo (int)$f->qty; ?></td><td>
+                            <select name="map[<?php echo (int)$f->id; ?>]">
+                                <option value="0">— не пересоздавать —</option>
+                                <?php foreach ($targets as $t): ?>
+                                    <option value="<?php echo (int)$t['id']; ?>" <?php selected($sel, (int)$t['id']); ?> <?php disabled(!$t['templates']); ?>><?php echo esc_html($t['name'] . ' (' . ($t['templates'] ? implode(', ', wp_list_pluck($t['templates'], 'name')) : 'нет шаблонов') . ')'); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </td></tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <p><label><input type="checkbox" name="skip_nosig" value="1" <?php checked(!empty($settings['skip_nosig'])); ?>> Пропускать заявления без подписи (или если файл подписи не скопирован на новый сайт)</label></p>
+                <p><label><input type="checkbox" name="recreate" value="1" <?php checked(!empty($settings['recreate'])); ?>> Пересоздать и те, у которых документ уже сформирован этим инструментом (номер сохраняется, файл заменяется)</label></p>
+                <input type="hidden" name="users" value="<?php echo esc_attr($users); ?>">
+                <p><button class="button button-primary">Сохранить</button></p>
+            </form>
+            <section class="zau-rb-card">
+                <h2>2. Подготовить документы и сформировать PDF</h2>
+                <p><label>Только для участников (ID через запятую; пусто — для всех):<br><input type="text" class="regular-text" data-zau-regen-users value="<?php echo esc_attr($users); ?>" placeholder="например: 125, 5486"></label></p>
+                <p class="description">Сначала проверьте на 1–3 участниках: укажите их ID, подготовьте, сформируйте PDF и откройте документы в реестре или в «Подробнее» на странице проверки.</p>
+                <p><button class="button button-primary" data-zau-regen="prepare">Подготовить документы</button> <span data-zau-regen-progress></span></p>
+                <div data-zau-regen-result>
+                    <?php if (!empty($state['finished']) && !empty($state['job_id'])): ?>
+                        <p>Последняя подготовка (<?php echo esc_html($state['at']); ?><?php echo $state['users'] ? ', участники: ' . esc_html($state['users']) : ''; ?>): в очереди <?php echo (int)($state['queued'] ?? 0); ?> документов.
+                        <a class="button button-primary" href="<?php echo esc_url(admin_url('admin.php?page=zau-cert-bulk-regenerate&job=' . (int)$state['job_id'])); ?>">Открыть очередь и сформировать PDF</a></p>
+                    <?php endif; ?>
+                </div>
+                <p class="description">PDF рисуется в браузере очередью «Массовое пересоздание»: откройте её и нажмите «Продолжить». Вкладку можно закрыть и потом продолжить.</p>
+            </section>
+            <section class="zau-rb-card">
+                <h2>3. Отмена</h2>
+                <p><button class="button button-link-delete" data-zau-regen="delete" data-confirm="Удалить ВСЕ документы, созданные этим инструментом (записи и PDF)? Перенесённые заявления и документы новых заявлений не затрагиваются.">Удалить документы, созданные этим инструментом</button></p>
+            </section>
+        </div>
+        <?php
     }
 
     /* ------------------------------------------------------------------ */
@@ -3055,12 +3275,17 @@ final class ZAU_Exact_Migration {
         if (!$row) { return $cache; }
         $data = json_decode((string)$row->data_json, true);
         if (!is_array($data) || empty($data['legacy_exact'])) { return $cache; }
+        $cache = ['id'=>$id] + $this->legacy_source($data);
+        return $cache;
+    }
+
+    /** Поля старого заявления в удобном для сопоставления виде: по подписи поля и по распознанному смыслу. */
+    private function legacy_source(array $data) {
         $byLabel = [];
         foreach ((array)($data['legacy_fields'] ?? []) as $f) {
             if ((string)($f['value'] ?? '') !== '' && !in_array($f['type'] ?? '', ['signature', 'file-upload'], true)) { $byLabel[$this->normalize_label($f['label'])] = (string)$f['value']; }
         }
-        $cache = ['id'=>$id, 'data'=>$data, 'by_label'=>$byLabel, 'extracted'=>$this->extracted_entry_data((array)($data['legacy_fields'] ?? []))];
-        return $cache;
+        return ['data'=>$data, 'by_label'=>$byLabel, 'extracted'=>$this->extracted_entry_data((array)($data['legacy_fields'] ?? []))];
     }
 
     public function prefill_field_value($value, $field, $user) {
@@ -3068,6 +3293,13 @@ final class ZAU_Exact_Migration {
         if (!$src || !is_array($field)) { return $value; }
         $type = (string)($field['type'] ?? '');
         if (in_array($type, ['signature', 'hidden', 'heading', 'checkbox'], true)) { return $value; }
+        $found = $this->legacy_field_value($field, $src);
+        return $found !== '' ? $found : $value;
+    }
+
+    /** Значение поля новой формы из старого заявления ('' — не найдено). */
+    private function legacy_field_value(array $field, array $src) {
+        $type = (string)($field['type'] ?? '');
         $key = (string)($field['key'] ?? '');
         $data = $src['data'];
         $label = $this->normalize_label($field['label'] ?? '');
@@ -3092,7 +3324,7 @@ final class ZAU_Exact_Migration {
             $found = !empty($branch['id']) ? (string)(int)$branch['id'] : '';
         }
         if ($type === 'date' && $found !== '') { $ts = strtotime($found); $found = $ts ? gmdate('Y-m-d', $ts) : ''; }
-        return $found !== '' ? $found : $value;
+        return (string)$found;
     }
 
     public function form_prefill_notice($html, $form, $user) {

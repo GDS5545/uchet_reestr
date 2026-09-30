@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.30.0';
+    const VERSION = '2.31.0';
     const DB_VERSION = '2.18.2';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
@@ -3517,6 +3517,98 @@ final class ZAU_Union_Module {
         $documentData=$this->hydrate_document_data($data,$userId);$templates=$this->resolve_form_template_ids($form);$jobs=[];foreach($templates as $templateId){$job=$this->prepare_public_document($templateId,$submissionId,$documentData);if($job)$jobs[]=$job;}
         $this->log('union_submission_created','submission',$submissionId,$fullName);
         wp_send_json_success(['message'=>$jobs?'Регистрация завершена, заявка сохранена. Формируются документы.':'Регистрация завершена, заявка сохранена. PDF-шаблоны к форме пока не привязаны.','submission_id'=>$submissionId,'documents'=>$jobs,'data'=>$documentData,'registered_directly'=>$directGuest?1:0,'auto_redirect'=>($directGuest&&!empty($settings['redirect_after_registration']))?1:0,'redirect'=>$this->cabinet_url()]);
+    }
+
+    /* ---- Пересоздание перенесённых заявлений по новым шаблонам (вызывается из ZAU_Exact_Migration) ---- */
+
+    /** Активные формы нового сайта со списком их PDF-шаблонов. */
+    public function regen_target_forms() {
+        global $wpdb;
+        $names = [];
+        foreach ((array)$wpdb->get_results("SELECT id,name FROM {$this->templates_table}") as $t) { $names[(int)$t->id] = (string)$t->name; }
+        $out = [];
+        foreach ((array)$this->get_forms(true) as $form) {
+            if (strpos((string)$form->slug, 'legacy-exact-') === 0) { continue; }
+            $ids = array_values(array_intersect(array_filter(array_map('absint', json_decode((string)$form->template_ids_json, true) ?: [])), array_keys($names)));
+            $out[(int)$form->id] = ['id'=>(int)$form->id, 'name'=>(string)$form->name, 'fields'=>$this->decode_form_fields($form->fields_json), 'templates'=>array_map(function ($id) use ($names) { return ['id'=>$id, 'name'=>$names[$id]]; }, $ids)];
+        }
+        return $out;
+    }
+
+    /**
+     * Создаёт (или обновляет) черновики документов по шаблонам формы $formId для перенесённого заявления.
+     * Владелец — владелец заявления, дата документа и создания — дата старого заявления, номер присваивается сразу.
+     * PDF рисуется потом очередью «Массовое пересоздание». Возвращает [['id'=>..,'state'=>'created|updated|ready'], ...].
+     */
+    public function regen_prepare_documents($submission, $formId, array $data, $recreate) {
+        global $wpdb;
+        $forms = $this->regen_target_forms();
+        if (empty($forms[(int)$formId]['templates'])) { return new WP_Error('no_templates', 'У выбранной формы нет PDF-шаблонов.'); }
+        $userId = (int)$submission->user_id;
+        if (!empty($data['organization_bin'])) {
+            $org = $wpdb->get_row($wpdb->prepare("SELECT bin,name,director,address,region,source FROM {$this->orgs_table} WHERE bin=%s", $this->normalize_bin($data['organization_bin'])), ARRAY_A);
+            if ($org) { $data = $this->merge_organization_data($data, $org); }
+        }
+        foreach ($forms[(int)$formId]['fields'] as $field) {
+            if ($field['type'] !== 'branch_select' || empty($data[$field['key']])) { continue; }
+            $branchRow = $this->get_branch((int)$data[$field['key']]);
+            if ($branchRow) {
+                $branchData = $this->branch_data($branchRow);
+                $data = array_merge($data, $branchData);
+                $data['branch_snapshot_full_details'] = $branchData['branch_full_details'] ?? '';
+                $data['branch_snapshot_identity_details'] = $branchData['branch_identity_details'] ?? '';
+                $data['branch_snapshot_bank_details'] = $branchData['branch_bank_details'] ?? '';
+                $data['branch_snapshot_name'] = $branchData['branch_name'] ?? '';
+                $data['branch_snapshot_date'] = $data['submission_date'] ?? '';
+            }
+            break;
+        }
+        $data['member_status'] = get_user_meta($userId, 'zau_member_status', true) ?: ($data['member_status'] ?? 'Заявление подано');
+        $data = $this->hydrate_document_data($data, $userId);
+        $data['legacy_exact_regen'] = 1;
+        $data['legacy_exact_regen_submission'] = (int)$submission->id;
+        $createdAt = (string)$submission->created_at;
+        $out = [];
+        foreach ($forms[(int)$formId]['templates'] as $t) {
+            $tpl = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->templates_table} WHERE id=%d", (int)$t['id']));
+            if (!$tpl) { continue; }
+            // Только документы, созданные этим инструментом: PDF прежних переносов не трогаем.
+            $existing = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->docs_table} WHERE source_submission_id=%d AND template_id=%d AND user_id=%d AND data_json LIKE %s ORDER BY id DESC LIMIT 1", (int)$submission->id, (int)$tpl->id, $userId, '%"legacy_exact_regen":1%'));
+            if ($existing && !empty($existing->pdf_url) && !$recreate) { $out[] = ['id'=>(int)$existing->id, 'state'=>'ready']; continue; }
+            $row = [
+                'full_name'=>sanitize_text_field($data['full_name'] ?? ''), 'document_title'=>$tpl->name,
+                'organization'=>sanitize_text_field($data['organization'] ?? ''), 'issue_date'=>sanitize_text_field($data['issue_date'] ?? ''),
+                'member_status'=>sanitize_text_field($data['member_status']), 'signature_url'=>esc_url_raw($data['signature_url'] ?? ''),
+                'data_json'=>wp_json_encode($data, JSON_UNESCAPED_UNICODE), 'orientation'=>$tpl->orientation, 'updated_at'=>current_time('mysql'),
+            ];
+            if ($existing) {
+                $wpdb->update($this->docs_table, $row, ['id'=>(int)$existing->id]);
+                $out[] = ['id'=>(int)$existing->id, 'state'=>'updated'];
+                continue;
+            }
+            $token = bin2hex(random_bytes(24));
+            $row += ['template_id'=>(int)$tpl->id, 'user_id'=>$userId, 'created_by'=>get_current_user_id(), 'source_submission_id'=>(int)$submission->id,
+                'document_no'=>'PENDING-' . $token, 'extra1'=>'', 'extra2'=>'', 'extra3'=>'', 'extra4'=>'', 'signature2_url'=>'', 'stamp_url'=>'',
+                'verify_token'=>$token, 'record_status'=>'draft', 'created_at'=>$createdAt ?: current_time('mysql')];
+            if (!$wpdb->insert($this->docs_table, $row)) { return new WP_Error('insert', 'Не удалось создать запись документа: ' . $wpdb->last_error); }
+            $documentId = (int)$wpdb->insert_id;
+            $number = class_exists('ZAU_Certificate_PDF_Generator') ? ZAU_Certificate_PDF_Generator::instance()->format_document_number($tpl, $documentId) : $this->next_document_number($tpl);
+            $wpdb->update($this->docs_table, ['document_no'=>$number], ['id'=>$documentId]);
+            $out[] = ['id'=>$documentId, 'state'=>'created'];
+        }
+        return $out;
+    }
+
+    /** Удаляет документы, созданные пересозданием перенесённых заявлений (записи и файлы). */
+    public function regen_delete_documents($limit = 200) {
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT id,pdf_url,image_url FROM {$this->docs_table} WHERE data_json LIKE %s ORDER BY id ASC LIMIT %d", '%"legacy_exact_regen":1%', (int)$limit));
+        foreach ((array)$rows as $r) {
+            if (!empty($r->pdf_url)) { $this->delete_upload_url($r->pdf_url); }
+            if (!empty($r->image_url)) { $this->delete_upload_url($r->image_url); }
+            $wpdb->delete($this->docs_table, ['id'=>(int)$r->id]);
+        }
+        return count((array)$rows);
     }
 
     private function update_user_from_submission($data) {

@@ -158,7 +158,7 @@ final class ZAU_Bulk_Regeneration {
                         <select name="file_state"><option value="all">Все</option><option value="missing">Только без PDF / с потерянным файлом</option><option value="exists">Только с существующим PDF</option></select>
                     </label>
                     <label>Источник
-                        <select name="source"><option value="all">Все документы</option><option value="legacy">Только перенесённые старые PDF</option><option value="native">Только созданные новой системой</option></select>
+                        <select name="source"><option value="all">Все документы</option><option value="legacy">Только перенесённые старые PDF</option><option value="native">Только созданные новой системой</option><option value="exact">Пересозданные из заявлений старого сайта</option></select>
                     </label>
                     <label>Созданы от
                         <input type="date" name="date_from">
@@ -242,7 +242,7 @@ final class ZAU_Bulk_Regeneration {
         ];
         if (!in_array($filters['record_status'], ['', 'active','draft','revoked'], true)) { $filters['record_status']=''; }
         if (!in_array($filters['file_state'], ['all','missing','exists'], true)) { $filters['file_state']='all'; }
-        if (!in_array($filters['source'], ['all','legacy','native'], true)) { $filters['source']='all'; }
+        if (!in_array($filters['source'], ['all','legacy','native','exact'], true)) { $filters['source']='all'; }
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $filters['date_from'])) { $filters['date_from']=''; }
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $filters['date_to'])) { $filters['date_to']=''; }
         return $filters;
@@ -293,6 +293,7 @@ final class ZAU_Bulk_Regeneration {
         if ($filters['file_state']==='missing') { $sql.=" AND (d.pdf_url IS NULL OR d.pdf_url='')"; }
         elseif ($filters['file_state']==='exists') { $sql.=" AND d.pdf_url IS NOT NULL AND d.pdf_url<>''"; }
         if ($filters['source']==='legacy') { $sql.=' AND d.data_json LIKE %s'; $args[]='%\"legacy_import\":1%'; }
+        elseif ($filters['source']==='exact') { $sql.=' AND d.data_json LIKE %s'; $args[]='%\"legacy_exact_regen\":1%'; }
         elseif ($filters['source']==='native') { $sql.=' AND (d.data_json IS NULL OR d.data_json NOT LIKE %s)'; $args[]='%\"legacy_import\":1%'; }
         if ($filters['date_from']) { $sql.=' AND d.created_at >= %s'; $args[]=$filters['date_from'].' 00:00:00'; }
         if ($filters['date_to']) { $sql.=' AND d.created_at <= %s'; $args[]=$filters['date_to'].' 23:59:59'; }
@@ -353,6 +354,25 @@ final class ZAU_Bulk_Regeneration {
         $actual=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->items_table} WHERE job_id=%d",$job_id));
         $wpdb->update($this->jobs_table,['total_count'=>$actual,'status'=>'running','updated_at'=>$now],['id'=>$job_id]);
         wp_send_json_success(['job_id'=>$job_id,'total'=>$actual,'status'=>'running','options'=>$options]);
+    }
+
+    /** Очередь по готовому списку документов (для пересоздания перенесённых заявлений). */
+    public function create_job_for_documents(array $ids, array $options = []) {
+        global $wpdb;
+        $ids = array_values(array_unique(array_filter(array_map('absint', $ids))));
+        if (!$ids) { return 0; }
+        $options = $this->sanitize_options($options + ['delay_ms'=>150, 'max_retries'=>2]);
+        $now = current_time('mysql');
+        $wpdb->insert($this->jobs_table, ['created_by'=>get_current_user_id(), 'status'=>'queued', 'filters_json'=>wp_json_encode(['source'=>'exact_regen', 'document_ids'=>count($ids) . ' шт.'], JSON_UNESCAPED_UNICODE), 'options_json'=>wp_json_encode($options, JSON_UNESCAPED_UNICODE), 'total_count'=>count($ids), 'created_at'=>$now, 'updated_at'=>$now]);
+        $jobId = (int)$wpdb->insert_id;
+        if (!$jobId) { return 0; }
+        foreach (array_chunk($ids, 500) as $chunk) {
+            $values = [];
+            foreach ($chunk as $documentId) { $values[] = $wpdb->prepare('(%d,%d,%s,0,%s)', $jobId, $documentId, 'queued', $now); }
+            $wpdb->query("INSERT IGNORE INTO {$this->items_table} (job_id,document_id,status,attempts,updated_at) VALUES " . implode(',', $values));
+        }
+        $wpdb->update($this->jobs_table, ['status'=>'running', 'total_count'=>(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->items_table} WHERE job_id=%d", $jobId))], ['id'=>$jobId]);
+        return $jobId;
     }
 
     private function get_job($job_id) {
