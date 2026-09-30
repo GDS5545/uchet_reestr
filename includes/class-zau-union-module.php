@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.31.0';
+    const VERSION = '2.32.0';
     const DB_VERSION = '2.18.2';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
@@ -3597,6 +3597,67 @@ final class ZAU_Union_Module {
             $out[] = ['id'=>$documentId, 'state'=>'created'];
         }
         return $out;
+    }
+
+    /**
+     * Делает перенесённого участника действительным: «Состоит в профсоюзе», вступление одобрено,
+     * дата вступления — дата старого заявления, при $approveCard — личная карточка проверена.
+     * Решения «Выбыл», «Отклонено», «Приостановлено» не перебиваются. Прежние значения сохраняются для отката.
+     * Возвращает 'activated' | 'already' | 'kept'.
+     */
+    public function regen_activate_member($userId, $membershipDate, $note, $approveCard) {
+        $userId = absint($userId);
+        $user = get_user_by('id', $userId);
+        if (!$user) { return 'kept'; }
+        $status = (string)get_user_meta($userId, 'zau_member_status', true);
+        if (in_array($status, ['Выбыл из профсоюза', 'Заявление отклонено', 'Членство приостановлено'], true)) { return 'kept'; }
+        $approval = $this->membership_approval_status($userId);
+        $card = (string)(get_user_meta($userId, 'zau_member_card_review_status', true) ?: 'draft');
+        if ($status === 'Состоит в профсоюзе' && in_array($approval, ['approved', 'manual'], true) && (!$approveCard || $card === 'approved')) { return 'already'; }
+        if (get_user_meta($userId, 'zau_exact_activation_prev', true) === '') {
+            $prev = ['status'=>$status, 'membership_date'=>(string)get_user_meta($userId, 'zau_membership_date', true), 'card_review'=>(string)get_user_meta($userId, 'zau_member_card_review_status', true), 'card_approved_data'=>(string)get_user_meta($userId, 'zau_member_card_approved_data', true), 'at'=>current_time('mysql')];
+            foreach (['zau_membership_approval_status', 'zau_membership_approved_by', 'zau_membership_approval_date', 'zau_membership_approval_note'] as $k) { $prev['meta'][$k] = (string)get_user_meta($userId, $k, true); }
+            update_user_meta($userId, 'zau_exact_activation_prev', wp_slash(wp_json_encode($prev, JSON_UNESCAPED_UNICODE)));
+        }
+        if (!in_array($approval, ['approved', 'manual'], true) || $status !== 'Состоит в профсоюзе') {
+            update_user_meta($userId, 'zau_membership_approval_status', 'approved');
+            update_user_meta($userId, 'zau_membership_approved_by', get_current_user_id());
+            update_user_meta($userId, 'zau_membership_approval_date', current_time('mysql'));
+            update_user_meta($userId, 'zau_membership_approval_note', sanitize_textarea_field($note));
+        }
+        if ($membershipDate !== '' && !get_user_meta($userId, 'zau_membership_date', true)) { update_user_meta($userId, 'zau_membership_date', $membershipDate); }
+        if ($status !== 'Состоит в профсоюзе') { $this->set_member_status($userId, 'Состоит в профсоюзе', 'approval', $note); }
+        if ($approveCard && $card !== 'approved') {
+            update_user_meta($userId, 'zau_member_card_review_status', 'approved');
+            update_user_meta($userId, 'zau_member_card_reviewed_by', get_current_user_id());
+            update_user_meta($userId, 'zau_member_card_reviewed_at', current_time('mysql'));
+            update_user_meta($userId, 'zau_member_card_approved_data', wp_slash((string)get_user_meta($userId, 'zau_member_card_data', true)));
+        }
+        update_user_meta($userId, 'zau_exact_activated', current_time('mysql'));
+        $this->log('membership_approved', 'user', $userId, 'context=legacy_exact_activation; ' . $note);
+        return 'activated';
+    }
+
+    /** Возвращает статусы, бывшие до активации. Если статус после активации меняли — не трогает. */
+    public function regen_deactivate_member($userId) {
+        $userId = absint($userId);
+        $prev = json_decode((string)get_user_meta($userId, 'zau_exact_activation_prev', true), true);
+        if (!is_array($prev)) { delete_user_meta($userId, 'zau_exact_activated'); return 'none'; }
+        if ((string)get_user_meta($userId, 'zau_member_status', true) !== 'Состоит в профсоюзе') { return 'changed'; }
+        $old = (string)($prev['status'] ?? '');
+        if ($old !== 'Состоит в профсоюзе') {
+            if (in_array($old, $this->membership_statuses(), true)) { $this->set_member_status($userId, $old, 'approval', 'Откат активации перенесённых'); }
+            else { update_user_meta($userId, 'zau_member_status', $old); $this->sync_member_status_to_documents($userId, $old); }
+        }
+        foreach ((array)($prev['meta'] ?? []) as $k => $v) { if ($v === '') { delete_user_meta($userId, $k); } else { update_user_meta($userId, $k, wp_slash($v)); } }
+        foreach (['membership_date'=>'zau_membership_date', 'card_review'=>'zau_member_card_review_status', 'card_approved_data'=>'zau_member_card_approved_data'] as $from => $k) {
+            $v = (string)($prev[$from] ?? '');
+            if ($v === '') { delete_user_meta($userId, $k); } else { update_user_meta($userId, $k, wp_slash($v)); }
+        }
+        delete_user_meta($userId, 'zau_exact_activation_prev');
+        delete_user_meta($userId, 'zau_exact_activated');
+        $this->log('membership_activation_reverted', 'user', $userId, 'restored=' . $old);
+        return 'restored';
     }
 
     /** Удаляет документы, созданные пересозданием перенесённых заявлений (записи и файлы). */

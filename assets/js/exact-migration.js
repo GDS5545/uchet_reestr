@@ -212,7 +212,7 @@
   var out = document.querySelector('[data-zau-regen-progress]');
   var box = document.querySelector('[data-zau-regen-result]');
   var usersInput = document.querySelector('[data-zau-regen-users]');
-  var names = { submissions: 'заявлений', created: 'создано документов', updated: 'обновлено', ready: 'уже были готовы', no_signature: 'пропущено без подписи', no_user: 'нет владельца', error: 'ошибок', deleted: 'удалено' };
+  var names = { submissions: 'заявлений', created: 'создано документов', updated: 'обновлено', ready: 'уже были готовы', no_signature: 'пропущено без подписи', no_user: 'нет владельца', error: 'ошибок', deleted: 'удалено', member_activated: 'сделано действительными', member_kept: 'статус не тронут (выбыл/отклонён/приостановлен)', restored: 'статус возвращён', changed: 'не тронуто (статус меняли)', none: 'нет данных' };
   function statsText(s) { return Object.keys(s || {}).map(function (k) { return (names[k] || k) + ': ' + s[k]; }).join(' · '); }
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c]; }); }
   function setBusy(on) { Array.prototype.forEach.call(buttons, function (b) { b.disabled = on; }); }
@@ -231,10 +231,10 @@
       if (!j || !j.success) { var err = new Error((j && j.data && j.data.message) || 'Ошибка'); err.fatal = true; throw err; }
       var d = j.data;
       errors = errors.concat(d.errors || []).slice(-30);
-      out.textContent = (mode === 'delete' ? 'Удаление: ' : 'Подготовка: ') + d.done + (d.total ? ' из ' + d.total : '') + '… ' + statsText(d.stats);
+      out.textContent = (mode === 'delete' ? 'Удаление: ' : (mode === 'deactivate' ? 'Возврат статусов: ' : 'Подготовка: ')) + d.done + (d.total ? ' из ' + d.total : '') + '… ' + statsText(d.stats);
       if (!d.finished) { step(mode, d.cursor, d.processed, d.stats || {}, 0); return; }
       setBusy(false);
-      if (mode === 'delete') { out.textContent = 'Готово. ' + statsText(d.stats) + '. Обновляем страницу…'; setTimeout(function () { window.location.reload(); }, 1000); return; }
+      if (mode === 'delete' || mode === 'deactivate') { out.textContent = 'Готово. ' + statsText(d.stats) + '. Обновляем страницу…'; setTimeout(function () { window.location.reload(); }, 1000); return; }
       out.textContent = 'Подготовка завершена. ' + statsText(d.stats);
       var html = errors.length ? '<p><strong>Ошибки:</strong><br>' + errors.map(esc).join('<br>') + '</p>' : '';
       html += d.job_url ? '<p><a class="button button-primary" href="' + esc(d.job_url) + '">Открыть очередь и сформировать PDF</a> — на открывшейся странице нажмите «Продолжить».</p>' : '<p>Новых документов для формирования нет.</p>';

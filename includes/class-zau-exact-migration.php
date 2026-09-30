@@ -25,7 +25,7 @@ if (!defined('ABSPATH')) { exit; }
  *     данные»; администратор разбирает такие отметки в очереди.
  */
 final class ZAU_Exact_Migration {
-    const VERSION = '2.31.0';
+    const VERSION = '2.32.0';
     const DB_VERSION = '1.1.0';
     const OPT_DB = 'zau_exact_migration_db_version';
     const OPT = 'zau_exact_migration_settings';
@@ -2601,7 +2601,7 @@ final class ZAU_Exact_Migration {
     const REGEN_STATE_OPT = 'zau_exact_regen_state';
 
     private function regen_settings() {
-        return wp_parse_args((array)get_option(self::REGEN_OPT, []), ['map'=>[], 'skip_nosig'=>1, 'recreate'=>0]);
+        return wp_parse_args((array)get_option(self::REGEN_OPT, []), ['map'=>[], 'skip_nosig'=>1, 'recreate'=>0, 'activate'=>1, 'approve_card'=>1, 'activate_forms'=>null]);
     }
 
     /** Архивные формы перенесённых заявлений (по одной на форму WPForms) с количеством своих заявлений. */
@@ -2670,12 +2670,23 @@ final class ZAU_Exact_Migration {
         return $out;
     }
 
+    /** Дата вступления — дата самого раннего своего перенесённого заявления о вступлении. */
+    private function regen_membership_date($userId, array $formIds) {
+        global $wpdb;
+        if (!$formIds) { return ''; }
+        $min = $wpdb->get_var($wpdb->prepare("SELECT MIN(created_at) FROM {$this->submissions_table} WHERE user_id=%d AND status=%s AND form_id IN (" . implode(',', array_map('intval', $formIds)) . ")", (int)$userId, self::S_OWN));
+        return $min ? mysql2date('d.m.Y', (string)$min) : '';
+    }
+
     public function regen_save() {
         if (!$this->can_manage()) { wp_die('Недостаточно прав.', 403); }
         check_admin_referer(self::NONCE);
         $map = [];
         foreach ((array)($_POST['map'] ?? []) as $from => $to) { $map[absint($from)] = absint($to); }
-        update_option(self::REGEN_OPT, ['map'=>$map, 'skip_nosig'=>empty($_POST['skip_nosig']) ? 0 : 1, 'recreate'=>empty($_POST['recreate']) ? 0 : 1], false);
+        $activateForms = [];
+        foreach (array_keys($map) as $from) { $activateForms[$from] = empty($_POST['activate_forms'][$from]) ? 0 : 1; }
+        update_option(self::REGEN_OPT, ['map'=>$map, 'skip_nosig'=>empty($_POST['skip_nosig']) ? 0 : 1, 'recreate'=>empty($_POST['recreate']) ? 0 : 1,
+            'activate'=>empty($_POST['activate']) ? 0 : 1, 'approve_card'=>empty($_POST['approve_card']) ? 0 : 1, 'activate_forms'=>$activateForms], false);
         wp_safe_redirect(add_query_arg(['page'=>'zau-exact-regen', 'users'=>sanitize_text_field(wp_unslash($_POST['users'] ?? '')), 'msg'=>rawurlencode('Настройки сохранены.')], admin_url('admin.php')));
         exit;
     }
@@ -2695,13 +2706,22 @@ final class ZAU_Exact_Migration {
             if ($n < 200) { delete_option(self::REGEN_STATE_OPT); }
             wp_send_json_success(['cursor'=>0, 'processed'=>$done, 'done'=>$done, 'total'=>0, 'finished'=>$n < 200, 'stats'=>['deleted'=>$done]]);
         }
+        if ($mode === 'deactivate') {
+            $ids = $wpdb->get_col($wpdb->prepare("SELECT DISTINCT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_activated' AND user_id>%d ORDER BY user_id ASC LIMIT 50", $cursor));
+            $stats = array_map('absint', (array)($_POST['stats'] ?? []));
+            foreach ((array)$ids as $id) { $cursor = (int)$id; $r = $union->regen_deactivate_member((int)$id); $stats[$r] = ($stats[$r] ?? 0) + 1; }
+            $done = absint($_POST['processed'] ?? 0) + count((array)$ids);
+            wp_send_json_success(['cursor'=>$cursor, 'processed'=>$done, 'done'=>$done, 'total'=>0, 'finished'=>count((array)$ids) < 50, 'stats'=>$stats]);
+        }
         $settings = $this->regen_settings();
         $map = array_filter(array_map('absint', (array)$settings['map']));
         $targets = $union->regen_target_forms();
         foreach ($map as $from => $to) { if (empty($targets[$to]['templates'])) { unset($map[$from]); } }
-        if (!$map) { wp_send_json_error(['message'=>'Выберите хотя бы для одной старой формы новую форму с PDF-шаблонами и сохраните.'], 400); }
+        $activateForms = !empty($settings['activate']) ? array_keys(array_filter((array)$settings['activate_forms'])) : [];
+        $forms = array_values(array_unique(array_merge(array_keys($map), array_map('intval', $activateForms))));
+        if (!$forms) { wp_send_json_error(['message'=>'Выберите хотя бы для одной старой формы новую форму с PDF-шаблонами (или отметьте «заявление о вступлении») и сохраните.'], 400); }
         $users = array_filter(array_map('absint', preg_split('/[\s,;]+/', (string)wp_unslash($_POST['users'] ?? ''), -1, PREG_SPLIT_NO_EMPTY)));
-        $formIn = implode(',', array_map('intval', array_keys($map)));
+        $formIn = implode(',', array_map('intval', $forms));
         $userSql = $users ? ' AND user_id IN (' . implode(',', array_map('intval', $users)) . ')' : '';
         if ($cursor === 0) {
             $state = ['run'=>'r' . gmdate('YmdHis') . wp_generate_password(4, false, false), 'at'=>current_time('mysql'), 'users'=>implode(',', $users), 'finished'=>false, 'job_id'=>0];
@@ -2718,6 +2738,12 @@ final class ZAU_Exact_Migration {
             $cursor = (int)$row->id;
             $handled = ($handled ?? 0) + 1;
             if (!get_user_by('id', (int)$row->user_id)) { $stats['no_user'] = ($stats['no_user'] ?? 0) + 1; continue; }
+            if (in_array((int)$row->form_id, $activateForms, true)) {
+                $a = $union->regen_activate_member((int)$row->user_id, $this->regen_membership_date((int)$row->user_id, $activateForms),
+                    'Перенесён со старого сайта: заявление № ' . (int)(json_decode((string)$row->data_json, true)['legacy_entry_id'] ?? 0) . ' от ' . mysql2date('d.m.Y', (string)$row->created_at), !empty($settings['approve_card']));
+                if ($a !== 'already') { $stats['member_' . $a] = ($stats['member_' . $a] ?? 0) + 1; }
+            }
+            if (empty($map[(int)$row->form_id])) { continue; }
             $target = $targets[$map[(int)$row->form_id]];
             $data = $this->regen_data($row, $target);
             if (is_wp_error($data)) { $stats['error'] = ($stats['error'] ?? 0) + 1; $errors[] = '#' . $row->id . ': ' . $data->get_error_message(); continue; }
@@ -2753,10 +2779,11 @@ final class ZAU_Exact_Migration {
         $made = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$docsTable} WHERE data_json LIKE %s", '%"legacy_exact_regen":1%'));
         $withPdf = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$docsTable} WHERE data_json LIKE %s AND pdf_url<>''", '%"legacy_exact_regen":1%'));
         $users = sanitize_text_field(wp_unslash($_GET['users'] ?? ''));
+        $activated = (int)$wpdb->get_var("SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_activated'");
         ?>
         <div class="wrap zau-remote-wrap zau-exact-wrap">
             <?php if (function_exists('zau_admin_hub_nav')) { zau_admin_hub_nav('import'); } ?>
-            <h1>Пересоздание перенесённых заявлений по новым шаблонам</h1>
+            <h1>Пересоздание перенесённых заявлений и активация аккаунтов</h1>
             <?php if (!empty($_GET['msg'])): ?><div class="notice notice-info is-dismissible"><p><?php echo esc_html(rawurldecode(sanitize_text_field(wp_unslash($_GET['msg'])))); ?></p></div><?php endif; ?>
             <section class="zau-rb-card">
                 <p>Для каждого заявления, перенесённого со старого сайта и закреплённого за своим владельцем, создаётся документ <strong>по шаблону новой формы</strong>: поля заполняются из старого заявления, ставится <strong>его подпись</strong>, дата документа и дата создания — <strong>дата старого заявления</strong>. Документ появляется в личном кабинете участника и в реестре.</p>
@@ -2768,10 +2795,11 @@ final class ZAU_Exact_Migration {
                 <h2>1. Какая форма старого сайта — по какой новой форме пересоздавать</h2>
                 <?php if (!$targets): ?><p class="zau-rb-message error">На новом сайте нет активных форм. Создайте форму и привяжите к ней PDF-шаблоны.</p><?php endif; ?>
                 <table class="widefat striped">
-                    <thead><tr><th>Форма старого сайта</th><th>Своих заявлений</th><th>Новая форма (её PDF-шаблоны)</th></tr></thead>
+                    <thead><tr><th>Форма старого сайта</th><th>Своих заявлений</th><th>Новая форма (её PDF-шаблоны)</th><th>Это заявление о вступлении?</th></tr></thead>
                     <tbody>
-                    <?php if (!$sources): ?><tr><td colspan="3">Перенесённых заявлений нет.</td></tr><?php endif; ?>
-                    <?php foreach ($sources as $f): $sel = (int)($settings['map'][(int)$f->id] ?? 0); ?>
+                    <?php if (!$sources): ?><tr><td colspan="4">Перенесённых заявлений нет.</td></tr><?php endif; ?>
+                    <?php foreach ($sources as $f): $sel = (int)($settings['map'][(int)$f->id] ?? 0);
+                        $isJoin = is_array($settings['activate_forms']) ? !empty($settings['activate_forms'][(int)$f->id]) : (bool)preg_match('/вступ|кабылдау|қабылдау|членств/ui', (string)$f->name) && !preg_match('/выход|шығу|выбыт|исключ/ui', (string)$f->name); ?>
                         <tr><td><?php echo esc_html($f->name); ?></td><td><?php echo (int)$f->qty; ?></td><td>
                             <select name="map[<?php echo (int)$f->id; ?>]">
                                 <option value="0">— не пересоздавать —</option>
@@ -2779,11 +2807,14 @@ final class ZAU_Exact_Migration {
                                     <option value="<?php echo (int)$t['id']; ?>" <?php selected($sel, (int)$t['id']); ?> <?php disabled(!$t['templates']); ?>><?php echo esc_html($t['name'] . ' (' . ($t['templates'] ? implode(', ', wp_list_pluck($t['templates'], 'name')) : 'нет шаблонов') . ')'); ?></option>
                                 <?php endforeach; ?>
                             </select>
-                        </td></tr>
+                        </td><td><label><input type="checkbox" name="activate_forms[<?php echo (int)$f->id; ?>]" value="1" <?php checked($isJoin); ?>> да, делает участника действительным</label></td></tr>
                     <?php endforeach; ?>
                     </tbody>
                 </table>
                 <p><label><input type="checkbox" name="skip_nosig" value="1" <?php checked(!empty($settings['skip_nosig'])); ?>> Пропускать заявления без подписи (или если файл подписи не скопирован на новый сайт)</label></p>
+                <p><label><input type="checkbox" name="activate" value="1" <?php checked(!empty($settings['activate'])); ?>> <strong>Сразу сделать аккаунты действительными</strong>: статус «Состоит в профсоюзе», вступление одобрено, дата вступления — дата старого заявления (только по формам, отмеченным «заявление о вступлении»)</label><br>
+                    <label><input type="checkbox" name="approve_card" value="1" <?php checked(!empty($settings['approve_card'])); ?>> …и отметить личную карточку проверенной</label><br>
+                    <small>Не трогает участников со статусом «Выбыл из профсоюза», «Заявление отклонено», «Членство приостановлено». Прежние статусы сохраняются — их можно вернуть кнопкой в разделе «Отмена».</small></p>
                 <p><label><input type="checkbox" name="recreate" value="1" <?php checked(!empty($settings['recreate'])); ?>> Пересоздать и те, у которых документ уже сформирован этим инструментом (номер сохраняется, файл заменяется)</label></p>
                 <input type="hidden" name="users" value="<?php echo esc_attr($users); ?>">
                 <p><button class="button button-primary">Сохранить</button></p>
@@ -2803,6 +2834,7 @@ final class ZAU_Exact_Migration {
             </section>
             <section class="zau-rb-card">
                 <h2>3. Отмена</h2>
+                <p><button class="button" data-zau-regen="deactivate" data-confirm="Вернуть статусы, которые были до активации, всем участникам, ставшим действительными через этот инструмент? Кому статус после этого меняли вручную — не тронем.">Вернуть прежние статусы участников</button> <small>Сделано действительными этим инструментом: <?php echo (int)$activated; ?></small></p>
                 <p><button class="button button-link-delete" data-zau-regen="delete" data-confirm="Удалить ВСЕ документы, созданные этим инструментом (записи и PDF)? Перенесённые заявления и документы новых заявлений не затрагиваются.">Удалить документы, созданные этим инструментом</button></p>
             </section>
         </div>
