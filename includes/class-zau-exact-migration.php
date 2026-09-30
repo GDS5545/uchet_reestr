@@ -25,7 +25,7 @@ if (!defined('ABSPATH')) { exit; }
  *     данные»; администратор разбирает такие отметки в очереди.
  */
 final class ZAU_Exact_Migration {
-    const VERSION = '2.29.2';
+    const VERSION = '2.29.3';
     const DB_VERSION = '1.1.0';
     const OPT_DB = 'zau_exact_migration_db_version';
     const OPT = 'zau_exact_migration_settings';
@@ -2313,11 +2313,11 @@ final class ZAU_Exact_Migration {
         $this->require_access();
         global $wpdb;
         $cursor = absint($_POST['cursor'] ?? 0);
-        $ids = $wpdb->get_col($wpdb->prepare("SELECT DISTINCT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_legacy_user_id' AND user_id>%d ORDER BY user_id ASC LIMIT 150", $cursor));
+        $ids = $wpdb->get_col($wpdb->prepare("SELECT DISTINCT user_id FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_legacy_user_id' AND user_id>%d ORDER BY user_id ASC LIMIT 60", $cursor));
         $total = (int)$wpdb->get_var("SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_legacy_user_id'");
         $done = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_legacy_user_id' AND user_id<=%d", $cursor));
         foreach ((array)$ids as $id) { $this->audit_user((int)$id); $cursor = (int)$id; }
-        wp_send_json_success(['cursor'=>$cursor, 'done'=>min($total, $done + count((array)$ids)), 'total'=>$total, 'finished'=>count((array)$ids) < 150]);
+        wp_send_json_success(['cursor'=>$cursor, 'done'=>min($total, $done + count((array)$ids)), 'total'=>$total, 'finished'=>count((array)$ids) < 60]);
     }
 
     private function audit_where($filter, $search) {

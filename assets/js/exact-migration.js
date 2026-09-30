@@ -44,7 +44,7 @@
     v_entries: 'сверка заявлений', v_orphans: 'поиск удалённых', dupcheck: 'проверка дублей', cleanup_index: 'индекс прежних заявок', cleanup: 'прежние переносы', rollback: 'откат', finished: 'завершено' };
 
   function render(job) {
-    if (!job) { return; }
+    if (!job || !document.querySelector('[data-zau-exact-progress]')) { return; }
     var total = (Number(job.totals && job.totals.users) || 0) + (Number(job.totals && job.totals.entries) || 0);
     var done = (Number(job.processed && job.processed.users) || 0) + (Number(job.processed && job.processed.entries) || 0);
     var pct = job.status === 'finished' ? 100 : (total ? Math.min(99, Math.round(done * 100 / total)) : 0);
@@ -126,7 +126,7 @@
   }
 
   // Показать состояние последнего задания после перезагрузки страницы.
-  if (cfg.job && cfg.job.token) { render(cfg.job); }
+  if (cfg.job && cfg.job.token && document.querySelector('[data-zau-exact-progress]')) { render(cfg.job); }
 })();
 /* Проверка ФИО и подписей: пакетный запуск */
 (function () {
@@ -138,7 +138,11 @@
   function step(cursor, tries) {
     var body = new FormData();
     body.set('action', 'zau_exact_audit_run'); body.set('nonce', cfg.nonce); body.set('cursor', cursor);
-    fetch(cfg.ajaxUrl, { method: 'POST', body: body, credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (j) {
+    fetch(cfg.ajaxUrl, { method: 'POST', body: body, credentials: 'same-origin' }).then(function (r) {
+      return r.text().then(function (t) {
+        try { return JSON.parse(t); } catch (e) { throw new Error('Сервер ответил не JSON (HTTP ' + r.status + '): ' + t.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)); }
+      });
+    }).then(function (j) {
       if (!j || !j.success) { throw new Error((j && j.data && j.data.message) || 'Ошибка'); }
       var d = j.data;
       out.textContent = 'Проверено ' + d.done + ' из ' + d.total + '…';
