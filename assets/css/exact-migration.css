@@ -17,3 +17,6 @@
 .zau-audit-sig{display:block;max-width:160px;max-height:70px;background:#fff;border:1px solid #e4e7ec;border-radius:6px;padding:2px}
 .zau-audit-nosig{color:#98a2b3}
 .zau-audit-pages .button{margin:2px}
+.zau-person-checks{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.zau-person-checks li{font-size:14px}
+.zau-exact-wrap td small{color:#667085;margin-right:6px}

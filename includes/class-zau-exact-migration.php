@@ -25,7 +25,7 @@ if (!defined('ABSPATH')) { exit; }
  *     данные»; администратор разбирает такие отметки в очереди.
  */
 final class ZAU_Exact_Migration {
-    const VERSION = '2.29.1';
+    const VERSION = '2.29.2';
     const DB_VERSION = '1.1.0';
     const OPT_DB = 'zau_exact_migration_db_version';
     const OPT = 'zau_exact_migration_settings';
@@ -2346,16 +2346,140 @@ final class ZAU_Exact_Migration {
         return '<a href="' . esc_url($url) . '" target="_blank" rel="noopener" title="' . esc_attr($label) . '"><img class="zau-audit-sig" src="' . esc_url($url) . '" alt="' . esc_attr($label) . '" loading="lazy"></a>';
     }
 
+    private function status_label($status) {
+        $map = [
+            self::S_OWN=>['ok', 'Со старого сайта — своё'],
+            self::S_OTHER=>['warn', 'Со старого сайта — подано за другого'],
+            self::S_DISPUTED=>['bad', 'Со старого сайта — участник отметил «не моё»'],
+            self::S_UNASSIGNED=>['warn', 'Со старого сайта — без владельца'],
+            self::S_SUPERSEDED=>['none', 'Прежний перенос — скрыта (заменена точной копией)'],
+            self::S_HIDDEN=>['none', 'Со старого сайта — спам/корзина'],
+        ];
+        return $map[$status] ?? ['ok', 'Подано на новом сайте (' . $status . ')'];
+    }
+
+    private function key_fields_html(array $fields) {
+        $out = [];
+        foreach ($fields as $f) {
+            $label = $this->lower($f['label'] ?? '');
+            if (($f['value'] ?? '') === '' || !preg_match('/фио|имя|фамил|иин|место работы|организац|должност|филиал|телефон/u', $label) || preg_match('/председател|руководител|бухгалтер/u', $label)) { continue; }
+            $out[] = '<div><small>' . esc_html($f['label']) . '</small> ' . esc_html(wp_trim_words((string)$f['value'], 12)) . '</div>';
+            if (count($out) >= 6) { break; }
+        }
+        return implode('', $out);
+    }
+
+    /** Одна карточка «старый сайт ↔ новый сайт» по конкретному участнику. */
+    private function audit_person_page($userId) {
+        global $wpdb;
+        $user = get_user_by('id', $userId);
+        $back = admin_url('admin.php?page=zau-exact-audit');
+        echo '<div class="wrap zau-remote-wrap zau-exact-wrap">';
+        if (function_exists('zau_admin_hub_nav')) { zau_admin_hub_nav('import'); }
+        echo '<p><a href="' . esc_url(wp_get_referer() ?: $back) . '">← к списку</a></p>';
+        if (!$user) { echo '<p>Аккаунт не найден.</p></div>'; return; }
+        $a = $this->audit_user($userId) ?: [];
+        $raw = $this->user_json_meta($userId, 'zau_exact_legacy_raw');
+        $oldId = (int)get_user_meta($userId, 'zau_exact_legacy_user_id', true);
+        $card = json_decode((string)get_user_meta($userId, 'zau_member_card_data', true), true) ?: [];
+        echo '<h1>Сверка участника: ' . esc_html($user->display_name) . '</h1>';
+
+        // Итог простыми словами
+        $checks = [];
+        $checks[] = [$a['name_old'] ?? 'none', 'ФИО в аккаунте и в старом аккаунте', $a['old_name'] ?? ''];
+        $checks[] = [$a['name_app'] ?? 'none', 'ФИО в аккаунте и в его старом заявлении', $a['app_name'] ?? ''];
+        if (($a['new_app_name'] ?? '') !== '') { $checks[] = [$a['name_new_app'], 'ФИО в аккаунте и в новом заявлении', $a['new_app_name']]; }
+        $flags = [];
+        if (get_user_meta($userId, 'zau_exact_prior_mismatch', true)) { $flags[] = 'Прежний перенос связывал аккаунт с другим старым пользователем — проверьте профиль («Профили на проверку»).'; }
+        if (get_user_meta($userId, 'zau_exact_possible_duplicate', true)) { $flags[] = 'Есть возможный дубль аккаунта («Возможные дубли»).'; }
+        if (get_user_meta($userId, 'zau_exact_prior_wrong', true)) { $flags[] = 'Это ошибочный аккаунт прежнего переноса (очередь «Ошибочные аккаунты»).'; }
+        $dispute = $this->user_json_meta($userId, 'zau_exact_profile_dispute');
+        if (($dispute['status'] ?? '') === 'open') { $flags[] = 'Участник сообщил о чужих данных в профиле: «' . ($dispute['comment'] ?? '') . '».'; }
+        echo '<section class="zau-rb-card"><h2>Итог</h2><ul class="zau-person-checks">';
+        foreach ($checks as $c) { echo '<li>' . $this->audit_badge($c[0]) . ' ' . esc_html($c[1]) . ($c[2] !== '' ? ' <small>(' . esc_html($c[2]) . ')</small>' : '') . '</li>'; }
+        foreach ($flags as $f) { echo '<li><span class="zau-audit-badge is-bad">внимание</span> ' . esc_html($f) . '</li>'; }
+        if (!$oldId) { echo '<li><span class="zau-audit-badge is-none">нет данных</span> Этот аккаунт не связан со старым сайтом точным переносом.</li>'; }
+        echo '</ul></section>';
+
+        // Аккаунт: новый и старый рядом
+        $meta = (array)($raw['meta'] ?? []);
+        $oldPhone = '';
+        foreach (['mobile_number', 'phone_number', 'phone'] as $k) { if ($this->meta_first($meta, $k) !== '') { $oldPhone = $this->meta_first($meta, $k); break; } }
+        $pairs = [
+            ['ФИО', $user->display_name . ' (' . trim($user->last_name . ' ' . $user->first_name) . ')', $raw ? $this->old_display_name($raw) : ''],
+            ['Email', $user->user_email, (string)($raw['user_email'] ?? '')],
+            ['Логин', $user->user_login, (string)($raw['user_login'] ?? '')],
+            ['Телефон', (string)get_user_meta($userId, 'zau_phone', true), $oldPhone],
+            ['Дата регистрации', $user->user_registered, (string)($raw['user_registered'] ?? '')],
+            ['Статус', (string)get_user_meta($userId, 'zau_member_status', true), $this->meta_first($meta, 'account_status')],
+            ['Организация', (string)get_user_meta($userId, 'zau_organization_name', true), ''],
+            ['ИИН (карточка)', (string)($card['iin'] ?? get_user_meta($userId, 'zau_profile_iin', true)), ''],
+        ];
+        echo '<section class="zau-rb-card"><h2>Аккаунт</h2><table class="widefat striped"><thead><tr><th></th><th>Новый сайт (#' . (int)$userId . ')</th><th>Старый сайт' . ($oldId ? ' (#' . $oldId . ')' : '') . '</th></tr></thead><tbody>';
+        foreach ($pairs as $p) { echo '<tr><th>' . esc_html($p[0]) . '</th><td>' . esc_html($p[1]) . '</td><td>' . esc_html($p[2]) . '</td></tr>'; }
+        echo '</tbody></table><p><a class="button" href="' . esc_url(get_edit_user_link($userId)) . '">Открыть профиль пользователя</a></p></section>';
+
+        // Заявления этого аккаунта
+        $subs = $wpdb->get_results($wpdb->prepare("SELECT s.*,f.name form_name FROM {$this->submissions_table} s LEFT JOIN {$this->forms_table} f ON f.id=s.form_id WHERE s.user_id=%d ORDER BY s.created_at DESC,s.id DESC LIMIT 200", $userId));
+        echo '<section class="zau-rb-card"><h2>Заявления у этого аккаунта (' . count((array)$subs) . ')</h2><table class="widefat striped"><thead><tr><th>Дата / форма</th><th>Что это</th><th>ФИО заявителя и главное из заявления</th><th>Подпись</th></tr></thead><tbody>';
+        if (!$subs) { echo '<tr><td colspan="4">Заявлений нет.</td></tr>'; }
+        foreach ((array)$subs as $s) {
+            $d = json_decode((string)$s->data_json, true) ?: [];
+            list($cls, $label) = $this->status_label((string)$s->status);
+            $fields = (array)($d['legacy_fields'] ?? []);
+            $sig = $fields ? $this->first_signature_url($fields, (array)($d['legacy_files'] ?? [])) : '';
+            if ($sig === '') { $sigs = json_decode((string)$s->signature_urls_json, true); if (is_array($sigs)) { foreach ($sigs as $u) { if (is_string($u) && preg_match('#^https?://#', $u)) { $sig = $u; break; } } } }
+            $who = (string)($d['legacy_applicant_name'] ?? ($d['full_name'] ?? ''));
+            $match = $who !== '' ? $this->tokens_match($this->name_tokens($who), array_values(array_unique(array_merge($this->name_tokens($user->last_name . ' ' . $user->first_name), $this->name_tokens($user->display_name))))) : 'none';
+            echo '<tr><td>' . esc_html(substr((string)$s->created_at, 0, 10)) . '<br><small>' . esc_html(($d['legacy_form_title'] ?? '') ?: (string)$s->form_name) . ' · #' . (int)$s->id . (!empty($d['legacy_entry_id']) ? ' · WPForms #' . (int)$d['legacy_entry_id'] : '') . '</small></td>';
+            echo '<td><span class="zau-audit-badge is-' . esc_attr($cls === 'warn' ? 'none' : $cls) . '">' . esc_html($label) . '</span></td>';
+            echo '<td><strong>' . esc_html($who) . '</strong> ' . $this->audit_badge($match) . $this->key_fields_html($fields) . '</td>';
+            echo '<td>' . $this->audit_img($sig, 'Подпись') . '</td></tr>';
+        }
+        echo '</tbody></table></section>';
+
+        // Записи старого аккаунта, которые сейчас у других аккаунтов
+        if ($oldId) {
+            $elsewhere = $wpdb->get_results($wpdb->prepare(
+                "SELECT s.id,s.user_id,s.status,s.created_at,s.data_json FROM {$this->submissions_table} s WHERE s.user_id<>%d AND s.data_json LIKE %s AND s.data_json LIKE %s LIMIT 100",
+                $userId, '%"legacy_exact":1%', '%"legacy_user_id":' . $oldId . ',%'
+            ));
+            if ($elsewhere) {
+                echo '<section class="zau-rb-card"><h2>Записи, поданные с этого старого аккаунта, но находящиеся у других</h2><p class="description">Например, заявления, поданные за коллег: они у самих заявителей или ждут владельца.</p><table class="widefat striped"><thead><tr><th>Дата</th><th>Заявитель</th><th>Сейчас у аккаунта</th><th>Что это</th></tr></thead><tbody>';
+                foreach ($elsewhere as $s) {
+                    $d = json_decode((string)$s->data_json, true) ?: [];
+                    $owner = (int)$s->user_id ? get_user_by('id', (int)$s->user_id) : false;
+                    list($cls, $label) = $this->status_label((string)$s->status);
+                    echo '<tr><td>' . esc_html(substr((string)$s->created_at, 0, 10)) . '</td><td>' . esc_html((string)($d['legacy_applicant_name'] ?? '')) . '</td><td>' . ($owner ? '<a href="' . esc_url(add_query_arg(['page'=>'zau-exact-audit', 'person'=>(int)$owner->ID], admin_url('admin.php'))) . '">#' . (int)$owner->ID . ' ' . esc_html($owner->display_name) . '</a>' : '— без владельца') . '</td><td>' . esc_html($label) . '</td></tr>';
+                }
+                echo '</tbody></table></section>';
+            }
+        }
+
+        // Документы
+        $docs = $wpdb->get_results($wpdb->prepare("SELECT id,document_no,document_title,issue_date,record_status,pdf_url,source_submission_id FROM {$this->docs_table} WHERE user_id=%d ORDER BY id DESC LIMIT 100", $userId));
+        echo '<section class="zau-rb-card"><h2>Документы PDF (' . count((array)$docs) . ')</h2><table class="widefat striped"><thead><tr><th>Номер</th><th>Документ</th><th>Дата</th><th>Статус</th><th>Из заявки</th><th></th></tr></thead><tbody>';
+        if (!$docs) { echo '<tr><td colspan="6">Документов нет.</td></tr>'; }
+        foreach ((array)$docs as $doc) {
+            echo '<tr><td>' . esc_html((string)$doc->document_no) . '</td><td>' . esc_html((string)$doc->document_title) . '</td><td>' . esc_html((string)$doc->issue_date) . '</td><td>' . esc_html($doc->record_status === 'active' ? 'действует' : (string)$doc->record_status) . '</td><td>#' . (int)$doc->source_submission_id . '</td><td>' . ($doc->pdf_url ? '<a href="' . esc_url((string)$doc->pdf_url) . '" target="_blank" rel="noopener">PDF</a>' : '') . '</td></tr>';
+        }
+        echo '</tbody></table></section></div>';
+    }
+
     public function audit_page() {
         if (!$this->can_manage()) { wp_die('Недостаточно прав.'); }
         global $wpdb;
+        if (!empty($_GET['person'])) { $this->audit_person_page(absint($_GET['person'])); return; }
         $filter = sanitize_key((string)($_GET['filter'] ?? 'diff'));
         $search = sanitize_text_field(wp_unslash($_GET['s'] ?? ''));
         $paged = max(1, absint($_GET['paged'] ?? 1));
         $per = 50;
         list($join, $where) = $this->audit_where($filter, $search);
         $total = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->users} u $join WHERE $where");
-        $rows = $wpdb->get_results("SELECT u.ID,a.meta_value audit FROM {$wpdb->users} u $join WHERE $where ORDER BY u.display_name ASC LIMIT $per OFFSET " . (($paged - 1) * $per));
+        $rows = $filter === 'random'
+            ? $wpdb->get_results("SELECT u.ID,a.meta_value audit FROM {$wpdb->users} u $join WHERE $where ORDER BY RAND() LIMIT 20")
+            : $wpdb->get_results("SELECT u.ID,a.meta_value audit FROM {$wpdb->users} u $join WHERE $where ORDER BY u.display_name ASC LIMIT $per OFFSET " . (($paged - 1) * $per));
+        if ($filter === 'random') { $total = count((array)$rows); }
         $migrated = (int)$wpdb->get_var("SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_legacy_user_id'");
         $checked = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_audit'");
         $diff = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_audit' AND meta_value LIKE '%\"status\":\"diff\"%' AND meta_value NOT LIKE '%\"reviewed\"%'");
@@ -2373,7 +2497,7 @@ final class ZAU_Exact_Migration {
             </section>
             <form method="get" class="zau-audit-filter">
                 <input type="hidden" name="page" value="zau-exact-audit">
-                <?php foreach (['diff'=>'Расхождения ФИО', 'all'=>'Все', 'bothsig'=>'Есть старая и новая подпись', 'nosig'=>'Нет ни одной подписи', 'reviewed'=>'Отмечены «всё верно»'] as $key => $label): ?>
+                <?php foreach (['random'=>'Случайные 20 для проверки', 'diff'=>'Расхождения ФИО', 'all'=>'Все', 'bothsig'=>'Есть старая и новая подпись', 'nosig'=>'Нет ни одной подписи', 'reviewed'=>'Отмечены «всё верно»'] as $key => $label): ?>
                     <a class="button<?php echo $filter === $key ? ' button-primary' : ''; ?>" href="<?php echo esc_url(add_query_arg(['filter'=>$key, 's'=>$search], $base)); ?>"><?php echo esc_html($label); ?></a>
                 <?php endforeach; ?>
                 <input type="hidden" name="filter" value="<?php echo esc_attr($filter); ?>">
@@ -2393,7 +2517,7 @@ final class ZAU_Exact_Migration {
                     $hidden = ['user_id'=>(int)$row->ID, 'filter'=>$filter, 's'=>$search, 'paged'=>$paged];
                 ?>
                     <tr class="<?php echo ($a['status'] ?? '') === 'diff' && empty($a['reviewed']) ? 'is-diff' : ''; ?>">
-                        <td><a href="<?php echo esc_url(get_edit_user_link((int)$row->ID)); ?>">#<?php echo (int)$row->ID; ?></a> <strong><?php echo esc_html($user->display_name); ?></strong><br><small><?php echo esc_html(trim($user->last_name . ' ' . $user->first_name)); ?> · <?php echo esc_html($user->user_email); ?></small><?php if (!empty($a['reviewed'])): ?><br><span class="zau-audit-badge is-ok">отмечено: всё верно</span><?php endif; ?></td>
+                        <td><a href="<?php echo esc_url(get_edit_user_link((int)$row->ID)); ?>">#<?php echo (int)$row->ID; ?></a> <strong><?php echo esc_html($user->display_name); ?></strong> · <a href="<?php echo esc_url(add_query_arg(['page'=>'zau-exact-audit', 'person'=>(int)$row->ID], admin_url('admin.php'))); ?>">Подробнее</a><br><small><?php echo esc_html(trim($user->last_name . ' ' . $user->first_name)); ?> · <?php echo esc_html($user->user_email); ?></small><?php if (!empty($a['reviewed'])): ?><br><span class="zau-audit-badge is-ok">отмечено: всё верно</span><?php endif; ?></td>
                         <td><?php echo esc_html($a['old_name'] ?? ''); ?><br><?php echo $this->audit_badge($a['name_old'] ?? 'none'); ?></td>
                         <td><?php echo esc_html($a['app_name'] ?? ''); ?><?php if (!empty($a['app_date'])): ?> <small>(<?php echo esc_html($a['app_date']); ?>)</small><?php endif; ?><br><?php echo $this->audit_badge($a['name_app'] ?? 'none'); ?></td>
                         <td><?php echo esc_html($a['new_app_name'] ?? ''); ?><br><?php echo $this->audit_badge($a['name_new_app'] ?? 'none'); ?></td>
