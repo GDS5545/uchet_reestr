@@ -155,3 +155,51 @@
   }
   btn.addEventListener('click', function () { btn.disabled = true; out.textContent = 'Запуск…'; step(0, 0); });
 })();
+/* Массовое исправление ФИО: просмотр / исправление / отмена партиями */
+(function () {
+  'use strict';
+  var cfg = window.ZAUExactMigration || {};
+  var buttons = document.querySelectorAll('[data-zau-namefix]');
+  if (!buttons.length) { return; }
+  var out = document.querySelector('[data-zau-namefix-progress]');
+  var names = { preview: 'Просмотр', apply: 'Исправление', rollback: 'Отмена' };
+  var statNames = { strong: 'доказано', plain: 'без признаков', review: 'вручную', fixed: 'исправлено', skipped: 'пропущено', restored: 'возвращено', changed: 'не тронуто', none: 'нет данных' };
+  function statsText(stats) {
+    return Object.keys(stats || {}).map(function (k) { return (statNames[k] || k) + ': ' + stats[k]; }).join(' · ');
+  }
+  function setBusy(on) { Array.prototype.forEach.call(buttons, function (b) { b.disabled = on; }); }
+  function step(mode, cats, cursor, processed, stats, tries) {
+    var body = new FormData();
+    body.set('action', 'zau_exact_namefix_run'); body.set('nonce', cfg.nonce); body.set('mode', mode);
+    body.set('cursor', cursor); body.set('processed', processed);
+    cats.forEach(function (c) { body.append('cats[]', c); });
+    Object.keys(stats).forEach(function (k) { body.set('stats[' + k + ']', stats[k]); });
+    fetch(cfg.ajaxUrl, { method: 'POST', body: body, credentials: 'same-origin' }).then(function (r) {
+      return r.text().then(function (t) {
+        try { return JSON.parse(t); } catch (e) { throw new Error('Сервер ответил не JSON (HTTP ' + r.status + '): ' + t.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)); }
+      });
+    }).then(function (j) {
+      if (!j || !j.success) { var err = new Error((j && j.data && j.data.message) || 'Ошибка'); err.fatal = true; throw err; }
+      var d = j.data;
+      out.textContent = names[mode] + ': обработано ' + d.done + (d.total ? ' из ' + d.total : '') + '… ' + statsText(d.stats);
+      if (d.finished) {
+        out.textContent = names[mode] + ' завершён(а). ' + statsText(d.stats) + '. Обновляем страницу…';
+        setTimeout(function () { window.location.reload(); }, 1200);
+      } else { step(mode, cats, d.cursor, d.processed, d.stats || {}, 0); }
+    }).catch(function (e) {
+      if (!e.fatal && tries < 5) { out.textContent = 'Повтор… ' + e.message; setTimeout(function () { step(mode, cats, cursor, processed, stats, tries + 1); }, 2000 * (tries + 1)); }
+      else { out.textContent = 'Остановлено: ' + e.message; setBusy(false); }
+    });
+  }
+  Array.prototype.forEach.call(buttons, function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      var mode = btn.getAttribute('data-zau-namefix');
+      var cats = Array.prototype.filter.call(document.querySelectorAll('[data-zau-namefix-cat]'), function (c) { return c.checked; }).map(function (c) { return c.value; });
+      if (mode === 'apply' && !cats.length) { window.alert('Отметьте хотя бы одну группу.'); return; }
+      if (btn.dataset.confirm && !window.confirm(btn.dataset.confirm)) { return; }
+      setBusy(true); out.textContent = 'Запуск…';
+      step(mode, cats, 0, 0, {}, 0);
+    });
+  });
+})();

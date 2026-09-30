@@ -25,7 +25,7 @@ if (!defined('ABSPATH')) { exit; }
  *     данные»; администратор разбирает такие отметки в очереди.
  */
 final class ZAU_Exact_Migration {
-    const VERSION = '2.29.3';
+    const VERSION = '2.30.0';
     const DB_VERSION = '1.1.0';
     const OPT_DB = 'zau_exact_migration_db_version';
     const OPT = 'zau_exact_migration_settings';
@@ -80,6 +80,7 @@ final class ZAU_Exact_Migration {
         add_action('admin_post_zau_exact_audit_action', [$this, 'audit_action']);
         add_action('admin_post_zau_exact_audit_csv', [$this, 'audit_csv']);
         add_action('wp_ajax_zau_exact_audit_run', [$this, 'ajax_audit_run']);
+        add_action('wp_ajax_zau_exact_namefix_run', [$this, 'ajax_namefix_run']);
 
         add_action('wp_ajax_zau_exact_test', [$this, 'ajax_test']);
         add_action('wp_ajax_zau_exact_start', [$this, 'ajax_start']);
@@ -2287,10 +2288,12 @@ final class ZAU_Exact_Migration {
         $ph = implode(',', array_fill(0, count(self::archive_statuses()), '%s'));
         $newRows = $wpdb->get_results($wpdb->prepare("SELECT data_json,signature_urls_json FROM {$this->submissions_table} WHERE user_id=%d AND status NOT IN ($ph) ORDER BY id DESC LIMIT 10", array_merge([(int)$userId], self::archive_statuses())));
         foreach ((array)$newRows as $row) {
+            $d = json_decode((string)$row->data_json, true);
+            // Копии прежних переносов (со ссылками на файлы старого сайта) — не новые заявления: подпись и ФИО берём только из поданных на новом сайте.
+            if (!is_array($d) || !empty($d['legacy_entry_id']) || !empty($d['legacy_wpforms_entry_id'])) { continue; }
             $sigs = json_decode((string)$row->signature_urls_json, true);
             if ($sigNew === '' && is_array($sigs)) { foreach ($sigs as $url) { if (is_string($url) && preg_match('#^https?://#', $url)) { $sigNew = $url; break; } } }
-            $d = json_decode((string)$row->data_json, true);
-            if ($newAppName === '' && is_array($d) && empty($d['legacy_entry_id']) && empty($d['legacy_wpforms_entry_id'])) {
+            if ($newAppName === '') {
                 $newAppName = trim((string)($d['full_name'] ?? trim(($d['last_name'] ?? '') . ' ' . ($d['first_name'] ?? '') . ' ' . ($d['middle_name'] ?? ''))));
             }
         }
@@ -2328,6 +2331,8 @@ final class ZAU_Exact_Migration {
         elseif ($filter === 'nosig') { $where .= " AND a.meta_value LIKE '%\"sig_old\":\"\"%' AND a.meta_value LIKE '%\"sig_new\":\"\"%'"; }
         elseif ($filter === 'bothsig') { $where .= " AND a.meta_value NOT LIKE '%\"sig_old\":\"\"%' AND a.meta_value NOT LIKE '%\"sig_new\":\"\"%'"; }
         elseif ($filter === 'reviewed') { $where .= " AND a.meta_value LIKE '%\"reviewed\"%'"; }
+        elseif (in_array($filter, ['fix_strong', 'fix_plain', 'fix_review'], true)) { $where .= $wpdb->prepare(" AND EXISTS (SELECT 1 FROM {$wpdb->usermeta} f WHERE f.user_id=u.ID AND f.meta_key='zau_exact_namefix' AND f.meta_value LIKE %s)", '%"cat":"' . substr($filter, 4) . '"%'); }
+        elseif ($filter === 'fix_done') { $where .= " AND EXISTS (SELECT 1 FROM {$wpdb->usermeta} f WHERE f.user_id=u.ID AND f.meta_key='zau_exact_namefix_done')"; }
         if ($search !== '') {
             $like = '%' . $wpdb->esc_like($search) . '%';
             $where .= $wpdb->prepare(' AND (u.display_name LIKE %s OR u.user_email LIKE %s OR a.meta_value LIKE %s)', $like, $like, $like);
@@ -2495,6 +2500,7 @@ final class ZAU_Exact_Migration {
                 <p><button class="button button-primary" data-zau-audit-run>Проверить всех заново</button> <span data-zau-audit-progress></span></p>
                 <p class="description">Проверка ничего не меняет — только сравнивает и запоминает результат. Запускайте после переноса и после исправлений.</p>
             </section>
+            <?php echo $this->namefix_section(); ?>
             <form method="get" class="zau-audit-filter">
                 <input type="hidden" name="page" value="zau-exact-audit">
                 <?php foreach (['random'=>'Случайные 20 для проверки', 'diff'=>'Расхождения ФИО', 'all'=>'Все', 'bothsig'=>'Есть старая и новая подпись', 'nosig'=>'Нет ни одной подписи', 'reviewed'=>'Отмечены «всё верно»'] as $key => $label): ?>
@@ -2505,7 +2511,8 @@ final class ZAU_Exact_Migration {
                 <button class="button">Найти</button>
                 <a class="button" href="<?php echo esc_url(wp_nonce_url(add_query_arg(['action'=>'zau_exact_audit_csv', 'filter'=>$filter, 's'=>$search], admin_url('admin-post.php')), self::NONCE)); ?>">Скачать CSV</a>
             </form>
-            <p>Найдено: <?php echo (int)$total; ?></p>
+            <?php $fixTitles = ['fix_strong'=>'Группа «Чужое ФИО — доказано»', 'fix_plain'=>'Группа «Чужое ФИО — без доп. признаков»', 'fix_review'=>'Группа «Только вручную»', 'fix_done'=>'Исправлено массово']; ?>
+            <p><?php echo isset($fixTitles[$filter]) ? '<strong>' . esc_html($fixTitles[$filter]) . '</strong> · ' : ''; ?>Найдено: <?php echo (int)$total; ?></p>
             <table class="widefat striped zau-audit-table">
                 <thead><tr><th>Аккаунт на новом сайте</th><th>ФИО в старом аккаунте</th><th>ФИО в старом заявлении</th><th>ФИО в новом заявлении</th><th>Подпись: старая</th><th>Подпись: новая</th><th>Действия</th></tr></thead>
                 <tbody>
@@ -2517,7 +2524,7 @@ final class ZAU_Exact_Migration {
                     $hidden = ['user_id'=>(int)$row->ID, 'filter'=>$filter, 's'=>$search, 'paged'=>$paged];
                 ?>
                     <tr class="<?php echo ($a['status'] ?? '') === 'diff' && empty($a['reviewed']) ? 'is-diff' : ''; ?>">
-                        <td><a href="<?php echo esc_url(get_edit_user_link((int)$row->ID)); ?>">#<?php echo (int)$row->ID; ?></a> <strong><?php echo esc_html($user->display_name); ?></strong> · <a href="<?php echo esc_url(add_query_arg(['page'=>'zau-exact-audit', 'person'=>(int)$row->ID], admin_url('admin.php'))); ?>">Подробнее</a><br><small><?php echo esc_html(trim($user->last_name . ' ' . $user->first_name)); ?> · <?php echo esc_html($user->user_email); ?></small><?php if (!empty($a['reviewed'])): ?><br><span class="zau-audit-badge is-ok">отмечено: всё верно</span><?php endif; ?></td>
+                        <td><a href="<?php echo esc_url(get_edit_user_link((int)$row->ID)); ?>">#<?php echo (int)$row->ID; ?></a> <strong><?php echo esc_html($user->display_name); ?></strong> · <a href="<?php echo esc_url(add_query_arg(['page'=>'zau-exact-audit', 'person'=>(int)$row->ID], admin_url('admin.php'))); ?>">Подробнее</a><br><small><?php echo esc_html(trim($user->last_name . ' ' . $user->first_name)); ?> · <?php echo esc_html($user->user_email); ?></small><?php if (!empty($a['reviewed'])): ?><br><span class="zau-audit-badge is-ok">отмечено: всё верно</span><?php endif; ?><?php echo $this->namefix_cell((int)$row->ID); ?></td>
                         <td><?php echo esc_html($a['old_name'] ?? ''); ?><br><?php echo $this->audit_badge($a['name_old'] ?? 'none'); ?></td>
                         <td><?php echo esc_html($a['app_name'] ?? ''); ?><?php if (!empty($a['app_date'])): ?> <small>(<?php echo esc_html($a['app_date']); ?>)</small><?php endif; ?><br><?php echo $this->audit_badge($a['name_app'] ?? 'none'); ?></td>
                         <td><?php echo esc_html($a['new_app_name'] ?? ''); ?><br><?php echo $this->audit_badge($a['name_new_app'] ?? 'none'); ?></td>
@@ -2582,6 +2589,295 @@ final class ZAU_Exact_Migration {
         exit;
     }
 
+    /* ------------------------------------------------------------------ */
+    /* Массовое исправление ФИО, записанных прежними переносами           */
+    /* ------------------------------------------------------------------ */
+
+    const NAMEFIX_SHARED_OPT = 'zau_exact_namefix_shared';
+    const NAMEFIX_STATE_OPT = 'zau_exact_namefix_state';
+
+    private function namefix_labels() {
+        return [
+            'strong'=>'Чужое ФИО — доказано',
+            'plain'=>'Чужое ФИО — без доп. признаков',
+            'review'=>'Только вручную',
+        ];
+    }
+
+    private function name_key($value) {
+        $tokens = $this->name_tokens($value);
+        sort($tokens);
+        return implode(' ', $tokens);
+    }
+
+    /** ФИО, которое стоит сразу в нескольких перенесённых аккаунтах (руководитель, кадровик), считается чужим. */
+    private function namefix_build_shared() {
+        global $wpdb;
+        $names = (array)$wpdb->get_col("SELECT u.display_name FROM {$wpdb->users} u JOIN {$wpdb->usermeta} m ON m.user_id=u.ID AND m.meta_key='zau_exact_legacy_user_id'");
+        $counts = [];
+        foreach ($names as $name) { $key = $this->name_key($name); if ($key !== '') { $counts[$key] = ($counts[$key] ?? 0) + 1; } }
+        $shared = array_filter($counts, function ($c) { return $c >= 3; });
+        update_option(self::NAMEFIX_SHARED_OPT, $shared, false);
+        return $shared;
+    }
+
+    /** ФИО из старого аккаунта; слова берутся из старого заявления того же человека, если оно совпадает (кириллица, отчество). */
+    private function namefix_target(array $raw, $appName) {
+        $meta = (array)($raw['meta'] ?? []);
+        $first = trim($this->meta_first($meta, 'first_name'));
+        $last = trim($this->meta_first($meta, 'last_name'));
+        $middle = '';
+        if ($first === '' && $last === '') {
+            $display = trim((string)($raw['display_name'] ?? ''));
+            if ($display === '' || $display === (string)($raw['user_login'] ?? '') || strpos($display, '@') !== false) { return null; }
+            $parts = preg_split('/\s+/u', $display);
+            $last = (string)array_shift($parts); $first = trim(implode(' ', $parts));
+        }
+        $appWords = [];
+        foreach (preg_split('/\s+/u', trim(wp_strip_all_tags((string)$appName))) as $word) {
+            $t = $this->name_tokens($word);
+            if ($word !== '' && $t) { $appWords[] = ['word'=>$word, 'key'=>$t[0]]; }
+        }
+        $used = [];
+        $pick = function ($value) use (&$appWords, &$used) {
+            $t = $this->name_tokens($value);
+            if (count($t) !== 1) { return $value; }
+            foreach ($appWords as $i => $w) {
+                if (isset($used[$i]) || $w['key'] !== $t[0]) { continue; }
+                $used[$i] = 1;
+                // Кириллица из аккаунта не заменяется латиницей из заявления.
+                $cyr = '/[\x{0400}-\x{04FF}]/u';
+                return (preg_match($cyr, $value) && !preg_match($cyr, $w['word'])) ? $value : $w['word'];
+            }
+            return $value;
+        };
+        if ($appWords) {
+            $last = $pick($last); $first = $pick($first);
+            $rest = array_values(array_diff_key($appWords, $used));
+            if (count($used) === 2 && count($rest) === 1 && preg_match('/(вич|вна|ұлы|улы|қызы|кызы|vich|vna|uly|kyzy)$/iu', $rest[0]['word'])) { $middle = $rest[0]['word']; }
+        }
+        $fix = function ($v) {
+            $v = trim((string)$v);
+            if ($v !== '' && function_exists('mb_convert_case') && ($v === mb_strtoupper($v, 'UTF-8') || $v === mb_strtolower($v, 'UTF-8'))) { $v = mb_convert_case(mb_strtolower($v, 'UTF-8'), MB_CASE_TITLE, 'UTF-8'); }
+            return $v;
+        };
+        $first = $fix($first); $last = $fix($last); $middle = $fix($middle);
+        $display = trim(implode(' ', array_filter([$last, $first, $middle])));
+        return $display === '' ? null : ['first'=>$first, 'last'=>$last, 'middle'=>$middle, 'display'=>$display];
+    }
+
+    /** Решение по одному участнику: strong / plain — можно исправить массово, review — только вручную, null — исправлять нечего. */
+    private function namefix_plan($userId, array $shared) {
+        global $wpdb;
+        $a = $this->audit_user((int)$userId);
+        $user = get_user_by('id', (int)$userId);
+        if (!$a || !$user || ($a['status'] ?? '') !== 'diff' || !empty($a['reviewed'])) { return null; }
+        $raw = $this->user_json_meta((int)$userId, 'zau_exact_legacy_raw');
+        $current = trim((string)$user->display_name);
+        $plan = ['cat'=>'review', 'reasons'=>[], 'evidence'=>[], 'from'=>$current, 'to'=>null, 'at'=>current_time('mysql')];
+        if (($a['name_old'] ?? '') !== 'no') {
+            $plan['reasons'][] = 'ФИО аккаунта совпадает со старым, но новое заявление подано на другое ФИО (' . ($a['new_app_name'] ?? '') . ')';
+            return $plan;
+        }
+        $target = $raw ? $this->namefix_target($raw, (string)($a['app_name'] ?? '')) : null;
+        $plan['to'] = $target;
+        if (!$target) { $plan['reasons'][] = 'в старом аккаунте нет ФИО'; }
+        if (user_can($user, 'edit_posts') || $this->can_manage_user($user)) { $plan['reasons'][] = 'служебный аккаунт (администратор/редактор)'; }
+        $oldTokens = $this->old_user_name_tokens($raw);
+        if (($a['name_new_app'] ?? 'none') !== 'none') {
+            if (($a['name_new_app'] ?? '') === 'no' && $this->tokens_match($oldTokens, $this->name_tokens($a['new_app_name'] ?? '')) === 'yes') { $plan['evidence'][] = 'на новом сайте участник подал заявление на ФИО из старого аккаунта'; }
+            else { $plan['reasons'][] = 'участник уже подал заявление на новом сайте на ФИО «' . ($a['new_app_name'] ?? '') . '»'; }
+        }
+        if (($a['app_name'] ?? '') !== '' && $this->tokens_match($oldTokens, $this->name_tokens($a['app_name'])) === 'no') { $plan['reasons'][] = 'старый аккаунт и старое заявление — на разные ФИО'; }
+        $curTokens = array_values(array_unique(array_merge($this->name_tokens($user->last_name . ' ' . $user->first_name), $this->name_tokens($current))));
+        if (array_intersect($curTokens, $oldTokens)) { $plan['reasons'][] = 'часть ФИО совпадает (возможна смена фамилии или опечатка)'; }
+        foreach ((array)$this->user_json_meta((int)$userId, 'zau_exact_profile_backups') as $b) {
+            if (($b['reason'] ?? '') !== 'bulk_fix_name') { $plan['reasons'][] = 'ФИО этого участника уже меняли вручную'; break; }
+        }
+        // Признаки того, что текущее ФИО чужое.
+        $key = $this->name_key($current);
+        if ($key !== '' && ($shared[$key] ?? 0) >= 3) { $plan['evidence'][] = 'это же ФИО стоит ещё в ' . ((int)$shared[$key] - 1) . ' аккаунтах'; }
+        if ($current === '' || preg_match('/\d|@|^[^\p{L}]/u', $current) || $current === $user->user_login) { $plan['evidence'][] = 'в ФИО цифры, email или лишние знаки'; }
+        if ($curTokens) {
+            $rows = $wpdb->get_col($wpdb->prepare("SELECT data_json FROM {$this->submissions_table} WHERE user_id=%d AND status=%s ORDER BY id DESC LIMIT 5", (int)$userId, self::S_OWN));
+            foreach ((array)$rows as $json) {
+                $d = json_decode((string)$json, true);
+                foreach ((array)($d['legacy_fields'] ?? []) as $f) {
+                    $v = $this->scalar_text($f['value'] ?? '');
+                    if ($v === '' || strlen($v) > 200) { continue; }
+                    $vt = $this->name_tokens($v);
+                    if (count($vt) >= 2 && $this->tokens_match($curTokens, $vt) === 'yes' && $this->tokens_match($oldTokens, $vt) !== 'yes') {
+                        $plan['evidence'][] = 'это ФИО из поля «' . wp_strip_all_tags((string)($f['label'] ?? '')) . '» его старого заявления';
+                        break 2;
+                    }
+                }
+            }
+        }
+        if (!$plan['reasons']) { $plan['cat'] = $plan['evidence'] ? 'strong' : 'plain'; }
+        return $plan;
+    }
+
+    private function can_manage_user($user) {
+        return user_can($user, 'manage_options') || (class_exists('ZAU_Certificate_PDF_Generator') && user_can($user, ZAU_Certificate_PDF_Generator::CAP_MANAGE));
+    }
+
+    private function namefix_apply($userId, array $plan, $batch) {
+        $user = get_user_by('id', (int)$userId);
+        $to = (array)($plan['to'] ?? []);
+        if (!$user || empty($to['display'])) { return false; }
+        $middleKey = 'zau_profile_middle_name';
+        $middleOld = (string)get_user_meta((int)$userId, $middleKey, true);
+        $backups = $this->user_json_meta((int)$userId, 'zau_exact_profile_backups');
+        $backups[] = ['at'=>current_time('mysql'), 'by'=>get_current_user_id(), 'reason'=>'bulk_fix_name', 'batch'=>$batch,
+            'user'=>['first_name'=>$user->first_name, 'last_name'=>$user->last_name, 'display_name'=>$user->display_name],
+            'meta'=>($to['middle'] !== '' && $middleOld === '') ? [$middleKey=>''] : []];
+        $this->update_user_json_meta((int)$userId, 'zau_exact_profile_backups', array_slice($backups, -5));
+        wp_update_user(['ID'=>(int)$userId, 'first_name'=>$to['first'], 'last_name'=>$to['last'], 'display_name'=>$to['display']]);
+        if ($to['middle'] !== '' && $middleOld === '') { update_user_meta((int)$userId, $middleKey, $to['middle']); }
+        $this->update_user_json_meta((int)$userId, 'zau_exact_namefix_done', ['batch'=>$batch, 'at'=>current_time('mysql'), 'by'=>get_current_user_id(), 'from'=>$user->display_name, 'to'=>$to['display'], 'cat'=>$plan['cat'], 'evidence'=>$plan['evidence']]);
+        delete_user_meta((int)$userId, 'zau_exact_namefix');
+        $this->audit_user((int)$userId);
+        return true;
+    }
+
+    private function namefix_rollback($userId) {
+        $done = $this->user_json_meta((int)$userId, 'zau_exact_namefix_done');
+        $user = get_user_by('id', (int)$userId);
+        if (!$done || !$user) { return 'none'; }
+        // ФИО изменили уже после массового исправления (участник или администратор) — не трогаем.
+        if ((string)$user->display_name !== (string)($done['to'] ?? '')) { return 'changed'; }
+        $backups = $this->user_json_meta((int)$userId, 'zau_exact_profile_backups');
+        $last = end($backups);
+        if (!is_array($last) || ($last['reason'] ?? '') !== 'bulk_fix_name') { return 'changed'; }
+        $this->undo_restore((int)$userId);
+        delete_user_meta((int)$userId, 'zau_exact_namefix_done');
+        $this->audit_user((int)$userId);
+        return 'restored';
+    }
+
+    public function ajax_namefix_run() {
+        $this->require_access();
+        global $wpdb;
+        @set_time_limit(120);
+        $mode = sanitize_key((string)($_POST['mode'] ?? 'preview'));
+        $cursor = absint($_POST['cursor'] ?? 0);
+        $cats = array_values(array_intersect(array_map('sanitize_key', (array)($_POST['cats'] ?? [])), ['strong', 'plain']));
+        $state = (array)get_option(self::NAMEFIX_STATE_OPT, []);
+        $limit = 40;
+        if ($mode === 'preview') {
+            if ($cursor === 0) {
+                $this->namefix_build_shared();
+                $wpdb->query("DELETE FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_namefix'");
+                $state = ['preview_at'=>current_time('mysql'), 'preview_by'=>get_current_user_id()] + $state;
+                $state['preview_done'] = false;
+                update_option(self::NAMEFIX_STATE_OPT, $state, false);
+            }
+            $shared = (array)get_option(self::NAMEFIX_SHARED_OPT, []);
+            $metaKey = 'zau_exact_legacy_user_id';
+        } elseif ($mode === 'apply') {
+            if (!$cats) { wp_send_json_error(['message'=>'Отметьте хотя бы одну группу.'], 400); }
+            if (empty($state['preview_done'])) { wp_send_json_error(['message'=>'Сначала выполните просмотр до конца.'], 400); }
+            if ($cursor === 0) { $state['batch'] = 'b' . gmdate('YmdHis'); update_option(self::NAMEFIX_STATE_OPT, $state, false); }
+            $shared = (array)get_option(self::NAMEFIX_SHARED_OPT, []);
+            $metaKey = 'zau_exact_namefix';
+        } elseif ($mode === 'rollback') {
+            $metaKey = 'zau_exact_namefix_done';
+        } else { wp_send_json_error(['message'=>'Неизвестное действие.'], 400); }
+
+        $ids = $wpdb->get_col($wpdb->prepare("SELECT DISTINCT user_id FROM {$wpdb->usermeta} WHERE meta_key=%s AND user_id>%d ORDER BY user_id ASC LIMIT %d", $metaKey, $cursor, $limit));
+        $total = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key=%s", $metaKey));
+        $done = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key=%s AND user_id<=%d", $metaKey, $cursor));
+        $stats = (array)($_POST['stats'] ?? []);
+        $stats = array_map('absint', is_array($stats) ? $stats : []);
+        foreach ((array)$ids as $id) {
+            $id = (int)$id; $cursor = $id;
+            if ($mode === 'preview') {
+                $plan = $this->namefix_plan($id, $shared);
+                if ($plan) { $this->update_user_json_meta($id, 'zau_exact_namefix', $plan); $stats[$plan['cat']] = ($stats[$plan['cat']] ?? 0) + 1; }
+            } elseif ($mode === 'apply') {
+                $saved = $this->user_json_meta($id, 'zau_exact_namefix');
+                if (!in_array($saved['cat'] ?? '', $cats, true)) { continue; }
+                $plan = $this->namefix_plan($id, $shared); // пересчёт: вдруг ФИО уже поменяли после просмотра
+                $user = get_user_by('id', $id);
+                if (!$plan || $plan['cat'] !== $saved['cat'] || !$user || (string)$user->display_name !== (string)($saved['from'] ?? '')) { $stats['skipped'] = ($stats['skipped'] ?? 0) + 1; if ($plan) { $this->update_user_json_meta($id, 'zau_exact_namefix', $plan); } else { delete_user_meta($id, 'zau_exact_namefix'); } continue; }
+                $k = $this->namefix_apply($id, $plan, (string)$state['batch']) ? 'fixed' : 'skipped';
+                $stats[$k] = ($stats[$k] ?? 0) + 1;
+            } else {
+                $r = $this->namefix_rollback($id);
+                $stats[$r] = ($stats[$r] ?? 0) + 1;
+            }
+        }
+        $finished = count((array)$ids) < $limit;
+        if ($finished) {
+            $state = (array)get_option(self::NAMEFIX_STATE_OPT, []);
+            if ($mode === 'preview') { $state['preview_done'] = true; }
+            $state['last_' . $mode] = ['at'=>current_time('mysql'), 'stats'=>$stats];
+            update_option(self::NAMEFIX_STATE_OPT, $state, false);
+        }
+        $processed = absint($_POST['processed'] ?? 0) + count((array)$ids);
+        wp_send_json_success(['cursor'=>$cursor, 'done'=>$mode === 'preview' ? min($total, $done + count((array)$ids)) : $processed, 'processed'=>$processed, 'total'=>$mode === 'preview' ? $total : 0, 'finished'=>$finished, 'stats'=>$stats]);
+    }
+
+    private function namefix_counts() {
+        global $wpdb;
+        $out = [];
+        foreach (array_keys($this->namefix_labels()) as $cat) {
+            $out[$cat] = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_namefix' AND meta_value LIKE %s", '%"cat":"' . $cat . '"%'));
+        }
+        $out['done'] = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_namefix_done'");
+        return $out;
+    }
+
+    private function namefix_section() {
+        $counts = $this->namefix_counts();
+        $state = (array)get_option(self::NAMEFIX_STATE_OPT, []);
+        $labels = $this->namefix_labels();
+        $base = admin_url('admin.php?page=zau-exact-audit');
+        ob_start(); ?>
+        <section class="zau-rb-card zau-namefix">
+            <h2>Массовое исправление чужих ФИО</h2>
+            <p>Прежние переносы записали в часть аккаунтов ФИО руководителей и кадровиков из заявлений. Инструмент заменяет его на ФИО <strong>из старого аккаунта этого же человека</strong> (тот же email), а отчество и написание берёт из его старого заявления.</p>
+            <p><strong>Не трогает:</strong> участников, подавших заявление на новом сайте; тех, у кого совпадает часть ФИО (смена фамилии); служебные аккаунты; отмеченных «Всё верно»; тех, кому ФИО уже правили вручную. Заявления и документы не меняются. Прежнее ФИО сохраняется — всё можно откатить.</p>
+            <ol class="zau-namefix-steps">
+                <li><button class="button" data-zau-namefix="preview">Просмотр (ничего не меняет)</button> <?php if (!empty($state['preview_at'])): ?><small>последний: <?php echo esc_html($state['preview_at']); ?><?php echo empty($state['preview_done']) ? ' — не завершён' : ''; ?></small><?php endif; ?></li>
+                <li>Проверьте группы и скачайте CSV:
+                    <?php foreach ($labels as $cat => $label): ?>
+                        <a class="button" href="<?php echo esc_url(add_query_arg(['filter'=>'fix_' . $cat], $base)); ?>"><?php echo esc_html($label); ?>: <?php echo (int)$counts[$cat]; ?></a>
+                    <?php endforeach; ?>
+                    <a class="button" href="<?php echo esc_url(add_query_arg(['filter'=>'fix_done'], $base)); ?>">Уже исправлено: <?php echo (int)$counts['done']; ?></a>
+                </li>
+                <li>Исправить:
+                    <label><input type="checkbox" data-zau-namefix-cat value="strong" checked> <?php echo esc_html($labels['strong']); ?> (<?php echo (int)$counts['strong']; ?>)</label>
+                    <label><input type="checkbox" data-zau-namefix-cat value="plain"> <?php echo esc_html($labels['plain']); ?> (<?php echo (int)$counts['plain']; ?>)</label>
+                    <button class="button button-primary" data-zau-namefix="apply" data-confirm="Заменить ФИО у отмеченных групп на ФИО из старых аккаунтов? Прежние ФИО сохраняются, откат — кнопкой «Отменить массовое исправление».">Исправить выбранные группы</button>
+                </li>
+                <li>Если что-то не так: <button class="button" data-zau-namefix="rollback" data-confirm="Вернуть прежние ФИО всем, кому их заменило массовое исправление? Кого после этого уже правили вручную — не тронем.">Отменить массовое исправление</button></li>
+            </ol>
+            <p><span data-zau-namefix-progress></span></p>
+            <?php foreach (['apply'=>'Последнее исправление', 'rollback'=>'Последняя отмена'] as $m => $t): if (!empty($state['last_' . $m])): $st = (array)$state['last_' . $m]['stats']; ?>
+                <p class="description"><?php echo esc_html($t . ' (' . $state['last_' . $m]['at'] . '): '); ?>
+                <?php echo esc_html(implode(' · ', array_map(function ($k, $v) { $n = ['fixed'=>'исправлено', 'skipped'=>'пропущено (изменилось после просмотра)', 'restored'=>'возвращено', 'changed'=>'не тронуто (правили после исправления)', 'none'=>'нет данных']; return ($n[$k] ?? $k) . ': ' . (int)$v; }, array_keys($st), $st))); ?></p>
+            <?php endif; endforeach; ?>
+        </section>
+        <?php
+        return ob_get_clean();
+    }
+
+    private function namefix_cell($userId) {
+        $plan = $this->user_json_meta((int)$userId, 'zau_exact_namefix');
+        $done = $this->user_json_meta((int)$userId, 'zau_exact_namefix_done');
+        $html = '';
+        if ($plan) {
+            $labels = $this->namefix_labels();
+            $html .= '<div class="zau-namefix-plan is-' . esc_attr($plan['cat']) . '"><strong>' . esc_html($labels[$plan['cat']] ?? $plan['cat']) . '</strong>';
+            if (!empty($plan['to']['display']) && $plan['cat'] !== 'review') { $html .= '<br>станет: <strong>' . esc_html($plan['to']['display']) . '</strong>'; }
+            foreach (array_merge((array)$plan['evidence'], (array)$plan['reasons']) as $r) { $html .= '<br><small>• ' . esc_html($r) . '</small>'; }
+            $html .= '</div>';
+        }
+        if ($done) { $html .= '<div class="zau-namefix-plan is-done"><strong>Исправлено массово</strong><br><small>было: ' . esc_html($done['from'] ?? '') . ' (' . esc_html($done['at'] ?? '') . ')</small></div>'; }
+        return $html;
+    }
+
     public function audit_csv() {
         if (!$this->can_manage()) { wp_die('Недостаточно прав.', 403); }
         check_admin_referer(self::NONCE);
@@ -2594,12 +2890,16 @@ final class ZAU_Exact_Migration {
         header('Content-Disposition: attachment; filename="zau-proverka-fio-' . wp_date('Y-m-d-H-i') . '.csv"');
         echo "\xEF\xBB\xBF";
         $out = fopen('php://output', 'w');
-        zau_fputcsv($out, ['ID', 'ФИО на новом сайте', 'Email', 'ФИО в старом аккаунте', 'Совпадение', 'ФИО в старом заявлении', 'Совпадение', 'ФИО в новом заявлении', 'Совпадение', 'Подпись старая', 'Подпись новая', 'Итог', 'Проверено вручную'], ';');
+        zau_fputcsv($out, ['ID', 'ФИО на новом сайте', 'Email', 'ФИО в старом аккаунте', 'Совпадение', 'ФИО в старом заявлении', 'Совпадение', 'ФИО в новом заявлении', 'Совпадение', 'Подпись старая', 'Подпись новая', 'Итог', 'Проверено вручную', 'Массовое исправление', 'Станет', 'Причины', 'Уже исправлено (было)'], ';');
         $rows = $wpdb->get_results("SELECT u.ID,u.display_name,u.user_email,a.meta_value audit FROM {$wpdb->users} u $join WHERE $where ORDER BY u.display_name ASC LIMIT 50000");
         $w = ['yes'=>'совпадает', 'no'=>'отличается', 'none'=>'нет данных'];
+        $fixLabels = $this->namefix_labels();
         foreach ((array)$rows as $r) {
             $a = json_decode((string)$r->audit, true) ?: [];
-            zau_fputcsv($out, [$r->ID, $r->display_name, $r->user_email, $a['old_name'] ?? '', $w[$a['name_old'] ?? 'none'], $a['app_name'] ?? '', $w[$a['name_app'] ?? 'none'], $a['new_app_name'] ?? '', $w[$a['name_new_app'] ?? 'none'], $a['sig_old'] ?? '', $a['sig_new'] ?? '', ($a['status'] ?? '') === 'diff' ? 'расхождение' : 'ок', empty($a['reviewed']) ? '' : 'да'], ';');
+            $plan = $this->user_json_meta((int)$r->ID, 'zau_exact_namefix');
+            $done = $this->user_json_meta((int)$r->ID, 'zau_exact_namefix_done');
+            zau_fputcsv($out, [$r->ID, $r->display_name, $r->user_email, $a['old_name'] ?? '', $w[$a['name_old'] ?? 'none'], $a['app_name'] ?? '', $w[$a['name_app'] ?? 'none'], $a['new_app_name'] ?? '', $w[$a['name_new_app'] ?? 'none'], $a['sig_old'] ?? '', $a['sig_new'] ?? '', ($a['status'] ?? '') === 'diff' ? 'расхождение' : 'ок', empty($a['reviewed']) ? '' : 'да',
+                $plan ? ($fixLabels[$plan['cat']] ?? $plan['cat']) : '', $plan && $plan['cat'] !== 'review' ? (string)($plan['to']['display'] ?? '') : '', $plan ? implode('; ', array_merge((array)$plan['evidence'], (array)$plan['reasons'])) : '', $done ? (string)($done['from'] ?? '') : ''], ';');
         }
         fclose($out);
         exit;

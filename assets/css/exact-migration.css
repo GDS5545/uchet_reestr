@@ -20,3 +20,13 @@
 .zau-person-checks{list-style:none;margin:0;padding:0;display:grid;gap:8px}
 .zau-person-checks li{font-size:14px}
 .zau-exact-wrap td small{color:#667085;margin-right:6px}
+
+/* Массовое исправление ФИО */
+.zau-namefix-steps { margin-left: 1.4em; }
+.zau-namefix-steps li { margin: 0 0 10px; line-height: 2.2; }
+.zau-namefix-steps label { margin-right: 12px; white-space: nowrap; }
+.zau-namefix-plan { margin-top: 6px; padding: 6px 8px; border-left: 4px solid #999; background: #f6f7f7; }
+.zau-namefix-plan.is-strong { border-color: #d63638; background: #fcf0f1; }
+.zau-namefix-plan.is-plain { border-color: #dba617; background: #fcf9e8; }
+.zau-namefix-plan.is-review { border-color: #2271b1; background: #f0f6fc; }
+.zau-namefix-plan.is-done { border-color: #00a32a; background: #edfaef; }
