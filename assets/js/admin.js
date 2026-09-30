@@ -607,11 +607,25 @@
             updateUi(data); return data;
         };
 
+        // Серверная очередь: PDF рисует сервер, страница только подталкивает его и показывает прогресс.
+        async function runServerQueue() {
+            running = true;
+            if (currentText) currentText.innerHTML = '<strong>Документы формируются на сервере.</strong> Вкладку можно закрыть — очередь продолжится в фоне.';
+            while (running) {
+                try { await ajax('zau_cert_bulk_server_tick', {job_id: jobId}); } catch (err) { if (currentText) currentText.innerHTML = 'Связь с сервером прервалась, повторяем… ' + esc(err.message || ''); await sleep(5000); }
+                const st = await refreshStatus();
+                if (!st || ['completed', 'paused', 'canceled'].includes(st.status)) { running = false; break; }
+                await sleep(1500);
+            }
+        }
+
         async function runQueue() {
             if (!jobId || running) return;
-            running = true;
             if (result) result.innerHTML = '';
             try { await ajax('zau_cert_bulk_control', {job_id: jobId, command: 'resume'}); } catch (_) {}
+            const current = await refreshStatus();
+            if (current && current.options && Number(current.options.server)) { await runServerQueue(); return; }
+            running = true;
             while (running) {
                 let item;
                 try {
@@ -679,7 +693,10 @@
         pauseButton?.addEventListener('click', async () => { if (!jobId) return; running = false; await ajax('zau_cert_bulk_control', {job_id: jobId, command: 'pause'}); await refreshStatus(); });
         retryButton?.addEventListener('click', async () => { if (!jobId) return; await ajax('zau_cert_bulk_control', {job_id: jobId, command: 'retry_failed'}); await refreshStatus(); await runQueue(); });
         cancelButton?.addEventListener('click', async () => { if (!jobId || !confirm('Отменить очередь? Уже успешно пересозданные документы останутся.')) return; running = false; await ajax('zau_cert_bulk_control', {job_id: jobId, command: 'cancel'}); await refreshStatus(); });
-        if (jobId) refreshStatus().catch(err => { if (result) result.innerHTML = `<div class="notice notice-error inline"><p>${esc(err.message)}</p></div>`; });
+        if (jobId) refreshStatus().then(st => {
+            // Открыли страницу с идущей серверной очередью — сразу показываем прогресс и помогаем серверу.
+            if (st && st.options && Number(st.options.server) && ['running', 'queued'].includes(st.status)) runServerQueue();
+        }).catch(err => { if (result) result.innerHTML = `<div class="notice notice-error inline"><p>${esc(err.message)}</p></div>`; });
     }
 
     async function ajaxFile(action, formData) {

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Профсоюз — регистрация, документы и QR
  * Description: Единый реестр профсоюза с AQNIET Blue UX: регистрация, статусы, филиалы единым текстом, защищённая личная карточка, скрытый wp-admin для участников, акции и скидки, документы/PDF/QR, кабинеты организаций и Elementor.
- * Version: 2.33.0
+ * Version: 2.34.0
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -37,7 +37,7 @@ register_shutdown_function(function () {
 });
 
 final class ZAU_Certificate_PDF_Generator {
-    const VERSION = '2.33.0';
+    const VERSION = '2.34.0';
     const DB_VERSION = '2.18.2';
     const OPT_DB_VERSION = 'zau_cert_db_version';
     const OPT_SETTINGS = 'zau_cert_settings';
@@ -872,20 +872,29 @@ final class ZAU_Certificate_PDF_Generator {
         if (!preg_match('#^data:image/jpeg;base64,(.+)$#s', $data_url, $m)) { wp_send_json_error(['message'=>'Ожидалось JPEG-изображение документа.'],400); }
         $jpeg=base64_decode(str_replace(' ','+',$m[1]),true);
         if (!$jpeg || strlen($jpeg)<1000) { wp_send_json_error(['message'=>'Повреждённые данные изображения.'],400); }
+        $result = $this->store_document_image($row, $jpeg, $final_document_no, $target_template, $keep_old_files);
+        if (is_wp_error($result)) { wp_send_json_error(['message'=>$result->get_error_message()], 400); }
+        wp_send_json_success($result);
+    }
+
+    /** Сохраняет JPEG документа, делает PDF и обновляет запись (общий путь для браузерной и серверной генерации). */
+    public function store_document_image($row, $jpeg, $final_document_no, $target_template = null, $keep_old_files = false) {
+        global $wpdb;
+        $id = (int)$row->id;
         $size=@getimagesizefromstring($jpeg);
-        if (!$size || ($size[2] ?? 0)!==IMAGETYPE_JPEG) { wp_send_json_error(['message'=>'Неверный формат изображения.'],400); }
+        if (!$size || ($size[2] ?? 0)!==IMAGETYPE_JPEG) { return new WP_Error('finalize', 'Неверный формат изображения.'); }
         $uploads=wp_upload_dir();
-        if (!empty($uploads['error'])) { wp_send_json_error(['message'=>$uploads['error']],500); }
+        if (!empty($uploads['error'])) { return new WP_Error('finalize', $uploads['error']); }
         $sub='zau-certificates/'.wp_date('Y/m');
         $dir=trailingslashit($uploads['basedir']).$sub;
-        if (!wp_mkdir_p($dir)) { wp_send_json_error(['message'=>'Не удалось создать папку для документов.'],500); }
+        if (!wp_mkdir_p($dir)) { return new WP_Error('finalize', 'Не удалось создать папку для документов.'); }
         $revision=max(1,(int)($row->file_revision ?? 0)+1);
         $safe=sanitize_file_name($final_document_no.'-'.$id.'-r'.$revision);
         $jpg_path=trailingslashit($dir).$safe.'.jpg';
         $pdf_path=trailingslashit($dir).$safe.'.pdf';
-        if (file_put_contents($jpg_path,$jpeg,LOCK_EX)===false) { wp_send_json_error(['message'=>'Не удалось сохранить JPG.'],500); }
+        if (file_put_contents($jpg_path,$jpeg,LOCK_EX)===false) { return new WP_Error('finalize', 'Не удалось сохранить JPG.'); }
         $pdf=$this->jpeg_to_pdf($jpeg,(int)$size[0],(int)$size[1]);
-        if (file_put_contents($pdf_path,$pdf,LOCK_EX)===false) { @unlink($jpg_path); wp_send_json_error(['message'=>'Не удалось сохранить PDF.'],500); }
+        if (file_put_contents($pdf_path,$pdf,LOCK_EX)===false) { @unlink($jpg_path); return new WP_Error('finalize', 'Не удалось сохранить PDF.'); }
         $base=trailingslashit($uploads['baseurl']).$sub;
         $jpg_url=$base.'/'.$safe.'.jpg'; $pdf_url=$base.'/'.$safe.'.pdf';
 
@@ -919,7 +928,7 @@ final class ZAU_Certificate_PDF_Generator {
             $update['document_title']=$target_template->name;
         }
         $updated=$wpdb->update($this->docs_table,$update,['id'=>$id]);
-        if ($updated===false) { @unlink($jpg_path); @unlink($pdf_path); wp_send_json_error(['message'=>'Не удалось обновить запись документа.'],500); }
+        if ($updated===false) { @unlink($jpg_path); @unlink($pdf_path); return new WP_Error('finalize', 'Не удалось обновить запись документа.'); }
         if (!$keep_old_files) {
             if (!empty($row->pdf_url) && $row->pdf_url!==$pdf_url) { $this->delete_upload_url($row->pdf_url); }
             if (!empty($row->image_url) && $row->image_url!==$jpg_url) { $this->delete_upload_url($row->image_url); }
@@ -929,7 +938,7 @@ final class ZAU_Certificate_PDF_Generator {
         if ((string)$row->document_no !== $final_document_no) { $this->log('document_number_updated','document',$id,$row->document_no.' → '.$final_document_no); }
         if ($target_template && (int)$row->template_id !== (int)$target_template->id) { $this->log('document_template_updated','document',$id,(int)$row->template_id.' → '.(int)$target_template->id); }
         $this->log('document_created','document',$id,$final_document_no.' revision '.$revision.($keep_old_files?' old files kept':''));
-        wp_send_json_success([
+        return ([
             'id'=>$id,
             'document_no'=>$final_document_no,
             'template_id'=>(int)$fresh->template_id,
@@ -1067,7 +1076,7 @@ final class ZAU_Certificate_PDF_Generator {
         $f = $this->registry_filters();
         $where = $this->registry_where($f) . " AND (d.pdf_url IS NULL OR d.pdf_url='') AND d.template_id>0";
         $ids = $wpdb->get_col("SELECT d.id FROM {$this->docs_table} d WHERE $where ORDER BY d.id ASC LIMIT 100000");
-        $job = ($ids && class_exists('ZAU_Bulk_Regeneration')) ? ZAU_Bulk_Regeneration::instance()->create_job_for_documents($ids, ['update_number'=>0, 'keep_old_files'=>0, 'skip_without_signature'=>0, 'delay_ms'=>100, 'max_retries'=>2]) : 0;
+        $job = ($ids && class_exists('ZAU_Bulk_Regeneration')) ? ZAU_Bulk_Regeneration::instance()->create_job_for_documents($ids, ['update_number'=>0, 'keep_old_files'=>0, 'skip_without_signature'=>0, 'delay_ms'=>100, 'max_retries'=>2, 'server'=>1]) : 0;
         if (!$job) { wp_safe_redirect(add_query_arg(array_merge(['page'=>'zau-cert-registry', 'msg'=>rawurlencode('Черновиков без PDF по этому фильтру нет.')], array_filter($f)), admin_url('admin.php'))); exit; }
         wp_safe_redirect(admin_url('admin.php?page=zau-cert-bulk-regenerate&job=' . (int)$job));
         exit;
@@ -1099,20 +1108,24 @@ final class ZAU_Certificate_PDF_Generator {
     public function ajax_prepare_regeneration() {
         $this->require_ajax_cap(self::CAP_MANAGE);
         check_ajax_referer(self::NONCE, 'nonce');
-        global $wpdb;
-        $id = absint($_POST['document_id'] ?? 0);
-        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->docs_table} WHERE id=%d", $id));
-        if (!$row) { wp_send_json_error(['message'=>'Документ не найден.'], 404); }
+        $payload = $this->regeneration_payload(absint($_POST['document_id'] ?? 0), absint($_POST['target_template_id'] ?? 0), !isset($_POST['update_number']) || absint($_POST['update_number']) === 1);
+        if (is_wp_error($payload)) { wp_send_json_error(['message'=>$payload->get_error_message()], 404); }
+        wp_send_json_success($payload);
+    }
 
-        $target_template_id = absint($_POST['target_template_id'] ?? 0);
+    /** Данные для перерисовки документа (браузером или сервером). */
+    public function regeneration_payload($id, $target_template_id = 0, $apply_current_number = true) {
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->docs_table} WHERE id=%d", (int)$id));
+        if (!$row) { return new WP_Error('not_found', 'Документ не найден.'); }
+        $target_template_id = absint($target_template_id);
         $template_id = $target_template_id ?: (int)$row->template_id;
         $tpl = $this->get_template($template_id);
         if (!$tpl) {
-            wp_send_json_error(['message'=>$target_template_id ? 'Выбранный новый шаблон удалён или недоступен.' : 'У документа нет доступного шаблона. Выберите целевой шаблон для массового пересоздания.'], 404);
+            return new WP_Error('no_template', $target_template_id ? 'Выбранный новый шаблон удалён или недоступен.' : 'У документа нет доступного шаблона. Выберите целевой шаблон для массового пересоздания.');
         }
 
         $old_number = (string)$row->document_no;
-        $apply_current_number = !isset($_POST['update_number']) || absint($_POST['update_number']) === 1;
         if ($apply_current_number) {
             $new_number = $this->format_document_number($tpl, (int)$row->id);
             if ($new_number !== '') { $row->document_no = $new_number; }
@@ -1161,7 +1174,7 @@ final class ZAU_Certificate_PDF_Generator {
             'stamp_url'=>$this->normalize_upload_asset_url($stamp_url),
             'verify_url'=>$this->verify_url($row->verify_token),
         ]);
-        wp_send_json_success([
+        return ([
             'id'=>(int)$row->id,
             'template_id'=>(int)$tpl->id,
             'target_template_applied'=>$target_template_id ? 1 : 0,
@@ -1472,6 +1485,7 @@ require_once __DIR__ . '/includes/class-zau-universal-import.php';
 require_once __DIR__ . '/includes/class-zau-remote-smart-dedup.php';
 require_once __DIR__ . '/includes/class-zau-remote-bridge-import.php';
 require_once __DIR__ . '/includes/class-zau-remote-profile-repair.php';
+require_once __DIR__ . '/includes/class-zau-server-render.php';
 require_once __DIR__ . '/includes/class-zau-exact-migration.php';
 require_once __DIR__ . '/includes/class-zau-elementor.php';
 ZAU_Union_Elementor::init();

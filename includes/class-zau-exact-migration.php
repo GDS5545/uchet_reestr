@@ -25,7 +25,7 @@ if (!defined('ABSPATH')) { exit; }
  *     данные»; администратор разбирает такие отметки в очереди.
  */
 final class ZAU_Exact_Migration {
-    const VERSION = '2.33.0';
+    const VERSION = '2.34.0';
     const DB_VERSION = '1.2.0';
     const OPT_DB = 'zau_exact_migration_db_version';
     const OPT = 'zau_exact_migration_settings';
@@ -2689,6 +2689,22 @@ final class ZAU_Exact_Migration {
             foreach ($sigKeys as $k) { $out[$k] = $signature; }
             $out['signature_url'] = $signature;
         }
+        // Филиал и реквизиты — из самого старого заявления (ИИК/БИН филиала), а не из профиля.
+        $branchKey = '';
+        foreach ((array)$targetForm['fields'] as $field) { if (($field['type'] ?? '') === 'branch_select') { $branchKey = (string)$field['key']; break; } }
+        $req = $this->legacy_requisites((array)($data['legacy_fields'] ?? []));
+        $branchId = $req['branch_id'];
+        $source = $branchId ? $req['by'] : '';
+        if (!$branchId && $branchKey !== '' && !empty($out[$branchKey])) { $branchId = (int)$out[$branchKey]; $source = 'name'; }
+        if ($branchId) {
+            $out['regen_branch_id'] = $branchId;
+            if ($branchKey !== '') { $out[$branchKey] = (string)$branchId; }
+        } elseif ($req['text'] !== '') {
+            // Филиала с такими реквизитами в справочнике нет — печатаем реквизиты ровно как в старом заявлении.
+            foreach (['branch_requisites', 'branch_full_details', 'branch_bank_details', 'branch_bank_requisites', 'branch_snapshot_full_details', 'branch_snapshot_bank_details', 'branch_full_text'] as $k) { $out[$k] = $req['text']; }
+            $source = 'text';
+        }
+        $out['regen_branch_source'] = $source !== '' ? $source : 'profile';
         $user = get_user_by('id', (int)$row->user_id);
         $fullName = trim(implode(' ', array_filter([$out['last_name'] ?? '', $out['first_name'] ?? '', $out['middle_name'] ?? ''])));
         if ($fullName === '') { $fullName = trim((string)($out['full_name'] ?? '')); }
@@ -2736,7 +2752,7 @@ final class ZAU_Exact_Migration {
         header('Content-Disposition: attachment; filename="zau-perenesennye-dokumenty-' . wp_date('Y-m-d-H-i') . '.csv"');
         echo "\xEF\xBB\xBF";
         $out = fopen('php://output', 'w');
-        zau_fputcsv($out, ['ID', 'ФИО', 'Email', 'Своих старых заявлений', 'Первое заявление', 'Документов готово', 'Черновиков', 'Номера документов', 'Итог', 'Статус участника', 'Дата вступления', 'Сделан действительным'], ';');
+        zau_fputcsv($out, ['ID', 'ФИО', 'Email', 'Своих старых заявлений', 'Первое заявление', 'Документов готово', 'Черновиков', 'Номера документов', 'Итог', 'Статус участника', 'Дата вступления', 'Сделан действительным', 'Филиал в документах', 'Откуда взят филиал'], ';');
         if ($forms) {
             $in = implode(',', array_map('intval', $forms));
             $rows = $wpdb->get_results($wpdb->prepare(
@@ -2745,11 +2761,22 @@ final class ZAU_Exact_Migration {
                 $u = get_user_by('id', (int)$r->user_id);
                 if (!$u) { continue; }
                 $d = $wpdb->get_results($wpdb->prepare("SELECT d.document_no, d.pdf_url FROM {$this->docs_index_table} i JOIN {$docs} d ON d.id=i.doc_id WHERE i.user_id=%d ORDER BY d.id ASC", (int)$r->user_id));
+                $srcNames = ['iban'=>'по ИИК из старого заявления', 'bin'=>'по БИН филиала из старого заявления', 'name'=>'по названию филиала из старого заявления', 'text'=>'реквизиты дословно из старого заявления', 'profile'=>'из профиля (в заявлении не найдено) — проверьте'];
+                $branches = []; $sources = [];
+                foreach ((array)$wpdb->get_col($wpdb->prepare("SELECT d.data_json FROM {$this->docs_index_table} i JOIN {$docs} d ON d.id=i.doc_id WHERE i.user_id=%d", (int)$r->user_id)) as $json) {
+                    $x = json_decode((string)$json, true) ?: [];
+                    $bn = (string)($x['branch_name'] ?? ($x['branch_snapshot_name'] ?? ''));
+                    if ($bn !== '') { $branches[$bn] = 1; }
+                    $sc = $srcNames[(string)($x['regen_branch_source'] ?? '')] ?? '';
+                    if ($sc !== '') { $sources[$sc] = 1; }
+                }
+                $branchName = implode(' | ', array_keys($branches));
+                $branchSrc = implode(' | ', array_keys($sources));
                 $ready = 0; $draft = 0; $nos = [];
                 foreach ((array)$d as $x) { if (!empty($x->pdf_url)) { $ready++; } else { $draft++; } $nos[] = $x->document_no; }
                 $result = !$d ? 'нет документов' : ($draft ? 'есть черновики' : 'готово');
                 zau_fputcsv($out, [$u->ID, $u->display_name, $u->user_email, (int)$r->apps, mysql2date('d.m.Y', (string)$r->first_at), $ready, $draft, implode(', ', $nos), $result,
-                    (string)get_user_meta($u->ID, 'zau_member_status', true), (string)get_user_meta($u->ID, 'zau_membership_date', true), get_user_meta($u->ID, 'zau_exact_activated', true) ? 'да' : ''], ';');
+                    (string)get_user_meta($u->ID, 'zau_member_status', true), (string)get_user_meta($u->ID, 'zau_membership_date', true), get_user_meta($u->ID, 'zau_exact_activated', true) ? 'да' : '', $branchName, $branchSrc], ';');
             }
         }
         fclose($out);
@@ -2762,6 +2789,43 @@ final class ZAU_Exact_Migration {
         if (!$formIds) { return ''; }
         $min = $wpdb->get_var($wpdb->prepare("SELECT MIN(created_at) FROM {$this->submissions_table} WHERE user_id=%d AND status=%s AND form_id IN (" . implode(',', array_map('intval', $formIds)) . ")", (int)$userId, self::S_OWN));
         return $min ? mysql2date('d.m.Y', (string)$min) : '';
+    }
+
+    /**
+     * Реквизиты филиала из полей старого заявления: текст поля с расчётным счётом,
+     * филиал справочника по ИИК (IBAN) или по БИН филиала из этого текста.
+     */
+    private function legacy_requisites(array $fields) {
+        global $wpdb;
+        $out = ['text'=>'', 'branch_id'=>0, 'by'=>''];
+        $ibans = []; $bins = [];
+        foreach ($fields as $f) {
+            $value = trim($this->scalar_text($f['value'] ?? ''));
+            if ($value === '') { continue; }
+            $label = $this->normalize_label($f['label'] ?? '');
+            $compact = strtoupper(preg_replace('/\s+/u', '', $value));
+            $found = preg_match_all('/KZ\d{2}[0-9A-Z]{16}/', $compact, $m);
+            $looks = (bool)preg_match('/расч[её]тн|реквизит|иик|iban|сч[её]т филиал/u', $label);
+            if (!$found && !$looks) { continue; }
+            if ($found) { $ibans = array_merge($ibans, $m[0]); }
+            if (preg_match_all('/(?:БИН|BIN)\D{0,3}(\d{12})/u', $value, $b)) { $bins = array_merge($bins, $b[1]); }
+            if ($out['text'] === '' && ($found || $looks) && mb_strlen($value) >= 15) { $out['text'] = $value; }
+        }
+        $table = $wpdb->prefix . 'zau_union_branches';
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) { return $out; }
+        static $branches = null;
+        if ($branches === null) { $branches = (array)$wpdb->get_results("SELECT id,iban,union_bin,requisites,bank_details,full_details FROM {$table} WHERE active=1"); }
+        foreach (array_unique($ibans) as $iban) {
+            foreach ($branches as $br) {
+                $hay = strtoupper(preg_replace('/\s+/u', '', (string)$br->iban . ' ' . $br->requisites . ' ' . $br->bank_details . ' ' . $br->full_details));
+                if (strpos($hay, $iban) !== false) { $out['branch_id'] = (int)$br->id; $out['by'] = 'iban'; return $out; }
+            }
+        }
+        foreach (array_unique($bins) as $bin) {
+            $hits = array_values(array_filter($branches, function ($br) use ($bin) { return preg_replace('/\D+/', '', (string)$br->union_bin) === $bin; }));
+            if (count($hits) === 1) { $out['branch_id'] = (int)$hits[0]->id; $out['by'] = 'bin'; return $out; }
+        }
+        return $out;
     }
 
     public function regen_save() {
@@ -2789,7 +2853,7 @@ final class ZAU_Exact_Migration {
         if ($mode === 'queue_drafts') {
             $docsTable = $wpdb->prefix . 'zau_certificates';
             $ids = $wpdb->get_col("SELECT i.doc_id FROM {$this->docs_index_table} i JOIN {$docsTable} d ON d.id=i.doc_id WHERE d.pdf_url IS NULL OR d.pdf_url='' ORDER BY i.doc_id ASC");
-            $jobId = ($ids && class_exists('ZAU_Bulk_Regeneration')) ? ZAU_Bulk_Regeneration::instance()->create_job_for_documents($ids, ['update_number'=>0, 'keep_old_files'=>0, 'skip_without_signature'=>0, 'delay_ms'=>100, 'max_retries'=>2]) : 0;
+            $jobId = ($ids && class_exists('ZAU_Bulk_Regeneration')) ? ZAU_Bulk_Regeneration::instance()->create_job_for_documents($ids, ['update_number'=>0, 'keep_old_files'=>0, 'skip_without_signature'=>0, 'delay_ms'=>100, 'max_retries'=>2, 'server'=>1]) : 0;
             wp_send_json_success(['cursor'=>0, 'processed'=>count($ids), 'done'=>count($ids), 'total'=>0, 'finished'=>true, 'stats'=>['queued'=>count($ids)], 'job_url'=>$jobId ? admin_url('admin.php?page=zau-cert-bulk-regenerate&job=' . $jobId) : '']);
         }
         if ($mode === 'delete') {
@@ -2858,7 +2922,7 @@ final class ZAU_Exact_Migration {
         $jobUrl = '';
         if ($finished) {
             $ids = $wpdb->get_col($wpdb->prepare("SELECT doc_id FROM {$this->docs_index_table} WHERE run=%s ORDER BY doc_id ASC", (string)$state['run']));
-            $jobId = ($ids && class_exists('ZAU_Bulk_Regeneration')) ? ZAU_Bulk_Regeneration::instance()->create_job_for_documents($ids, ['update_number'=>0, 'keep_old_files'=>0, 'skip_without_signature'=>0, 'delay_ms'=>100, 'max_retries'=>2]) : 0;
+            $jobId = ($ids && class_exists('ZAU_Bulk_Regeneration')) ? ZAU_Bulk_Regeneration::instance()->create_job_for_documents($ids, ['update_number'=>0, 'keep_old_files'=>0, 'skip_without_signature'=>0, 'delay_ms'=>100, 'max_retries'=>2, 'server'=>1]) : 0;
             $state['finished'] = true; $state['job_id'] = $jobId; $state['stats'] = $stats; $state['queued'] = count((array)$ids);
             update_option(self::REGEN_STATE_OPT, $state, false);
             if ($jobId) { $jobUrl = admin_url('admin.php?page=zau-cert-bulk-regenerate&job=' . $jobId); }
@@ -2928,7 +2992,7 @@ final class ZAU_Exact_Migration {
                         <a class="button button-primary" href="<?php echo esc_url(admin_url('admin.php?page=zau-cert-bulk-regenerate&job=' . (int)$state['job_id'])); ?>">Открыть очередь и сформировать PDF</a></p>
                     <?php endif; ?>
                 </div>
-                <p class="description">PDF рисуется в браузере очередью «Массовое пересоздание»: откройте её и нажмите «Продолжить». Вкладку можно закрыть и потом продолжить.</p>
+                <p class="description">PDF формируется очередью «Массовое пересоздание». Если сервер это поддерживает (PHP GD со шрифтами) — <strong>на сервере в фоне</strong>: очередь запускается сразу, вкладку можно закрыть. Иначе — в браузере: откройте очередь и нажмите «Продолжить».</p>
             </section>
             <section class="zau-rb-card">
                 <h2>Итог: у кого документы готовы</h2>

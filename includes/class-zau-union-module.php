@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.33.0';
+    const VERSION = '2.34.0';
     const DB_VERSION = '2.18.2';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
@@ -3549,9 +3549,11 @@ final class ZAU_Union_Module {
             $org = $wpdb->get_row($wpdb->prepare("SELECT bin,name,director,address,region,source FROM {$this->orgs_table} WHERE bin=%s", $this->normalize_bin($data['organization_bin'])), ARRAY_A);
             if ($org) { $data = $this->merge_organization_data($data, $org); }
         }
-        foreach ($forms[(int)$formId]['fields'] as $field) {
-            if ($field['type'] !== 'branch_select' || empty($data[$field['key']])) { continue; }
-            $branchRow = $this->get_branch((int)$data[$field['key']]);
+        $branchIds = [];
+        if (!empty($data['regen_branch_id'])) { $branchIds[] = (int)$data['regen_branch_id']; }
+        foreach ($forms[(int)$formId]['fields'] as $field) { if ($field['type'] === 'branch_select' && !empty($data[$field['key']])) { $branchIds[] = (int)$data[$field['key']]; } }
+        foreach (array_slice($branchIds, 0, 1) as $branchId) {
+            $branchRow = $this->get_branch($branchId);
             if ($branchRow) {
                 $branchData = $this->branch_data($branchRow);
                 $data = array_merge($data, $branchData);
@@ -3674,7 +3676,7 @@ final class ZAU_Union_Module {
         return count($ids);
     }
 
-    /** Остатки без индекса (созданные до 2.33.0 и не попавшие в индекс). */
+    /** Остатки без индекса (созданные до 2.34.0 и не попавшие в индекс). */
     public function regen_delete_documents_legacy($limit = 200) {
         global $wpdb;
         $ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->docs_table} WHERE data_json LIKE %s ORDER BY id ASC LIMIT %d", '%"legacy_exact_regen":1%', (int)$limit));

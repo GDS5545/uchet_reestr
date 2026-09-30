@@ -39,6 +39,165 @@ final class ZAU_Bulk_Regeneration {
         add_action('wp_ajax_zau_cert_bulk_job_status', [$this, 'ajax_job_status']);
         add_action('wp_ajax_zau_cert_bulk_control', [$this, 'ajax_control']);
         add_action('admin_post_zau_cert_bulk_report', [$this, 'download_report']);
+        // Фоновая (серверная) генерация PDF.
+        add_filter('cron_schedules', [$this, 'cron_schedules']);
+        add_action(self::CRON_HOOK, [$this, 'cron_tick']);
+        add_action('init', [$this, 'ensure_cron']);
+        add_action('wp_ajax_zau_cert_bulk_server_tick', [$this, 'ajax_server_tick']);
+        add_action('wp_ajax_nopriv_zau_cert_bulk_bg', [$this, 'ajax_background_chain']);
+        add_action('wp_ajax_zau_cert_bulk_bg', [$this, 'ajax_background_chain']);
+    }
+
+    const CRON_HOOK = 'zau_cert_bulk_server_tick';
+    const LOCK_OPT = 'zau_cert_bulk_server_lock';
+    const CHAIN_OPT = 'zau_cert_bulk_chain_key';
+
+    public function cron_schedules($s) {
+        $s['zau_every_minute'] = ['interval'=>60, 'display'=>'Каждую минуту (ZAU фоновые PDF)'];
+        return $s;
+    }
+
+    /** Крон нужен только пока есть серверные очереди. */
+    public function ensure_cron() {
+        $has = (bool)get_transient('zau_cert_bulk_server_active');
+        if ($has && !wp_next_scheduled(self::CRON_HOOK)) { wp_schedule_event(time() + 30, 'zau_every_minute', self::CRON_HOOK); }
+        if (!$has && wp_next_scheduled(self::CRON_HOOK)) { wp_clear_scheduled_hook(self::CRON_HOOK); }
+    }
+
+    public function server_available(&$reason = '') {
+        return class_exists('ZAU_Server_Render') && ZAU_Server_Render::available($reason);
+    }
+
+    private function server_jobs() {
+        global $wpdb;
+        return (array)$wpdb->get_results($wpdb->prepare("SELECT * FROM {$this->jobs_table} WHERE status IN ('running','queued') AND options_json LIKE %s ORDER BY id ASC", '%"server":1%'));
+    }
+
+    public function cron_tick() {
+        $this->process_server_jobs(45);
+    }
+
+    /**
+     * Обрабатывает серверные очереди в пределах $budget секунд. Один процесс за раз (блокировка на 2 минуты).
+     * Возвращает число обработанных документов.
+     */
+    public function process_server_jobs($budget = 40) {
+        global $wpdb;
+        $lock = (int)get_option(self::LOCK_OPT, 0);
+        if ($lock && time() - $lock < 120) { return 0; }
+        update_option(self::LOCK_OPT, time(), false);
+        @set_time_limit(max(60, (int)$budget + 30));
+        if (function_exists('wp_raise_memory_limit')) { wp_raise_memory_limit('admin'); }
+        $started = microtime(true); $done = 0;
+        try {
+            foreach ($this->server_jobs() as $job) {
+                while (microtime(true) - $started < $budget) {
+                    // Фоновый процесс идёт без пользователя — читаем задание без проверки прав.
+                    $fresh = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->jobs_table} WHERE id=%d", (int)$job->id));
+                    if (!$fresh || in_array($fresh->status, ['paused', 'canceled', 'completed'], true)) { break; }
+                    if (!$this->process_server_item($fresh)) { break; }
+                    $done++;
+                    update_option(self::LOCK_OPT, time(), false);
+                }
+                if (microtime(true) - $started >= $budget) { break; }
+            }
+        } finally {
+            delete_option(self::LOCK_OPT);
+        }
+        $active = (bool)$this->server_jobs_with_work();
+        if ($active) { set_transient('zau_cert_bulk_server_active', 1, DAY_IN_SECONDS); } else { delete_transient('zau_cert_bulk_server_active'); }
+        return $done;
+    }
+
+    private function server_jobs_with_work() {
+        global $wpdb;
+        foreach ($this->server_jobs() as $job) {
+            if ((int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->items_table} WHERE job_id=%d AND status IN ('queued','processing')", (int)$job->id))) { return true; }
+            $this->refresh_job_counts((int)$job->id);
+        }
+        return false;
+    }
+
+    /** Один документ очереди: данные → серверная отрисовка → PDF. false — в очереди больше нечего брать. */
+    private function process_server_item($job) {
+        global $wpdb;
+        $jobId = (int)$job->id;
+        $stale = wp_date('Y-m-d H:i:s', time() - 900);
+        $wpdb->query($wpdb->prepare("UPDATE {$this->items_table} SET status='queued',updated_at=%s WHERE job_id=%d AND status='processing' AND updated_at<%s", current_time('mysql'), $jobId, $stale));
+        $item = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->items_table} WHERE job_id=%d AND status='queued' ORDER BY id ASC LIMIT 1", $jobId));
+        if (!$item) { $this->refresh_job_counts($jobId); return false; }
+        $now = current_time('mysql');
+        $claimed = $wpdb->query($wpdb->prepare("UPDATE {$this->items_table} SET status='processing',attempts=attempts+1,started_at=%s,updated_at=%s WHERE id=%d AND status='queued'", $now, $now, (int)$item->id));
+        if (!$claimed) { return true; }
+        $options = json_decode((string)$job->options_json, true) ?: [];
+        $wpdb->update($this->jobs_table, ['status'=>'running', 'current_document_id'=>(int)$item->document_id, 'updated_at'=>$now], ['id'=>$jobId]);
+        $error = '';
+        $docNo = '';
+        $gen = class_exists('ZAU_Certificate_PDF_Generator') ? ZAU_Certificate_PDF_Generator::instance() : null;
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->docs_table} WHERE id=%d", (int)$item->document_id));
+        if (!$row || !$gen) {
+            $wpdb->update($this->items_table, ['status'=>'skipped', 'error_text'=>'Запись документа удалена.', 'completed_at'=>$now, 'updated_at'=>$now], ['id'=>(int)$item->id]);
+            return true;
+        }
+        $wpdb->update($this->items_table, ['old_document_no'=>$row->document_no], ['id'=>(int)$item->id]);
+        $payload = $gen->regeneration_payload((int)$row->id, (int)($options['target_template_id'] ?? 0), !empty($options['update_number']));
+        if (is_wp_error($payload)) { $error = $payload->get_error_message(); }
+        elseif (!empty($options['skip_without_signature']) && empty($payload['values']['signature_url'])) {
+            $wpdb->update($this->items_table, ['status'=>'skipped', 'error_text'=>'Подпись отсутствует.', 'completed_at'=>$now, 'updated_at'=>$now], ['id'=>(int)$item->id]);
+            return true;
+        } else {
+            $jpeg = ZAU_Server_Render::render((array)$payload['template'], (array)$payload['values']);
+            if (is_wp_error($jpeg)) { $error = $jpeg->get_error_message(); }
+            else {
+                $target = !empty($options['target_template_id']) ? $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->templates_table} WHERE id=%d", (int)$options['target_template_id'])) : null;
+                $stored = $gen->store_document_image($row, $jpeg, (string)$payload['document_no'], $target, !empty($options['keep_old_files']));
+                if (is_wp_error($stored)) { $error = $stored->get_error_message(); } else { $docNo = (string)$stored['document_no']; }
+            }
+        }
+        $now = current_time('mysql');
+        if ($error === '') {
+            $wpdb->update($this->items_table, ['status'=>'success', 'new_document_no'=>$docNo, 'error_text'=>'', 'completed_at'=>$now, 'updated_at'=>$now], ['id'=>(int)$item->id]);
+        } else {
+            $max = (int)($options['max_retries'] ?? 2);
+            $next = ((int)$item->attempts + 1 <= $max) ? 'queued' : 'failed';
+            $wpdb->update($this->items_table, ['status'=>$next, 'error_text'=>mb_substr($error, 0, 4000), 'completed_at'=>$next === 'failed' ? $now : null, 'updated_at'=>$now], ['id'=>(int)$item->id]);
+        }
+        if ((int)$item->id % 10 === 0) { $this->refresh_job_counts($jobId); }
+        return true;
+    }
+
+    /** Вызов со страницы очереди, пока она открыта: обработать порцию и вернуть состояние. */
+    public function ajax_server_tick() {
+        $this->require_ajax();
+        $n = $this->process_server_jobs(20);
+        $job = $this->get_job(absint($_POST['job_id'] ?? 0));
+        if ($job) { $this->refresh_job_counts((int)$job->id); }
+        $this->kick_background();
+        wp_send_json_success(['processed_now'=>$n]);
+    }
+
+    /** Продолжение в фоне без открытой вкладки: сервер сам себе отправляет запрос (если хостинг это позволяет). */
+    public function kick_background() {
+        if (!get_transient('zau_cert_bulk_server_active')) { return; }
+        $key = (string)get_option(self::CHAIN_OPT, '');
+        if ($key === '') { $key = wp_generate_password(32, false, false); update_option(self::CHAIN_OPT, $key, false); }
+        wp_remote_post(admin_url('admin-ajax.php'), ['timeout'=>0.01, 'blocking'=>false, 'sslverify'=>apply_filters('https_local_ssl_verify', false), 'body'=>['action'=>'zau_cert_bulk_bg', 'key'=>$key]]);
+    }
+
+    public function ajax_background_chain() {
+        $key = (string)get_option(self::CHAIN_OPT, '');
+        if ($key === '' || !hash_equals($key, (string)wp_unslash($_POST['key'] ?? ''))) { wp_die('', '', ['response'=>403]); }
+        ignore_user_abort(true);
+        $this->process_server_jobs(45);
+        $this->kick_background();
+        wp_die('ok');
+    }
+
+    /** Отметить, что появилась серверная работа, и сразу запустить обработку в фоне. */
+    public function start_background() {
+        set_transient('zau_cert_bulk_server_active', 1, DAY_IN_SECONDS);
+        $this->ensure_cron();
+        $this->kick_background();
     }
 
     public function maybe_upgrade() {
@@ -190,6 +349,8 @@ final class ZAU_Bulk_Regeneration {
                     <label class="zau-check-card"><input type="checkbox" name="update_number" value="1" checked> Применить актуальный префикс и формат номера выбранного шаблона</label>
                     <label class="zau-check-card"><input type="checkbox" name="keep_old_files" value="1" checked> Сохранять прежние PDF/JPG в архиве после успешного пересоздания</label>
                     <label class="zau-check-card"><input type="checkbox" name="skip_without_signature" value="1"> Пропускать записи без найденной подписи</label>
+                    <?php $srvReason = ''; $srvOk = $this->server_available($srvReason); ?>
+                    <label class="zau-check-card"><input type="checkbox" name="server" value="1" <?php checked($srvOk); disabled(!$srvOk); ?>> <strong>Формировать на сервере в фоне</strong> — вкладку можно закрыть, очередь продолжится сама<?php echo $srvOk ? '' : ' (недоступно: ' . esc_html($srvReason) . ')'; ?></label>
                 </div>
                 <div class="zau-bulk-actions">
                     <button type="button" class="button button-secondary button-large" data-zau-bulk-preview>Проверить выборку</button>
@@ -256,6 +417,7 @@ final class ZAU_Bulk_Regeneration {
             'skip_without_signature'=>empty($source['skip_without_signature']) ? 0 : 1,
             'delay_ms'=>min(10000, max(0, absint($source['delay_ms'] ?? 150))),
             'max_retries'=>min(10, max(0, absint($source['max_retries'] ?? 2))),
+            'server'=>(!empty($source['server']) && $this->server_available()) ? 1 : 0,
         ];
     }
 
@@ -353,6 +515,7 @@ final class ZAU_Bulk_Regeneration {
         }
         $actual=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->items_table} WHERE job_id=%d",$job_id));
         $wpdb->update($this->jobs_table,['total_count'=>$actual,'status'=>'running','updated_at'=>$now],['id'=>$job_id]);
+        if (!empty($options['server'])) { $this->start_background(); }
         wp_send_json_success(['job_id'=>$job_id,'total'=>$actual,'status'=>'running','options'=>$options]);
     }
 
@@ -372,6 +535,7 @@ final class ZAU_Bulk_Regeneration {
             $wpdb->query("INSERT IGNORE INTO {$this->items_table} (job_id,document_id,status,attempts,updated_at) VALUES " . implode(',', $values));
         }
         $wpdb->update($this->jobs_table, ['status'=>'running', 'total_count'=>(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->items_table} WHERE job_id=%d", $jobId))], ['id'=>$jobId]);
+        if (!empty($options['server'])) { $this->start_background(); }
         return $jobId;
     }
 
@@ -483,11 +647,12 @@ final class ZAU_Bulk_Regeneration {
         $job_id=absint($_POST['job_id']??0);$command=sanitize_key($_POST['command']??'');$job=$this->get_job($job_id);if(!$job){wp_send_json_error(['message'=>'Очередь не найдена.'],404);}
         $now=current_time('mysql');
         if($command==='pause'){$wpdb->update($this->jobs_table,['status'=>'paused','updated_at'=>$now],['id'=>$job_id]);}
-        elseif($command==='resume'){$wpdb->update($this->jobs_table,['status'=>'running','completed_at'=>null,'updated_at'=>$now],['id'=>$job_id]);}
+        elseif($command==='resume'){$wpdb->update($this->jobs_table,['status'=>'running','completed_at'=>null,'updated_at'=>$now],['id'=>$job_id]);$jobRow=$this->get_job($job_id);if($jobRow&&strpos((string)$jobRow->options_json,'"server":1')!==false)$this->start_background();}
         elseif($command==='cancel'){$wpdb->update($this->jobs_table,['status'=>'canceled','updated_at'=>$now,'completed_at'=>$now],['id'=>$job_id]);}
         elseif($command==='retry_failed'){
             $wpdb->query($wpdb->prepare("UPDATE {$this->items_table} SET status='queued',error_text='',completed_at=NULL,updated_at=%s WHERE job_id=%d AND status='failed'",$now,$job_id));
             $wpdb->update($this->jobs_table,['status'=>'running','completed_at'=>null,'updated_at'=>$now],['id'=>$job_id]);
+            $jobRow=$this->get_job($job_id);if($jobRow&&strpos((string)$jobRow->options_json,'"server":1')!==false)$this->start_background();
         } else {wp_send_json_error(['message'=>'Неизвестная команда.'],400);}
         $this->refresh_job_counts($job_id);
         wp_send_json_success(['status'=>$this->get_job($job_id)->status]);
