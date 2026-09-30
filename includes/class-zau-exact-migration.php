@@ -25,8 +25,8 @@ if (!defined('ABSPATH')) { exit; }
  *     данные»; администратор разбирает такие отметки в очереди.
  */
 final class ZAU_Exact_Migration {
-    const VERSION = '2.32.0';
-    const DB_VERSION = '1.1.0';
+    const VERSION = '2.33.0';
+    const DB_VERSION = '1.2.0';
     const OPT_DB = 'zau_exact_migration_db_version';
     const OPT = 'zau_exact_migration_settings';
     const JOB_OPT = 'zau_exact_migration_job';
@@ -50,6 +50,7 @@ final class ZAU_Exact_Migration {
     private $report_table;
     private $submissions_table;
     private $forms_table;
+    private $docs_index_table;
     private $docs_table;
     private $form_cache = [];
 
@@ -67,6 +68,7 @@ final class ZAU_Exact_Migration {
         global $wpdb;
         $this->map_table = $wpdb->prefix . 'zau_exact_map';
         $this->report_table = $wpdb->prefix . 'zau_exact_report';
+        $this->docs_index_table = $wpdb->prefix . 'zau_exact_docs';
         $this->submissions_table = $wpdb->prefix . 'zau_union_submissions';
         $this->forms_table = $wpdb->prefix . 'zau_union_forms';
         $this->docs_table = $wpdb->prefix . 'zau_certificates';
@@ -83,6 +85,7 @@ final class ZAU_Exact_Migration {
         add_action('wp_ajax_zau_exact_namefix_run', [$this, 'ajax_namefix_run']);
         add_action('wp_ajax_zau_exact_regen_run', [$this, 'ajax_regen_run']);
         add_action('admin_post_zau_exact_regen_save', [$this, 'regen_save']);
+        add_action('admin_post_zau_exact_regen_csv', [$this, 'regen_csv']);
 
         add_action('wp_ajax_zau_exact_test', [$this, 'ajax_test']);
         add_action('wp_ajax_zau_exact_start', [$this, 'ajax_start']);
@@ -106,6 +109,7 @@ final class ZAU_Exact_Migration {
         if (get_option(self::OPT_DB) !== self::DB_VERSION) {
             $this->install_tables();
             $this->migrate_site_hash();
+            $this->backfill_docs_index();
             update_option(self::OPT_DB, self::DB_VERSION, false);
         }
     }
@@ -148,6 +152,36 @@ final class ZAU_Exact_Migration {
             KEY job_decision (job_token,decision),
             KEY job_source (job_token,source_type,source_id)
         ) $charset;");
+        dbDelta("CREATE TABLE {$this->docs_index_table} (
+            doc_id bigint(20) unsigned NOT NULL,
+            user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+            submission_id bigint(20) unsigned NOT NULL DEFAULT 0,
+            run varchar(40) NOT NULL DEFAULT '',
+            created_at datetime NOT NULL,
+            PRIMARY KEY (doc_id),
+            KEY user_id (user_id),
+            KEY submission_id (submission_id),
+            KEY run (run)
+        ) $charset;");
+    }
+
+    /** Индекс документов, созданных из перенесённых заявлений (для реестра и итогов без медленного поиска по JSON). */
+    public static function docs_index_table() {
+        global $wpdb;
+        return $wpdb->prefix . 'zau_exact_docs';
+    }
+
+    private function backfill_docs_index() {
+        global $wpdb;
+        $docs = $wpdb->prefix . 'zau_certificates';
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $docs)) !== $docs) { return; }
+        $ph = implode(',', array_fill(0, count(self::archive_statuses()), '%s'));
+        $wpdb->query($wpdb->prepare(
+            "INSERT IGNORE INTO {$this->docs_index_table} (doc_id,user_id,submission_id,run,created_at)
+             SELECT d.id,d.user_id,d.source_submission_id,'',%s FROM {$docs} d JOIN {$this->submissions_table} s ON s.id=d.source_submission_id AND s.status IN ($ph)
+             WHERE d.data_json LIKE %s",
+            array_merge([current_time('mysql')], self::archive_statuses(), ['%"legacy_exact_regen":1%'])
+        ));
     }
 
     /* ------------------------------------------------------------------ */
@@ -2670,6 +2704,58 @@ final class ZAU_Exact_Migration {
         return $out;
     }
 
+    private function regen_coverage() {
+        global $wpdb;
+        $docs = $wpdb->prefix . 'zau_certificates';
+        $settings = $this->regen_settings();
+        $forms = array_values(array_unique(array_merge(array_keys(array_filter(array_map('absint', (array)$settings['map']))), array_keys(array_filter((array)$settings['activate_forms'])))));
+        $out = ['members'=>0, 'members_ready'=>0, 'members_draft'=>0, 'members_none'=>0, 'docs'=>0, 'ready'=>0, 'drafts'=>0];
+        $t = $wpdb->get_row("SELECT COUNT(*) docs, SUM(d.pdf_url IS NOT NULL AND d.pdf_url<>'') ready FROM {$this->docs_index_table} i JOIN {$docs} d ON d.id=i.doc_id");
+        $out['docs'] = (int)($t->docs ?? 0); $out['ready'] = (int)($t->ready ?? 0); $out['drafts'] = $out['docs'] - $out['ready'];
+        if (!$forms) { return $out; }
+        $in = implode(',', array_map('intval', $forms));
+        $out['members'] = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT user_id) FROM {$this->submissions_table} WHERE status=%s AND form_id IN ($in) AND user_id>0", self::S_OWN));
+        $out['members_draft'] = (int)$wpdb->get_var("SELECT COUNT(DISTINCT i.user_id) FROM {$this->docs_index_table} i JOIN {$docs} d ON d.id=i.doc_id WHERE d.pdf_url IS NULL OR d.pdf_url=''");
+        $withDocs = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(DISTINCT s.user_id) FROM {$this->submissions_table} s JOIN {$this->docs_index_table} i ON i.user_id=s.user_id WHERE s.status=%s AND s.form_id IN ($in)", self::S_OWN));
+        $out['members_ready'] = max(0, $withDocs - $out['members_draft']);
+        $out['members_none'] = max(0, $out['members'] - $withDocs);
+        return $out;
+    }
+
+    public function regen_csv() {
+        if (!$this->can_manage()) { wp_die('Недостаточно прав.', 403); }
+        check_admin_referer(self::NONCE);
+        global $wpdb;
+        $docs = $wpdb->prefix . 'zau_certificates';
+        $settings = $this->regen_settings();
+        $forms = array_values(array_unique(array_merge(array_keys(array_filter(array_map('absint', (array)$settings['map']))), array_keys(array_filter((array)$settings['activate_forms'])))));
+        @ini_set('display_errors', '0');
+        while (ob_get_level() > 0) { ob_end_clean(); }
+        nocache_headers();
+        header('Content-Type: text/csv; charset=UTF-8');
+        header('Content-Disposition: attachment; filename="zau-perenesennye-dokumenty-' . wp_date('Y-m-d-H-i') . '.csv"');
+        echo "\xEF\xBB\xBF";
+        $out = fopen('php://output', 'w');
+        zau_fputcsv($out, ['ID', 'ФИО', 'Email', 'Своих старых заявлений', 'Первое заявление', 'Документов готово', 'Черновиков', 'Номера документов', 'Итог', 'Статус участника', 'Дата вступления', 'Сделан действительным'], ';');
+        if ($forms) {
+            $in = implode(',', array_map('intval', $forms));
+            $rows = $wpdb->get_results($wpdb->prepare(
+                "SELECT s.user_id, COUNT(*) apps, MIN(s.created_at) first_at FROM {$this->submissions_table} s WHERE s.status=%s AND s.form_id IN ($in) AND s.user_id>0 GROUP BY s.user_id ORDER BY s.user_id ASC", self::S_OWN));
+            foreach ((array)$rows as $r) {
+                $u = get_user_by('id', (int)$r->user_id);
+                if (!$u) { continue; }
+                $d = $wpdb->get_results($wpdb->prepare("SELECT d.document_no, d.pdf_url FROM {$this->docs_index_table} i JOIN {$docs} d ON d.id=i.doc_id WHERE i.user_id=%d ORDER BY d.id ASC", (int)$r->user_id));
+                $ready = 0; $draft = 0; $nos = [];
+                foreach ((array)$d as $x) { if (!empty($x->pdf_url)) { $ready++; } else { $draft++; } $nos[] = $x->document_no; }
+                $result = !$d ? 'нет документов' : ($draft ? 'есть черновики' : 'готово');
+                zau_fputcsv($out, [$u->ID, $u->display_name, $u->user_email, (int)$r->apps, mysql2date('d.m.Y', (string)$r->first_at), $ready, $draft, implode(', ', $nos), $result,
+                    (string)get_user_meta($u->ID, 'zau_member_status', true), (string)get_user_meta($u->ID, 'zau_membership_date', true), get_user_meta($u->ID, 'zau_exact_activated', true) ? 'да' : ''], ';');
+            }
+        }
+        fclose($out);
+        exit;
+    }
+
     /** Дата вступления — дата самого раннего своего перенесённого заявления о вступлении. */
     private function regen_membership_date($userId, array $formIds) {
         global $wpdb;
@@ -2700,8 +2786,17 @@ final class ZAU_Exact_Migration {
         $state = (array)get_option(self::REGEN_STATE_OPT, []);
         if (!class_exists('ZAU_Union_Module')) { wp_send_json_error(['message'=>'Модуль профсоюза не загружен.'], 500); }
         $union = ZAU_Union_Module::instance();
+        if ($mode === 'queue_drafts') {
+            $docsTable = $wpdb->prefix . 'zau_certificates';
+            $ids = $wpdb->get_col("SELECT i.doc_id FROM {$this->docs_index_table} i JOIN {$docsTable} d ON d.id=i.doc_id WHERE d.pdf_url IS NULL OR d.pdf_url='' ORDER BY i.doc_id ASC");
+            $jobId = ($ids && class_exists('ZAU_Bulk_Regeneration')) ? ZAU_Bulk_Regeneration::instance()->create_job_for_documents($ids, ['update_number'=>0, 'keep_old_files'=>0, 'skip_without_signature'=>0, 'delay_ms'=>100, 'max_retries'=>2]) : 0;
+            wp_send_json_success(['cursor'=>0, 'processed'=>count($ids), 'done'=>count($ids), 'total'=>0, 'finished'=>true, 'stats'=>['queued'=>count($ids)], 'job_url'=>$jobId ? admin_url('admin.php?page=zau-cert-bulk-regenerate&job=' . $jobId) : '']);
+        }
         if ($mode === 'delete') {
-            $n = $union->regen_delete_documents(200);
+            $ids = array_map('intval', (array)$wpdb->get_col("SELECT doc_id FROM {$this->docs_index_table} ORDER BY doc_id ASC LIMIT 200"));
+            $n = $union->regen_delete_documents($ids);
+            if ($ids) { $wpdb->query("DELETE FROM {$this->docs_index_table} WHERE doc_id IN (" . implode(',', $ids) . ")"); }
+            if ($n < 200) { $n += $union->regen_delete_documents_legacy(200); }
             $done = absint($_POST['processed'] ?? 0) + $n;
             if ($n < 200) { delete_option(self::REGEN_STATE_OPT); }
             wp_send_json_success(['cursor'=>0, 'processed'=>$done, 'done'=>$done, 'total'=>0, 'finished'=>$n < 200, 'stats'=>['deleted'=>$done]]);
@@ -2751,15 +2846,18 @@ final class ZAU_Exact_Migration {
             $data['legacy_exact_regen_run'] = (string)$state['run'];
             $result = $union->regen_prepare_documents($row, (int)$target['id'], $data, !empty($settings['recreate']));
             if (is_wp_error($result)) { $stats['error'] = ($stats['error'] ?? 0) + 1; $errors[] = '#' . $row->id . ': ' . $result->get_error_message(); continue; }
-            foreach ($result as $r) { $stats[$r['state']] = ($stats[$r['state']] ?? 0) + 1; }
+            foreach ($result as $r) {
+                $stats[$r['state']] = ($stats[$r['state']] ?? 0) + 1;
+                $wpdb->query($wpdb->prepare("INSERT INTO {$this->docs_index_table} (doc_id,user_id,submission_id,run,created_at) VALUES (%d,%d,%d,%s,%s) ON DUPLICATE KEY UPDATE run=IF(%s='ready',run,VALUES(run))",
+                    (int)$r['id'], (int)$row->user_id, (int)$row->id, $r['state'] === 'ready' ? '' : (string)$state['run'], current_time('mysql'), $r['state']));
+            }
             $stats['submissions'] = ($stats['submissions'] ?? 0) + 1;
         }
         $processed = absint($_POST['processed'] ?? 0) + (int)($handled ?? 0);
         $finished = count((array)$rows) < $limit && (!$rows || $cursor === (int)end($rows)->id);
         $jobUrl = '';
         if ($finished) {
-            $docsTable = $wpdb->prefix . 'zau_certificates';
-            $ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$docsTable} WHERE data_json LIKE %s ORDER BY created_at ASC, id ASC", '%"legacy_exact_regen_run":"' . $wpdb->esc_like((string)$state['run']) . '"%'));
+            $ids = $wpdb->get_col($wpdb->prepare("SELECT doc_id FROM {$this->docs_index_table} WHERE run=%s ORDER BY doc_id ASC", (string)$state['run']));
             $jobId = ($ids && class_exists('ZAU_Bulk_Regeneration')) ? ZAU_Bulk_Regeneration::instance()->create_job_for_documents($ids, ['update_number'=>0, 'keep_old_files'=>0, 'skip_without_signature'=>0, 'delay_ms'=>100, 'max_retries'=>2]) : 0;
             $state['finished'] = true; $state['job_id'] = $jobId; $state['stats'] = $stats; $state['queued'] = count((array)$ids);
             update_option(self::REGEN_STATE_OPT, $state, false);
@@ -2776,8 +2874,8 @@ final class ZAU_Exact_Migration {
         $targets = class_exists('ZAU_Union_Module') ? ZAU_Union_Module::instance()->regen_target_forms() : [];
         $state = (array)get_option(self::REGEN_STATE_OPT, []);
         $docsTable = $wpdb->prefix . 'zau_certificates';
-        $made = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$docsTable} WHERE data_json LIKE %s", '%"legacy_exact_regen":1%'));
-        $withPdf = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$docsTable} WHERE data_json LIKE %s AND pdf_url<>''", '%"legacy_exact_regen":1%'));
+        $cov = $this->regen_coverage();
+        $made = $cov['docs']; $withPdf = $cov['ready'];
         $users = sanitize_text_field(wp_unslash($_GET['users'] ?? ''));
         $activated = (int)$wpdb->get_var("SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key='zau_exact_activated'");
         ?>
@@ -2831,6 +2929,22 @@ final class ZAU_Exact_Migration {
                     <?php endif; ?>
                 </div>
                 <p class="description">PDF рисуется в браузере очередью «Массовое пересоздание»: откройте её и нажмите «Продолжить». Вкладку можно закрыть и потом продолжить.</p>
+            </section>
+            <section class="zau-rb-card">
+                <h2>Итог: у кого документы готовы</h2>
+                <table class="widefat striped zau-regen-coverage"><tbody>
+                    <tr><th>Перенесённых участников со своими заявлениями (по выбранным формам)</th><td><?php echo (int)$cov['members']; ?></td></tr>
+                    <tr><th>Все документы готовы (есть PDF)</th><td><?php echo (int)$cov['members_ready']; ?></td></tr>
+                    <tr><th>Есть черновики — PDF ещё не нарисован</th><td><?php echo (int)$cov['members_draft']; ?> <small>(черновиков: <?php echo (int)$cov['drafts']; ?>)</small></td></tr>
+                    <tr><th>Документов нет (пропущены: нет подписи, форма не выбрана или ещё не запускали)</th><td><?php echo (int)$cov['members_none']; ?></td></tr>
+                    <tr><th>Сделаны действительными</th><td><?php echo (int)$activated; ?></td></tr>
+                </tbody></table>
+                <p>
+                    <button class="button button-primary" data-zau-regen="queue_drafts" <?php disabled(!$cov['drafts']); ?>>Дорисовать PDF для всех черновиков (<?php echo (int)$cov['drafts']; ?>)</button>
+                    <a class="button" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=zau_exact_regen_csv'), self::NONCE)); ?>">Скачать CSV по участникам</a>
+                    <a class="button" href="<?php echo esc_url(admin_url('admin.php?page=zau-cert-registry&source=exact')); ?>">Открыть в реестре</a>
+                </p>
+                <p class="description">Черновик = запись и номер документа созданы, но PDF ещё не нарисован (очередь не запускали, прервали или была ошибка). Кнопка «Дорисовать» ставит все такие черновики в очередь.</p>
             </section>
             <section class="zau-rb-card">
                 <h2>3. Отмена</h2>

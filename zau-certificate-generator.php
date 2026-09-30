@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Профсоюз — регистрация, документы и QR
  * Description: Единый реестр профсоюза с AQNIET Blue UX: регистрация, статусы, филиалы единым текстом, защищённая личная карточка, скрытый wp-admin для участников, акции и скидки, документы/PDF/QR, кабинеты организаций и Elementor.
- * Version: 2.32.0
+ * Version: 2.33.0
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -37,7 +37,7 @@ register_shutdown_function(function () {
 });
 
 final class ZAU_Certificate_PDF_Generator {
-    const VERSION = '2.32.0';
+    const VERSION = '2.33.0';
     const DB_VERSION = '2.18.2';
     const OPT_DB_VERSION = 'zau_cert_db_version';
     const OPT_SETTINGS = 'zau_cert_settings';
@@ -79,6 +79,7 @@ final class ZAU_Certificate_PDF_Generator {
         add_action('wp_ajax_zau_cert_finalize_document', [$this, 'ajax_finalize_document']);
         add_action('wp_ajax_zau_cert_parse_import', [$this, 'ajax_parse_import']);
         add_action('wp_ajax_zau_cert_prepare_regeneration', [$this, 'ajax_prepare_regeneration']);
+        add_action('admin_post_zau_cert_registry_queue', [$this, 'registry_queue']);
 
         add_shortcode('zau_certificate_verify', [$this, 'verify_shortcode']);
         add_shortcode('zau_my_certificates', [$this, 'my_certificates_shortcode']);
@@ -990,26 +991,86 @@ final class ZAU_Certificate_PDF_Generator {
         return $pdf;
     }
 
+    private function registry_filters() {
+        $f = [
+            's'=>sanitize_text_field(wp_unslash($_GET['s'] ?? '')),
+            'source'=>sanitize_key($_GET['source'] ?? ''),
+            'status'=>sanitize_key($_GET['status'] ?? ''),
+            'files'=>sanitize_key($_GET['files'] ?? ''),
+        ];
+        if (!in_array($f['source'], ['', 'exact', 'new'], true)) { $f['source'] = ''; }
+        if (!in_array($f['status'], ['', 'draft', 'active', 'revoked'], true)) { $f['status'] = ''; }
+        if (!in_array($f['files'], ['', 'missing', 'exists'], true)) { $f['files'] = ''; }
+        return $f;
+    }
+
+    /** WHERE для реестра. Источник «exact» — документы, созданные из перенесённых заявлений старого сайта. */
+    private function registry_where(array $f) {
+        global $wpdb;
+        $where = '1=1'; $args = [];
+        if ($f['s'] !== '') { $like = '%'.$wpdb->esc_like($f['s']).'%'; $where .= ' AND (d.full_name LIKE %s OR d.document_no LIKE %s OR d.organization LIKE %s)'; array_push($args, $like, $like, $like); }
+        $index = class_exists('ZAU_Exact_Migration') ? ZAU_Exact_Migration::docs_index_table() : '';
+        $hasIndex = $index && $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $index)) === $index;
+        if ($f['source'] === 'exact') { $where .= $hasIndex ? " AND d.id IN (SELECT doc_id FROM {$index})" : ' AND 1=0'; }
+        elseif ($f['source'] === 'new' && $hasIndex) { $where .= " AND d.id NOT IN (SELECT doc_id FROM {$index})"; }
+        if ($f['status'] !== '') { $where .= ' AND d.record_status=%s'; $args[] = $f['status']; }
+        if ($f['files'] === 'missing') { $where .= " AND (d.pdf_url IS NULL OR d.pdf_url='')"; }
+        elseif ($f['files'] === 'exists') { $where .= " AND d.pdf_url IS NOT NULL AND d.pdf_url<>''"; }
+        return $args ? $wpdb->prepare($where, $args) : $where;
+    }
+
     public function page_registry() {
         $this->require_cap(self::CAP_CREATE); global $wpdb;
-        $search=sanitize_text_field(wp_unslash($_GET['s'] ?? ''));
-        $where='1=1'; $args=[];
-        if($search!==''){ $like='%'.$wpdb->esc_like($search).'%'; $where.=' AND (full_name LIKE %s OR document_no LIKE %s OR organization LIKE %s)'; $args=[$like,$like,$like]; }
-        $sql="SELECT d.*, t.name template_name FROM {$this->docs_table} d LEFT JOIN {$this->templates_table} t ON t.id=d.template_id WHERE $where ORDER BY d.id DESC LIMIT 500";
-        if($args){ $sql=$wpdb->prepare($sql,$args); }
-        $items=$wpdb->get_results($sql);
+        $f = $this->registry_filters();
+        $where = $this->registry_where($f);
+        $per = 100; $paged = max(1, absint($_GET['paged'] ?? 1));
+        $total = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$this->docs_table} d WHERE $where");
+        $items = $wpdb->get_results("SELECT d.*, t.name template_name FROM {$this->docs_table} d LEFT JOIN {$this->templates_table} t ON t.id=d.template_id WHERE $where ORDER BY d.id DESC LIMIT $per OFFSET ".(($paged-1)*$per));
+        $exactIds = [];
+        if ($items && class_exists('ZAU_Exact_Migration')) {
+            $index = ZAU_Exact_Migration::docs_index_table();
+            if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $index)) === $index) {
+                foreach ((array)$wpdb->get_results("SELECT doc_id,user_id FROM {$index} WHERE doc_id IN (".implode(',', array_map(function ($i) { return (int)$i->id; }, $items)).")") as $r) { $exactIds[(int)$r->doc_id] = (int)$r->user_id; }
+            }
+        }
+        $base = admin_url('admin.php?page=zau-cert-registry');
+        $drafts = ($f['status'] === 'draft' || $f['files'] === 'missing') ? $total : 0;
         ?>
         <div class="wrap zau-wrap"><div class="zau-page-head"><div><h1>Реестр документов</h1><p>Проверка QR продолжает работать и после отзыва: на странице будет показан актуальный статус.</p></div></div>
-        <form method="get" class="zau-search"><input type="hidden" name="page" value="zau-cert-registry"><input type="search" name="s" value="<?php echo esc_attr($search); ?>" placeholder="ФИО, номер или организация"><button class="button">Найти</button></form>
+        <?php if (!empty($_GET['msg'])): ?><div class="notice notice-info is-dismissible"><p><?php echo esc_html(rawurldecode(sanitize_text_field(wp_unslash($_GET['msg'])))); ?></p></div><?php endif; ?>
+        <form method="get" class="zau-search"><input type="hidden" name="page" value="zau-cert-registry"><input type="search" name="s" value="<?php echo esc_attr($f['s']); ?>" placeholder="ФИО, номер или организация">
+            <select name="source"><option value="">Все документы</option><option value="exact" <?php selected($f['source'],'exact'); ?>>Из перенесённых заявлений старого сайта</option><option value="new" <?php selected($f['source'],'new'); ?>>Остальные (новый сайт, прежние PDF)</option></select>
+            <select name="status"><option value="">Любой статус</option><option value="draft" <?php selected($f['status'],'draft'); ?>>Черновик</option><option value="active" <?php selected($f['status'],'active'); ?>>Действителен</option><option value="revoked" <?php selected($f['status'],'revoked'); ?>>Отозван</option></select>
+            <select name="files"><option value="">PDF: любой</option><option value="missing" <?php selected($f['files'],'missing'); ?>>PDF нет</option><option value="exists" <?php selected($f['files'],'exists'); ?>>PDF есть</option></select>
+            <button class="button">Найти</button></form>
+        <p>Найдено: <strong><?php echo (int)$total; ?></strong>
+            <?php if ($drafts && current_user_can(self::CAP_MANAGE) && class_exists('ZAU_Bulk_Regeneration')): ?>
+                · <a class="button button-primary" onclick="return confirm('Поставить в очередь формирования PDF все найденные документы без PDF (<?php echo (int)$drafts; ?>)?');" href="<?php echo esc_url(wp_nonce_url(add_query_arg(array_merge(['action'=>'zau_cert_registry_queue'], array_filter($f)), admin_url('admin-post.php')), self::NONCE)); ?>">Сформировать PDF для найденных черновиков</a>
+            <?php endif; ?></p>
         <table class="widefat striped zau-table"><thead><tr><th>ID</th><th>Документ</th><th>ФИО</th><th>Номер</th><th>Ориентация</th><th>Статус</th><th>Файлы</th><th></th></tr></thead><tbody>
         <?php if(!$items):?><tr><td colspan="8">Документы не найдены.</td></tr><?php endif;?>
         <?php foreach($items as $item):$effective_status=$this->document_is_member_exit_revoked($item)?'revoked':$item->record_status;?><tr>
-            <td><?php echo (int)$item->id;?></td><td><?php echo esc_html($item->template_name ?: $item->document_title);?><br><small><?php echo esc_html($item->created_at);?></small></td><td><strong><?php echo esc_html($item->full_name);?></strong><br><small><?php echo esc_html($item->organization);?></small></td><td><?php echo esc_html($item->document_no);?></td><td><?php echo $item->orientation==='portrait'?'Книжная':'Альбомная';?></td>
-            <td><span class="zau-status zau-status-<?php echo esc_attr($effective_status);?>"><?php echo esc_html($this->status_label($effective_status));?></span></td>
+            <td><?php echo (int)$item->id;?></td><td><?php echo esc_html($item->template_name ?: $item->document_title);?><br><small><?php echo esc_html($item->created_at);?></small><?php if(isset($exactIds[(int)$item->id])):?><br><a class="zau-status zau-status-active" style="font-size:11px" href="<?php echo esc_url(admin_url('admin.php?page=zau-exact-audit&person='.(int)$exactIds[(int)$item->id]));?>">со старого сайта · заявление от <?php echo esc_html($item->issue_date);?></a><?php endif;?></td><td><strong><?php echo esc_html($item->full_name);?></strong><br><small><?php echo esc_html($item->organization);?></small></td><td><?php echo esc_html($item->document_no);?></td><td><?php echo $item->orientation==='portrait'?'Книжная':'Альбомная';?></td>
+            <td><span class="zau-status zau-status-<?php echo esc_attr($effective_status);?>"><?php echo esc_html($this->status_label($effective_status));?></span><?php if($effective_status==='draft'&&empty($item->pdf_url)):?><br><small>PDF ещё не нарисован</small><?php endif;?></td>
             <td><?php if($item->pdf_url):?><a target="_blank" rel="noopener" href="<?php echo esc_url($this->secure_document_url($item));?>">PDF</a> · <?php endif;?><a target="_blank" rel="noopener" href="<?php echo esc_url($this->verify_url($item->verify_token));?>">Проверка</a></td>
-            <td class="zau-actions"><?php if(current_user_can(self::CAP_MANAGE)):?><a class="button button-primary" href="<?php echo esc_url(admin_url('admin.php?page=zau-cert-regenerate&id='.(int)$item->id));?>">Пересоздать PDF</a> <?php if($effective_status==='active'):?><a class="button" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=zau_cert_document_action&do=revoke&id='.(int)$item->id),self::NONCE));?>">Отозвать</a><?php elseif($effective_status==='revoked'):?><a class="button" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=zau_cert_document_action&do=restore&id='.(int)$item->id),self::NONCE));?>">Восстановить</a><?php endif;?> <?php if($item->pdf_url||$item->image_url):?><a class="button" onclick="return confirm('Удалить только PDF/JPG, оставив запись, номер, QR и данные заявки?');" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=zau_cert_document_action&do=clear_files&id='.(int)$item->id),self::NONCE));?>">Удалить файлы</a><?php endif;?> <a class="button button-link-delete" onclick="return confirm('Удалить запись и созданные файлы без возможности восстановления из этой строки?');" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=zau_cert_document_action&do=delete&id='.(int)$item->id),self::NONCE));?>">Удалить запись</a><?php else:?>—<?php endif;?></td>
-        </tr><?php endforeach;?></tbody></table></div>
+            <td class="zau-actions"><?php if(current_user_can(self::CAP_MANAGE)):?><a class="button button-primary" href="<?php echo esc_url(admin_url('admin.php?page=zau-cert-regenerate&id='.(int)$item->id));?>"><?php echo empty($item->pdf_url)?'Сформировать PDF':'Пересоздать PDF';?></a> <?php if($effective_status==='active'):?><a class="button" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=zau_cert_document_action&do=revoke&id='.(int)$item->id),self::NONCE));?>">Отозвать</a><?php elseif($effective_status==='revoked'):?><a class="button" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=zau_cert_document_action&do=restore&id='.(int)$item->id),self::NONCE));?>">Восстановить</a><?php endif;?> <?php if($item->pdf_url||$item->image_url):?><a class="button" onclick="return confirm('Удалить только PDF/JPG, оставив запись, номер, QR и данные заявки?');" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=zau_cert_document_action&do=clear_files&id='.(int)$item->id),self::NONCE));?>">Удалить файлы</a><?php endif;?> <a class="button button-link-delete" onclick="return confirm('Удалить запись и созданные файлы без возможности восстановления из этой строки?');" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=zau_cert_document_action&do=delete&id='.(int)$item->id),self::NONCE));?>">Удалить запись</a><?php else:?>—<?php endif;?></td>
+        </tr><?php endforeach;?></tbody></table>
+        <?php $pages = max(1, (int)ceil($total / $per)); if ($pages > 1): ?><p><?php for ($i = 1; $i <= $pages; $i++): if ($i > 3 && $i < $pages - 2 && abs($i - $paged) > 2) { if ($i === 4 || $i === $pages - 3) { echo '… '; } continue; } ?><a class="button<?php echo $i === $paged ? ' button-primary' : ''; ?>" href="<?php echo esc_url(add_query_arg(array_merge(array_filter($f), ['paged'=>$i]), $base)); ?>"><?php echo (int)$i; ?></a> <?php endfor; ?></p><?php endif; ?>
+        </div>
         <?php
+    }
+
+    public function registry_queue() {
+        $this->require_cap(self::CAP_MANAGE);
+        check_admin_referer(self::NONCE);
+        global $wpdb;
+        $f = $this->registry_filters();
+        $where = $this->registry_where($f) . " AND (d.pdf_url IS NULL OR d.pdf_url='') AND d.template_id>0";
+        $ids = $wpdb->get_col("SELECT d.id FROM {$this->docs_table} d WHERE $where ORDER BY d.id ASC LIMIT 100000");
+        $job = ($ids && class_exists('ZAU_Bulk_Regeneration')) ? ZAU_Bulk_Regeneration::instance()->create_job_for_documents($ids, ['update_number'=>0, 'keep_old_files'=>0, 'skip_without_signature'=>0, 'delay_ms'=>100, 'max_retries'=>2]) : 0;
+        if (!$job) { wp_safe_redirect(add_query_arg(array_merge(['page'=>'zau-cert-registry', 'msg'=>rawurlencode('Черновиков без PDF по этому фильтру нет.')], array_filter($f)), admin_url('admin.php'))); exit; }
+        wp_safe_redirect(admin_url('admin.php?page=zau-cert-bulk-regenerate&job=' . (int)$job));
+        exit;
     }
 
     public function page_regenerate() {

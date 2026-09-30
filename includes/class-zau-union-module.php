@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.32.0';
+    const VERSION = '2.33.0';
     const DB_VERSION = '2.18.2';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
@@ -3660,16 +3660,26 @@ final class ZAU_Union_Module {
         return 'restored';
     }
 
-    /** Удаляет документы, созданные пересозданием перенесённых заявлений (записи и файлы). */
-    public function regen_delete_documents($limit = 200) {
+    /** Удаляет документы пересоздания перенесённых заявлений по списку (только помеченные как созданные инструментом). */
+    public function regen_delete_documents(array $ids) {
         global $wpdb;
-        $rows = $wpdb->get_results($wpdb->prepare("SELECT id,pdf_url,image_url FROM {$this->docs_table} WHERE data_json LIKE %s ORDER BY id ASC LIMIT %d", '%"legacy_exact_regen":1%', (int)$limit));
+        $ids = array_filter(array_map('intval', $ids));
+        if (!$ids) { return 0; }
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT id,pdf_url,image_url FROM {$this->docs_table} WHERE id IN (" . implode(',', $ids) . ") AND data_json LIKE %s", '%"legacy_exact_regen":1%'));
         foreach ((array)$rows as $r) {
             if (!empty($r->pdf_url)) { $this->delete_upload_url($r->pdf_url); }
             if (!empty($r->image_url)) { $this->delete_upload_url($r->image_url); }
             $wpdb->delete($this->docs_table, ['id'=>(int)$r->id]);
         }
-        return count((array)$rows);
+        return count($ids);
+    }
+
+    /** Остатки без индекса (созданные до 2.33.0 и не попавшие в индекс). */
+    public function regen_delete_documents_legacy($limit = 200) {
+        global $wpdb;
+        $ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->docs_table} WHERE data_json LIKE %s ORDER BY id ASC LIMIT %d", '%"legacy_exact_regen":1%', (int)$limit));
+        $this->regen_delete_documents((array)$ids);
+        return count((array)$ids);
     }
 
     private function update_user_from_submission($data) {
