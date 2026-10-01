@@ -42,6 +42,7 @@ final class ZAU_Bulk_Regeneration {
         // Фоновая (серверная) генерация PDF.
         add_filter('cron_schedules', [$this, 'cron_schedules']);
         add_action(self::CRON_HOOK, [$this, 'cron_tick']);
+        add_action(self::CRON_HOOK . '_now', [$this, 'cron_tick']);
         add_action('init', [$this, 'ensure_cron']);
         add_action('wp_ajax_zau_cert_bulk_server_tick', [$this, 'ajax_server_tick']);
         add_action('wp_ajax_nopriv_zau_cert_bulk_bg', [$this, 'ajax_background_chain']);
@@ -74,20 +75,55 @@ final class ZAU_Bulk_Regeneration {
     }
 
     public function cron_tick() {
-        $this->process_server_jobs(45);
+        $this->process_server_jobs(45, 'cron');
     }
 
     /**
      * Обрабатывает серверные очереди в пределах $budget секунд. Один процесс за раз (блокировка на 2 минуты).
      * Возвращает число обработанных документов.
      */
-    public function process_server_jobs($budget = 40) {
+    const STATUS_OPT = 'zau_cert_bulk_server_status';
+    private $current_item = 0;
+    private $lock_token = '';
+
+    /** Сколько секунд можно работать в этом запросе, чтобы хостинг не оборвал PHP. */
+    private function safe_budget($wanted) {
+        @set_time_limit((int)$wanted + 60);
+        $limit = (int)ini_get('max_execution_time');
+        return $limit > 0 ? max(5, min((int)$wanted, $limit - 15)) : (int)$wanted;
+    }
+
+    private function save_server_status(array $patch) {
+        $st = (array)get_option(self::STATUS_OPT, []);
+        update_option(self::STATUS_OPT, array_merge($st, $patch), false);
+    }
+
+    /**
+     * Обрабатывает серверные очереди в пределах $budget секунд. Один процесс за раз:
+     * блокировка с «пульсом» после каждого документа; брошенная (процесс убит хостингом) снимается через 90 с.
+     * Возвращает число обработанных документов, -1 — если сейчас работает другой процесс.
+     */
+    public function process_server_jobs($budget = 40, $context = 'cron') {
         global $wpdb;
         $lock = (int)get_option(self::LOCK_OPT, 0);
-        if ($lock && time() - $lock < 120) { return 0; }
+        if ($lock && time() - $lock < 90) { return -1; }
         update_option(self::LOCK_OPT, time(), false);
-        @set_time_limit(max(60, (int)$budget + 30));
+        $this->lock_token = wp_generate_password(8, false, false);
         if (function_exists('wp_raise_memory_limit')) { wp_raise_memory_limit('admin'); }
+        $budget = $this->safe_budget($budget);
+        $this->save_server_status(['last_start'=>current_time('mysql'), 'context'=>$context, 'budget'=>$budget, 'memory_limit'=>(string)ini_get('memory_limit'), 'time_limit'=>(int)ini_get('max_execution_time')]);
+        // Если PHP упадёт (память, время) — записать причину в документ очереди и снять блокировку.
+        register_shutdown_function(function () use ($context) {
+            if ($this->lock_token === '') { return; }
+            $e = error_get_last();
+            if ($e && in_array($e['type'], [E_ERROR, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR, E_RECOVERABLE_ERROR], true)) {
+                global $wpdb;
+                $msg = 'Фатальная ошибка PHP при формировании: ' . $e['message'];
+                if ($this->current_item) { $wpdb->update($this->items_table, ['status'=>'failed', 'error_text'=>mb_substr($msg, 0, 4000), 'completed_at'=>current_time('mysql'), 'updated_at'=>current_time('mysql')], ['id'=>$this->current_item]); }
+                $this->save_server_status(['last_error'=>$msg, 'last_error_at'=>current_time('mysql')]);
+            }
+            delete_option(self::LOCK_OPT);
+        });
         $started = microtime(true); $done = 0;
         try {
             foreach ($this->server_jobs() as $job) {
@@ -102,8 +138,11 @@ final class ZAU_Bulk_Regeneration {
                 if (microtime(true) - $started >= $budget) { break; }
             }
         } finally {
+            $this->current_item = 0;
+            $this->lock_token = '';
             delete_option(self::LOCK_OPT);
         }
+        $this->save_server_status(['last_end'=>current_time('mysql'), 'last_done'=>$done, 'last_seconds'=>round(microtime(true) - $started, 1)]);
         $active = (bool)$this->server_jobs_with_work();
         if ($active) { set_transient('zau_cert_bulk_server_active', 1, DAY_IN_SECONDS); } else { delete_transient('zau_cert_bulk_server_active'); }
         return $done;
@@ -122,13 +161,14 @@ final class ZAU_Bulk_Regeneration {
     private function process_server_item($job) {
         global $wpdb;
         $jobId = (int)$job->id;
-        $stale = wp_date('Y-m-d H:i:s', time() - 900);
+        $stale = wp_date('Y-m-d H:i:s', time() - 180);
         $wpdb->query($wpdb->prepare("UPDATE {$this->items_table} SET status='queued',updated_at=%s WHERE job_id=%d AND status='processing' AND updated_at<%s", current_time('mysql'), $jobId, $stale));
         $item = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->items_table} WHERE job_id=%d AND status='queued' ORDER BY id ASC LIMIT 1", $jobId));
         if (!$item) { $this->refresh_job_counts($jobId); return false; }
         $now = current_time('mysql');
         $claimed = $wpdb->query($wpdb->prepare("UPDATE {$this->items_table} SET status='processing',attempts=attempts+1,started_at=%s,updated_at=%s WHERE id=%d AND status='queued'", $now, $now, (int)$item->id));
         if (!$claimed) { return true; }
+        $this->current_item = (int)$item->id;
         $options = json_decode((string)$job->options_json, true) ?: [];
         $wpdb->update($this->jobs_table, ['status'=>'running', 'current_document_id'=>(int)$item->document_id, 'updated_at'=>$now], ['id'=>$jobId]);
         $error = '';
@@ -146,7 +186,8 @@ final class ZAU_Bulk_Regeneration {
             $wpdb->update($this->items_table, ['status'=>'skipped', 'error_text'=>'Подпись отсутствует.', 'completed_at'=>$now, 'updated_at'=>$now], ['id'=>(int)$item->id]);
             return true;
         } else {
-            $jpeg = ZAU_Server_Render::render((array)$payload['template'], (array)$payload['values']);
+            try { $jpeg = ZAU_Server_Render::render((array)$payload['template'], (array)$payload['values']); }
+            catch (Throwable $e) { $jpeg = new WP_Error('render', $e->getMessage()); }
             if (is_wp_error($jpeg)) { $error = $jpeg->get_error_message(); }
             else {
                 $target = !empty($options['target_template_id']) ? $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->templates_table} WHERE id=%d", (int)$options['target_template_id'])) : null;
@@ -162,23 +203,37 @@ final class ZAU_Bulk_Regeneration {
             $next = ((int)$item->attempts + 1 <= $max) ? 'queued' : 'failed';
             $wpdb->update($this->items_table, ['status'=>$next, 'error_text'=>mb_substr($error, 0, 4000), 'completed_at'=>$next === 'failed' ? $now : null, 'updated_at'=>$now], ['id'=>(int)$item->id]);
         }
+        if ($error !== '') { $this->save_server_status(['last_error'=>'#' . (int)$item->document_id . ': ' . $error, 'last_error_at'=>$now]); }
+        $this->current_item = 0;
         if ((int)$item->id % 10 === 0) { $this->refresh_job_counts($jobId); }
         return true;
+    }
+
+    private function server_info_text() {
+        $st = (array)get_option(self::STATUS_OPT, []);
+        if (!$st) { return 'Сервер ещё не запускал обработку.'; }
+        $ctx = ['page'=>'со страницы очереди', 'cron'=>'по расписанию (WP-Cron)', 'background'=>'в фоне'][$st['context'] ?? ''] ?? '';
+        $out = 'Последний запуск: ' . ($st['last_start'] ?? '—') . ' ' . $ctx . (isset($st['last_done']) ? ' · обработано за запуск: ' . (int)$st['last_done'] . ' за ' . ($st['last_seconds'] ?? '?') . ' с' : '') . ' · лимиты PHP: ' . ($st['time_limit'] ? $st['time_limit'] . ' с' : 'без ограничения времени') . ', память ' . ($st['memory_limit'] ?? '?');
+        if (!empty($st['last_error'])) { $out .= ' · Последняя ошибка (' . ($st['last_error_at'] ?? '') . '): ' . $st['last_error']; }
+        if (defined('DISABLE_WP_CRON') && DISABLE_WP_CRON) { $out .= ' · WP-Cron отключён на сайте: без открытой страницы очередь пойдёт только при системном cron.'; }
+        return $out;
     }
 
     /** Вызов со страницы очереди, пока она открыта: обработать порцию и вернуть состояние. */
     public function ajax_server_tick() {
         $this->require_ajax();
-        $n = $this->process_server_jobs(20);
+        $n = $this->process_server_jobs(20, 'page');
         $job = $this->get_job(absint($_POST['job_id'] ?? 0));
         if ($job) { $this->refresh_job_counts((int)$job->id); }
         $this->kick_background();
-        wp_send_json_success(['processed_now'=>$n]);
+        wp_send_json_success(['processed_now'=>$n, 'locked'=>$n === -1 ? 1 : 0]);
     }
 
     /** Продолжение в фоне без открытой вкладки: сервер сам себе отправляет запрос (если хостинг это позволяет). */
     public function kick_background() {
         if (!get_transient('zau_cert_bulk_server_active')) { return; }
+        if (!wp_next_scheduled(self::CRON_HOOK . '_now')) { wp_schedule_single_event(time(), self::CRON_HOOK . '_now'); }
+        if (function_exists('spawn_cron')) { spawn_cron(); }
         $key = (string)get_option(self::CHAIN_OPT, '');
         if ($key === '') { $key = wp_generate_password(32, false, false); update_option(self::CHAIN_OPT, $key, false); }
         wp_remote_post(admin_url('admin-ajax.php'), ['timeout'=>0.01, 'blocking'=>false, 'sslverify'=>apply_filters('https_local_ssl_verify', false), 'body'=>['action'=>'zau_cert_bulk_bg', 'key'=>$key]]);
@@ -188,7 +243,7 @@ final class ZAU_Bulk_Regeneration {
         $key = (string)get_option(self::CHAIN_OPT, '');
         if ($key === '' || !hash_equals($key, (string)wp_unslash($_POST['key'] ?? ''))) { wp_die('', '', ['response'=>403]); }
         ignore_user_abort(true);
-        $this->process_server_jobs(45);
+        $this->process_server_jobs(45, 'background');
         $this->kick_background();
         wp_die('ok');
     }
@@ -637,7 +692,8 @@ final class ZAU_Bulk_Regeneration {
         wp_send_json_success([
             'job_id'=>(int)$job->id,'status'=>$job->status,'status_label'=>$this->status_label($job->status),'total'=>(int)$job->total_count,'processed'=>(int)$job->processed_count,'success'=>(int)$job->success_count,'failed'=>(int)$job->failed_count,'skipped'=>(int)$job->skipped_count,'current_document_id'=>(int)$job->current_document_id,'options'=>$options,
             'errors'=>array_map(function($row){return ['document_id'=>(int)$row->document_id,'full_name'=>$row->full_name,'document_no'=>$row->document_no,'attempts'=>(int)$row->attempts,'error'=>$row->error_text];},$errors),
-            'report_url'=>wp_nonce_url(admin_url('admin-post.php?action=zau_cert_bulk_report&job='.(int)$job->id),self::NONCE)
+            'report_url'=>wp_nonce_url(admin_url('admin-post.php?action=zau_cert_bulk_report&job='.(int)$job->id),self::NONCE),
+            'server_info'=>$this->server_info_text()
         ]);
     }
 
@@ -648,6 +704,7 @@ final class ZAU_Bulk_Regeneration {
         $now=current_time('mysql');
         if($command==='pause'){$wpdb->update($this->jobs_table,['status'=>'paused','updated_at'=>$now],['id'=>$job_id]);}
         elseif($command==='resume'){$wpdb->update($this->jobs_table,['status'=>'running','completed_at'=>null,'updated_at'=>$now],['id'=>$job_id]);$jobRow=$this->get_job($job_id);if($jobRow&&strpos((string)$jobRow->options_json,'"server":1')!==false)$this->start_background();}
+        elseif($command==='to_browser'||$command==='to_server'){$jobRow=$this->get_job($job_id);$opts=json_decode((string)$jobRow->options_json,true)?:[];$opts['server']=$command==='to_server'&&$this->server_available()?1:0;$wpdb->update($this->jobs_table,['options_json'=>wp_json_encode($opts,JSON_UNESCAPED_UNICODE),'updated_at'=>$now],['id'=>$job_id]);$wpdb->query($wpdb->prepare("UPDATE {$this->items_table} SET status='queued',updated_at=%s WHERE job_id=%d AND status='processing'",$now,$job_id));if($opts['server'])$this->start_background();}
         elseif($command==='cancel'){$wpdb->update($this->jobs_table,['status'=>'canceled','updated_at'=>$now,'completed_at'=>$now],['id'=>$job_id]);}
         elseif($command==='retry_failed'){
             $wpdb->query($wpdb->prepare("UPDATE {$this->items_table} SET status='queued',error_text='',completed_at=NULL,updated_at=%s WHERE job_id=%d AND status='failed'",$now,$job_id));

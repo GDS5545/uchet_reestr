@@ -60,15 +60,40 @@ final class ZAU_Server_Render {
         return '';
     }
 
+    /** Файл со старого сайта, уже скопированный точным переносом в uploads/zau-legacy-files (поиск по имени файла). */
+    private static function legacy_copy($url) {
+        static $map = null;
+        $name = rawurldecode(basename((string)wp_parse_url((string)$url, PHP_URL_PATH)));
+        if ($name === '' || strpos($name, '.') === false) { return ''; }
+        $up = wp_upload_dir();
+        if (!empty($up['error'])) { return ''; }
+        $root = trailingslashit($up['basedir']) . 'zau-legacy-files';
+        if (!is_dir($root)) { return ''; }
+        if ($map === null) {
+            $map = get_transient('zau_legacy_files_index');
+            if (!is_array($map)) {
+                $map = [];
+                foreach ((array)@scandir($root) as $dir) {
+                    if ($dir === '.' || $dir === '..' || !is_dir($root . '/' . $dir)) { continue; }
+                    foreach ((array)@scandir($root . '/' . $dir) as $f) { if ($f !== '.' && $f !== '..') { $map[$f] = $dir; } }
+                }
+                set_transient('zau_legacy_files_index', $map, HOUR_IN_SECONDS);
+            }
+        }
+        return isset($map[$name]) && is_file($root . '/' . $map[$name] . '/' . $name) ? $root . '/' . $map[$name] . '/' . $name : '';
+    }
+
     private static function load_image($url) {
         static $cache = [];
         $url = (string)$url;
         if ($url === '') { return null; }
         if (array_key_exists($url, $cache)) { return $cache[$url]; }
         $file = self::local_path($url);
+        if ($file === '') { $file = self::legacy_copy($url); }
         $bytes = $file !== '' ? @file_get_contents($file) : '';
         if (($bytes === '' || $bytes === false) && preg_match('#^https?://#i', $url)) {
-            $r = wp_remote_get($url, ['timeout'=>20]);
+            // Внешний файл (например, подпись на старом сайте): ждём недолго, чтобы хостинг не оборвал обработку.
+            $r = wp_remote_get($url, ['timeout'=>8, 'redirection'=>2]);
             $bytes = is_wp_error($r) ? '' : (string)wp_remote_retrieve_body($r);
         }
         $img = $bytes ? @imagecreatefromstring($bytes) : false;
@@ -212,7 +237,10 @@ final class ZAU_Server_Render {
         try {
             $im = imagecreatetruecolor($w, $h);
             imagealphablending($im, true);
-            self::draw_background($im, self::load_image($tpl['background_url'] ?? ''), $w, $h, $tpl['background_mode'] ?? 'stretch');
+            $bgUrl = (string)($tpl['background_url'] ?? '');
+            $bg = self::load_image($bgUrl);
+            if ($bgUrl !== '' && !$bg) { throw new RuntimeException('Не удалось загрузить подложку шаблона: ' . $bgUrl); }
+            self::draw_background($im, $bg, $w, $h, $tpl['background_mode'] ?? 'stretch');
             $fields = (array)($tpl['fields'] ?? []);
             $imageKeys = self::image_keys();
             $keys = array_values(array_filter(array_keys($fields), function ($k) { return $k !== 'qr'; }));

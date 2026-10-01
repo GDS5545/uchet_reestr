@@ -458,8 +458,10 @@
         [prefixInput, patternInput, digitsInput].filter(Boolean).forEach(input => input.addEventListener('input', updateNumberExample));
         updateNumberExample();
 
-        form?.addEventListener('input', event => { if (event.isTrusted) markDirty(); });
-        form?.addEventListener('change', event => { if (event.isTrusted) markDirty(); });
+        // Галочка пересоздания и «Текст для проверки» не входят в шаблон — их изменение не делает шаблон «несохранённым».
+        const notTemplateInput = t => !!(t && t.closest && (t.closest('[data-zau-template-regen]') || t.matches('[data-zau-preview-text]')));
+        form?.addEventListener('input', event => { if (event.isTrusted && !notTemplateInput(event.target)) markDirty(); });
+        form?.addEventListener('change', event => { if (event.isTrusted && !notTemplateInput(event.target)) markDirty(); });
 
         form?.addEventListener('submit', async event => {
             if (saving) { event.preventDefault(); return; }
@@ -735,14 +737,37 @@
         // Серверная очередь: PDF рисует сервер, страница только подталкивает его и показывает прогресс.
         async function runServerQueue() {
             running = true;
-            if (currentText) currentText.innerHTML = '<strong>Документы формируются на сервере.</strong> Вкладку можно закрыть — очередь продолжится в фоне.';
+            const show = (st, extra) => {
+                if (!currentText) return;
+                currentText.innerHTML = '<strong>Документы формируются на сервере.</strong> Вкладку можно закрыть — очередь продолжится в фоне.'
+                    + (extra ? '<br>' + extra : '')
+                    + (st && st.server_info ? '<br><small>' + esc(st.server_info) + '</small>' : '')
+                    + '<br><button type="button" class="button" data-zau-to-browser>Формировать в браузере</button> <small>— если на сервере не идёт: PDF будет рисовать этот браузер, держите вкладку открытой.</small>';
+            };
+            show(null, 'Запуск…');
             while (running) {
-                try { await ajax('zau_cert_bulk_server_tick', {job_id: jobId}); } catch (err) { if (currentText) currentText.innerHTML = 'Связь с сервером прервалась, повторяем… ' + esc(err.message || ''); await sleep(5000); }
+                let extra = '';
+                try {
+                    const t = await ajax('zau_cert_bulk_server_tick', {job_id: jobId});
+                    if (t && t.locked) extra = 'Сервер обрабатывает порцию в фоне — ждём.';
+                } catch (err) { extra = 'Связь с сервером прервалась (' + esc(err.message || '') + '), повторяем…'; await sleep(5000); }
                 const st = await refreshStatus();
                 if (!st || ['completed', 'paused', 'canceled'].includes(st.status)) { running = false; break; }
+                if (!(st.options && Number(st.options.server))) { running = false; break; }
+                show(st, extra);
                 await sleep(1500);
             }
         }
+
+        root.addEventListener('click', async e => {
+            const toBrowser = e.target.closest('[data-zau-to-browser]');
+            if (!toBrowser || !jobId) return;
+            if (!confirm('Переключить очередь на формирование в браузере? Держите эту вкладку открытой до конца.')) return;
+            running = false;
+            await ajax('zau_cert_bulk_control', {job_id: jobId, command: 'to_browser'});
+            await sleep(300);
+            await runQueue();
+        });
 
         async function runQueue() {
             if (!jobId || running) return;

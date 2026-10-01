@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Профсоюз — регистрация, документы и QR
  * Description: Единый реестр профсоюза с AQNIET Blue UX: регистрация, статусы, филиалы единым текстом, защищённая личная карточка, скрытый wp-admin для участников, акции и скидки, документы/PDF/QR, кабинеты организаций и Elementor.
- * Version: 2.35.0
+ * Version: 2.35.1
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -37,7 +37,7 @@ register_shutdown_function(function () {
 });
 
 final class ZAU_Certificate_PDF_Generator {
-    const VERSION = '2.35.0';
+    const VERSION = '2.35.1';
     const DB_VERSION = '2.18.2';
     const OPT_DB_VERSION = 'zau_cert_db_version';
     const OPT_SETTINGS = 'zau_cert_settings';
@@ -451,6 +451,14 @@ final class ZAU_Certificate_PDF_Generator {
                             <div id="zau-stage" class="zau-stage" data-orientation="<?php echo esc_attr($orientation); ?>"><img id="zau-stage-bg" alt="" src="<?php echo esc_url($tpl->background_url ?? ''); ?>"><div id="zau-stage-fields"></div></div>
                         </div>
                         <p class="description">Редактор всегда сохраняет точное соотношение сторон страницы. Рекомендуемые размеры: книжная — 1754×2480 px; альбомная — 2480×1754 px. Если пропорции загруженной подложки отличаются, используйте режим «Вместить целиком» либо подготовьте изображение точного размера.</p>
+                    <?php if ($tpl): global $wpdb; $tplDocs = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->docs_table} WHERE template_id=%d", (int)$tpl->id)); $srvReason = ''; $srvOk = class_exists('ZAU_Server_Render') && ZAU_Server_Render::available($srvReason); ?>
+                    <div class="zau-template-regen" data-zau-template-regen data-docs="<?php echo (int)$tplDocs; ?>">
+                        <label><input type="checkbox" data-zau-regen-after-save> После сохранения пересоздать все документы этого шаблона (<?php echo (int)$tplDocs; ?>) в фоне</label>
+                        <button type="button" class="button" data-zau-regen-now <?php disabled(!$tplDocs); ?>>Пересоздать сейчас</button>
+                        <span data-zau-regen-result></span>
+                        <p class="description">Номера, QR и данные документов сохраняются, файлы PDF заменяются по новому шаблону. <?php echo $srvOk ? 'PDF формируется на сервере — вкладку можно закрыть.' : 'Сервер не может рисовать PDF (' . esc_html($srvReason) . ') — очередь откроется в браузере, держите её открытой.'; ?></p>
+                    </div>
+                    <?php endif; ?>
                     </div>
                     <div class="zau-control-column">
                         <div class="zau-field-list" id="zau-field-list"></div>
@@ -458,14 +466,6 @@ final class ZAU_Certificate_PDF_Generator {
                     </div>
                 </div>
                 <div class="zau-template-save-row"><?php submit_button($tpl ? 'Сохранить изменения' : 'Создать шаблон', 'primary large', 'submit', false); ?><span id="zau-template-save-status" class="zau-template-save-status" aria-live="polite"></span></div>
-                <?php if ($tpl): global $wpdb; $tplDocs = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->docs_table} WHERE template_id=%d", (int)$tpl->id)); $srvReason = ''; $srvOk = class_exists('ZAU_Server_Render') && ZAU_Server_Render::available($srvReason); ?>
-                <div class="zau-template-regen" data-zau-template-regen data-docs="<?php echo (int)$tplDocs; ?>">
-                    <label><input type="checkbox" data-zau-regen-after-save> После сохранения пересоздать все документы этого шаблона (<?php echo (int)$tplDocs; ?>) в фоне</label>
-                    <button type="button" class="button" data-zau-regen-now <?php disabled(!$tplDocs); ?>>Пересоздать сейчас</button>
-                    <span data-zau-regen-result></span>
-                    <p class="description">Номера, QR и данные документов сохраняются, файлы PDF заменяются по новому шаблону. <?php echo $srvOk ? 'PDF формируется на сервере — вкладку можно закрыть.' : 'Сервер не может рисовать PDF (' . esc_html($srvReason) . ') — очередь откроется в браузере, держите её открытой.'; ?></p>
-                </div>
-                <?php endif; ?>
             </form>
         </div>
         <?php
