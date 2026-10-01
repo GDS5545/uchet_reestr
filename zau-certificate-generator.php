@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ZAU Профсоюз — регистрация, документы и QR
  * Description: Единый реестр профсоюза с AQNIET Blue UX: регистрация, статусы, филиалы единым текстом, защищённая личная карточка, скрытый wp-admin для участников, акции и скидки, документы/PDF/QR, кабинеты организаций и Elementor.
- * Version: 2.34.0
+ * Version: 2.35.0
  * Author: Dauren / ZAU
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -37,7 +37,7 @@ register_shutdown_function(function () {
 });
 
 final class ZAU_Certificate_PDF_Generator {
-    const VERSION = '2.34.0';
+    const VERSION = '2.35.0';
     const DB_VERSION = '2.18.2';
     const OPT_DB_VERSION = 'zau_cert_db_version';
     const OPT_SETTINGS = 'zau_cert_settings';
@@ -80,6 +80,7 @@ final class ZAU_Certificate_PDF_Generator {
         add_action('wp_ajax_zau_cert_parse_import', [$this, 'ajax_parse_import']);
         add_action('wp_ajax_zau_cert_prepare_regeneration', [$this, 'ajax_prepare_regeneration']);
         add_action('admin_post_zau_cert_registry_queue', [$this, 'registry_queue']);
+        add_action('wp_ajax_zau_cert_template_regen', [$this, 'ajax_template_regen']);
 
         add_shortcode('zau_certificate_verify', [$this, 'verify_shortcode']);
         add_shortcode('zau_my_certificates', [$this, 'my_certificates_shortcode']);
@@ -457,6 +458,14 @@ final class ZAU_Certificate_PDF_Generator {
                     </div>
                 </div>
                 <div class="zau-template-save-row"><?php submit_button($tpl ? 'Сохранить изменения' : 'Создать шаблон', 'primary large', 'submit', false); ?><span id="zau-template-save-status" class="zau-template-save-status" aria-live="polite"></span></div>
+                <?php if ($tpl): global $wpdb; $tplDocs = (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$this->docs_table} WHERE template_id=%d", (int)$tpl->id)); $srvReason = ''; $srvOk = class_exists('ZAU_Server_Render') && ZAU_Server_Render::available($srvReason); ?>
+                <div class="zau-template-regen" data-zau-template-regen data-docs="<?php echo (int)$tplDocs; ?>">
+                    <label><input type="checkbox" data-zau-regen-after-save> После сохранения пересоздать все документы этого шаблона (<?php echo (int)$tplDocs; ?>) в фоне</label>
+                    <button type="button" class="button" data-zau-regen-now <?php disabled(!$tplDocs); ?>>Пересоздать сейчас</button>
+                    <span data-zau-regen-result></span>
+                    <p class="description">Номера, QR и данные документов сохраняются, файлы PDF заменяются по новому шаблону. <?php echo $srvOk ? 'PDF формируется на сервере — вкладку можно закрыть.' : 'Сервер не может рисовать PDF (' . esc_html($srvReason) . ') — очередь откроется в браузере, держите её открытой.'; ?></p>
+                </div>
+                <?php endif; ?>
             </form>
         </div>
         <?php
@@ -604,10 +613,14 @@ final class ZAU_Certificate_PDF_Generator {
                 'italic' => empty($v['italic']) ? 0 : 1,
                 'lineHeight' => max(0.8, min(2.5, (float)($v['lineHeight'] ?? $def['lineHeight']))),
                 'maxLines' => max(1, min(10, (int)($v['maxLines'] ?? $def['maxLines']))),
-                'height' => max(2, min(100, (float)($v['height'] ?? ($def['height'] ?? 10)))),
+                'height' => max(1, min(100, (float)($v['height'] ?? ($def['height'] ?? 10)))),
                 'fit' => in_array(($v['fit'] ?? ''), ['contain','cover','stretch'], true) ? $v['fit'] : ($def['fit'] ?? 'contain'),
                 'opacity' => max(0.1, min(1, (float)($v['opacity'] ?? ($def['opacity'] ?? 1)))),
+                // Рамка текста: по вертикали текст прижимается к верхней/нижней границе или по центру рамки (Y…Y+height).
+                'valign' => in_array(($v['valign'] ?? ''), ['top','middle','bottom'], true) ? $v['valign'] : (($v['growDirection'] ?? '') === 'up' ? 'legacy_up' : 'top'),
             ];
+            $out[$key]['boxSet'] = empty($v['boxSet']) ? 0 : 1;
+            if ($out[$key]['valign'] === 'legacy_up') { $out[$key]['valign'] = 'top'; $out[$key]['growDirection'] = 'up'; }
             if ($is_qr || $is_image) { $out[$key]['fontSize'] = 8; }
         }
         return $out;
@@ -1067,6 +1080,22 @@ final class ZAU_Certificate_PDF_Generator {
         <?php $pages = max(1, (int)ceil($total / $per)); if ($pages > 1): ?><p><?php for ($i = 1; $i <= $pages; $i++): if ($i > 3 && $i < $pages - 2 && abs($i - $paged) > 2) { if ($i === 4 || $i === $pages - 3) { echo '… '; } continue; } ?><a class="button<?php echo $i === $paged ? ' button-primary' : ''; ?>" href="<?php echo esc_url(add_query_arg(array_merge(array_filter($f), ['paged'=>$i]), $base)); ?>"><?php echo (int)$i; ?></a> <?php endfor; ?></p><?php endif; ?>
         </div>
         <?php
+    }
+
+    /** Пересоздать все документы шаблона (после правки шаблона) — фоновой очередью. */
+    public function ajax_template_regen() {
+        $this->require_ajax_cap(self::CAP_MANAGE);
+        check_ajax_referer(self::NONCE, 'nonce');
+        global $wpdb;
+        $id = absint($_POST['template_id'] ?? 0);
+        if (!$id || !$this->get_template($id)) { wp_send_json_error(['message'=>'Шаблон не найден.'], 404); }
+        $ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->docs_table} WHERE template_id=%d ORDER BY id ASC", $id));
+        if (!$ids) { wp_send_json_error(['message'=>'По этому шаблону ещё нет документов.'], 400); }
+        if (!class_exists('ZAU_Bulk_Regeneration')) { wp_send_json_error(['message'=>'Модуль массового пересоздания не загружен.'], 500); }
+        $job = ZAU_Bulk_Regeneration::instance()->create_job_for_documents($ids, ['update_number'=>0, 'keep_old_files'=>0, 'skip_without_signature'=>0, 'delay_ms'=>100, 'max_retries'=>2, 'server'=>1]);
+        if (!$job) { wp_send_json_error(['message'=>'Не удалось создать очередь.'], 500); }
+        $this->log('template_regen_queued', 'template', $id, count($ids) . ' documents, job ' . $job);
+        wp_send_json_success(['job_id'=>$job, 'count'=>count($ids), 'job_url'=>admin_url('admin.php?page=zau-cert-bulk-regenerate&job=' . $job)]);
     }
 
     public function registry_queue() {

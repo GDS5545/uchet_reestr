@@ -166,10 +166,63 @@
             });
         }
 
-        function overlayFontSize(f) {
+        // ---- Рамки полей: границы X слева/справа, Y сверху/снизу; текст рисуется тем же кодом, что и PDF ----
+        const previewTexts = {};
+        const previewCanvas = document.createElement('canvas');
+        previewCanvas.className = 'zau-stage-preview';
+        stage.insertBefore(previewCanvas, stageFields);
+        const measureCtx = document.createElement('canvas').getContext('2d');
+        const pageMm = () => orientation.value === 'portrait' ? {w: 210, h: 297} : {w: 297, h: 210};
+        const round3 = v => Math.round(Number(v) * 1000) / 1000;
+        const isText = key => key !== 'qr' && !isImageKey(key);
+        const previewText = key => previewTexts[key] != null ? previewTexts[key] : (samples[key] || defs[key] || key);
+
+        // Высота «по тексту»: maxLines строк по выбранному интервалу.
+        function autoTextHeight(f) {
             const d = dimensions();
-            const scale = stage.clientWidth / d.width;
-            return Math.max(8, Number(f.fontSize || 24) * scale);
+            return round3(Number(f.maxLines || 1) * Number(f.lineHeight || 1.2) * Number(f.fontSize || 24) / d.height * 100);
+        }
+
+        // Старые шаблоны: «рост вверх» → рамка с прижатием к нижней границе; рамка по тексту, если её не задавали.
+        function normalizeTextBox(key) {
+            const f = ensureField(key);
+            if (!isText(key)) return f;
+            if (f.growDirection === 'up' && f.valign !== 'bottom' && f.valign !== 'middle') {
+                const hgt = autoTextHeight(f);
+                f.y = round3(Math.max(0, Number(f.y) - hgt)); f.height = hgt; f.valign = 'bottom'; f.boxSet = 1;
+            }
+            delete f.growDirection;
+            if (!f.valign) f.valign = 'top';
+            if (!Number(f.boxSet)) f.height = autoTextHeight(f);
+            return f;
+        }
+        Object.keys(defs).forEach(normalizeTextBox);
+
+        function renderPreview() {
+            const d = dimensions();
+            const w = stage.clientWidth, h = stage.clientHeight;
+            if (!w || !h) return;
+            const dpr = window.devicePixelRatio || 1;
+            previewCanvas.width = Math.round(w * dpr); previewCanvas.height = Math.round(h * dpr);
+            const ctx = previewCanvas.getContext('2d');
+            ctx.setTransform(previewCanvas.width / d.width, 0, 0, previewCanvas.height / d.height, 0, 0);
+            ctx.clearRect(0, 0, d.width, d.height);
+            Object.keys(defs).forEach(key => {
+                const f = ensureField(key);
+                if (!Number(f.enabled) || !isText(key)) return;
+                drawTextField(ctx, f, previewText(key), d.width, d.height);
+            });
+        }
+
+        // Сколько строк займёт текст и помещается ли он в рамку.
+        function textFit(key) {
+            const f = ensureField(key), d = dimensions();
+            const size = Number(f.fontSize || 36);
+            measureCtx.font = (Number(f.italic) ? 'italic ' : '') + (Number(f.bold) ? '700 ' : '400 ') + size + 'px "' + (f.fontFamily || 'Arial') + '"';
+            const need = splitText(measureCtx, previewText(key), Number(f.width) / 100 * d.width).length;
+            const shown = Math.min(need, Number(f.maxLines || 2));
+            const blockPct = shown * size * Number(f.lineHeight || 1.2) / d.height * 100;
+            return {need, shown, cut: need > shown, overflow: Number(f.boxSet) && blockPct > Number(f.height) + 0.05};
         }
 
         function renderOverlays() {
@@ -178,7 +231,7 @@
                 const f = ensureField(key);
                 if (!Number(f.enabled)) return;
                 const el = document.createElement('div');
-                el.className = 'zau-stage-field' + (selectedKey === key ? ' is-selected' : '') + (key === 'qr' ? ' is-qr' : '') + (isImageKey(key) ? ' is-image' : '');
+                el.className = 'zau-stage-field' + (selectedKey === key ? ' is-selected' : '') + (key === 'qr' ? ' is-qr' : '') + (isImageKey(key) ? ' is-image' : '') + (isText(key) ? ' is-text' : '');
                 el.dataset.key = key;
                 el.style.left = Number(f.x) + '%';
                 el.style.top = Number(f.y) + '%';
@@ -186,128 +239,179 @@
                 if (key === 'qr') {
                     el.style.aspectRatio = '1 / 1';
                     el.innerHTML = '<span>QR</span>';
-                } else if (isImageKey(key)) {
-                    el.style.height = Number(f.height || 10) + '%';
-                    el.innerHTML = '<span>' + esc(samples[key] || defs[key]) + '</span>';
                 } else {
-                    el.textContent = samples[key] || defs[key];
-                    el.style.fontFamily = f.fontFamily || 'Arial';
-                    el.style.fontSize = overlayFontSize(f) + 'px';
-                    el.style.color = f.color || '#111111';
-                    el.style.textAlign = f.align || 'center';
-                    el.style.fontWeight = Number(f.bold) ? '700' : '400';
-                    el.style.fontStyle = Number(f.italic) ? 'italic' : 'normal';
-                    el.style.lineHeight = String(f.lineHeight || 1.2);
+                    el.style.height = Number(f.height || 10) + '%';
+                    el.innerHTML = isImageKey(key) ? '<span>' + esc(samples[key] || defs[key]) + '</span>' : '<em class="zau-stage-field-label">' + esc(defs[key] || key) + '</em>';
+                    if (isText(key) && textFit(key).overflow) el.classList.add('is-overflow');
                 }
-                el.addEventListener('click', ev => { ev.stopPropagation(); selectedKey = key; renderFieldList(); renderPanel(); renderOverlays(); });
+                if (selectedKey === key) {
+                    (key === 'qr' ? ['e', 's', 'se'] : ['n', 's', 'e', 'w', 'se']).forEach(side => {
+                        const handle = document.createElement('span');
+                        handle.className = 'zau-stage-handle zau-stage-handle-' + side;
+                        handle.dataset.side = side;
+                        el.appendChild(handle);
+                    });
+                }
+                el.addEventListener('click', ev => { ev.stopPropagation(); if (selectedKey !== key) { selectedKey = key; renderFieldList(); renderPanel(); renderOverlays(); } });
                 makeDraggable(el, key);
                 stageFields.appendChild(el);
             });
+            renderPreview();
         }
 
+        // Перетаскивание рамки целиком или её границы (ручки).
         function makeDraggable(el, key) {
             el.addEventListener('pointerdown', ev => {
                 if (ev.button !== 0) return;
                 ev.preventDefault();
-                selectedKey = key;
+                if (selectedKey !== key) { selectedKey = key; renderFieldList(); renderPanel(); }
                 el.setPointerCapture(ev.pointerId);
+                const side = ev.target?.dataset?.side || '';
                 const rect = stage.getBoundingClientRect();
                 const f = ensureField(key);
-                const startX = ev.clientX;
-                const startY = ev.clientY;
-                const oldX = Number(f.x);
-                const oldY = Number(f.y);
+                const start = {cx: ev.clientX, cy: ev.clientY, x: Number(f.x), y: Number(f.y), w: Number(f.width), h: Number(f.height || 10)};
+                const qrH = () => Number(f.width) * rect.width / rect.height;
                 const move = e => {
-                    const dx = (e.clientX - startX) / rect.width * 100;
-                    const dy = (e.clientY - startY) / rect.height * 100;
-                    f.x = Math.round(clamp(oldX + dx, 0, 100 - Number(f.width)) * 1000) / 1000;
-                    const maxY = key === 'qr' ? 100 - (Number(f.width) * rect.width / rect.height) : (isImageKey(key) ? 100 - Number(f.height || 10) : 97);
-                    f.y = Math.round(clamp(oldY + dy, 0, maxY) * 1000) / 1000;
-                    el.style.left = f.x + '%'; el.style.top = f.y + '%'; sync(); markDirty(); updatePanelNumbers();
+                    const dx = (e.clientX - start.cx) / rect.width * 100;
+                    const dy = (e.clientY - start.cy) / rect.height * 100;
+                    if (!side) {
+                        f.x = round3(clamp(start.x + dx, 0, 100 - start.w));
+                        f.y = round3(clamp(start.y + dy, 0, 100 - (key === 'qr' ? qrH() : start.h)));
+                    } else {
+                        if (side.includes('e')) f.width = round3(clamp(start.w + dx, 2, 100 - start.x));
+                        if (side === 'w') { const right = start.x + start.w; f.x = round3(clamp(start.x + dx, 0, right - 2)); f.width = round3(right - f.x); }
+                        if (key !== 'qr' && side.includes('s')) { f.height = round3(clamp(start.h + dy, 1, 100 - start.y)); f.boxSet = 1; }
+                        if (key !== 'qr' && side === 'n') { const bottom = start.y + start.h; f.y = round3(clamp(start.y + dy, 0, bottom - 1)); f.height = round3(bottom - f.y); f.boxSet = 1; }
+                    }
+                    el.style.left = f.x + '%'; el.style.top = f.y + '%'; el.style.width = f.width + '%';
+                    if (key !== 'qr') el.style.height = f.height + '%';
+                    sync(); markDirty(); updatePanelNumbers(); renderPreview();
                 };
                 const up = e => {
                     el.releasePointerCapture(e.pointerId);
                     el.removeEventListener('pointermove', move);
                     el.removeEventListener('pointerup', up);
-                    renderFieldList(); renderPanel();
+                    renderFieldList(); renderPanel(); renderOverlays();
                 };
                 el.addEventListener('pointermove', move);
                 el.addEventListener('pointerup', up);
             });
         }
 
+        const mmText = (pct, axis) => { const mm = pageMm()[axis] * Number(pct) / 100; return (Math.round(mm * 10) / 10).toString().replace('.', ',') + ' мм'; };
+
         function updatePanelNumbers() {
             const f = ensureField(selectedKey);
-            ['x','y','width','height'].forEach(name => {
-                const input = fieldPanel.querySelector('[name="field_' + name + '"]');
-                if (input) input.value = formatDecimal(f[name]);
+            const vals = {left: f.x, right: Number(f.x) + Number(f.width), top: f.y, bottom: Number(f.y) + Number(f.height || 0), width: f.width};
+            Object.keys(vals).forEach(name => {
+                const input = fieldPanel.querySelector('[data-edge="' + name + '"]');
+                if (input && document.activeElement !== input) input.value = formatDecimal(vals[name]);
+                const hint = fieldPanel.querySelector('[data-mm="' + name + '"]');
+                if (hint) hint.textContent = mmText(vals[name], name === 'top' || name === 'bottom' ? 'h' : 'w');
             });
+            const fit = fieldPanel.querySelector('[data-zau-fit]');
+            if (fit && isText(selectedKey)) {
+                const t = textFit(selectedKey);
+                fit.className = 'zau-fit-note' + (t.cut || t.overflow ? ' is-warn' : '');
+                fit.textContent = t.cut ? `Текст для проверки займёт ${t.need} стр., будет показано только ${t.shown} (макс. строк). Увеличьте ширину рамки, «Макс. строк» или уменьшите шрифт.`
+                    : (t.overflow ? `Текст (${t.shown} стр.) выше рамки — он выйдет за ${ensureField(selectedKey).valign === 'bottom' ? 'верхнюю' : 'нижнюю'} границу. Растяните рамку или уменьшите шрифт.` : `Помещается: ${t.shown} стр.`);
+            }
+        }
+
+        function edgeInput(name, label, axis) {
+            return `<label>${label}<input type="text" inputmode="decimal" data-edge="${name}" value=""><small class="zau-mm" data-mm="${name}"></small></label>`;
         }
 
         function renderPanel() {
             const key = selectedKey;
-            const f = ensureField(key);
+            const f = isText(key) ? normalizeTextBox(key) : ensureField(key);
             const isQr = key === 'qr';
             const isImage = isImageKey(key);
-            const sizeControls = isImage
-                ? `<label>Ширина, %<input type="text" inputmode="decimal" data-decimal data-min="2" data-max="100" name="field_width" value="${esc(formatDecimal(f.width))}"></label><label>Высота, %<input type="text" inputmode="decimal" data-decimal data-min="2" data-max="100" name="field_height" value="${esc(formatDecimal(f.height || 10))}"></label>`
-                : `<label>${isQr ? 'Размер' : 'Ширина'}, %<input type="text" inputmode="decimal" data-decimal data-min="2" data-max="100" name="field_width" value="${esc(formatDecimal(f.width))}"></label>${isQr ? '' : `<label>Размер шрифта, px<input type="number" min="8" max="240" name="field_fontSize" value="${esc(f.fontSize)}"></label>`}`;
-            const detailControls = isImage
-                ? `<div class="zau-mini-grid"><label>Вписывание<select name="field_fit"><option value="contain">Вместить целиком</option><option value="cover">Заполнить с обрезкой</option><option value="stretch">Растянуть</option></select></label><label>Прозрачность<input type="number" min="0.1" max="1" step="0.05" name="field_opacity" value="${esc(f.opacity ?? 1)}"></label></div><p class="description">Лучше использовать PNG с прозрачным фоном. Файл подписи выбирается при создании документа или передаётся из CSV/XLSX.</p>`
-                : (isQr ? '' : `
-                <label>Шрифт<select name="field_fontFamily"><option>Arial</option><option>Georgia</option><option>Times New Roman</option><option>Verdana</option><option>Tahoma</option></select></label>
+            const edges = isQr
+                ? `${edgeInput('left', 'Левая граница X, %', 'w')}${edgeInput('top', 'Верхняя граница Y, %', 'h')}${edgeInput('width', 'Размер, %', 'w')}`
+                : `${edgeInput('left', 'Левая граница X, %', 'w')}${edgeInput('right', 'Правая граница X, %', 'w')}${edgeInput('top', 'Верхняя граница Y, %', 'h')}${edgeInput('bottom', 'Нижняя граница Y, %', 'h')}`;
+            const textControls = `
                 <div class="zau-mini-grid">
+                    <label>Текст по X (по горизонтали)<select name="field_align"><option value="left">От левой границы →</option><option value="center">По центру рамки</option><option value="right">← От правой границы</option></select></label>
+                    <label>Текст по Y (по вертикали)<select name="field_valign"><option value="top">От верхней границы ↓</option><option value="middle">По центру рамки</option><option value="bottom">↑ От нижней границы</option></select></label>
+                    <label>Размер шрифта, px<input type="number" min="8" max="240" name="field_fontSize" value="${esc(f.fontSize)}"></label>
+                    <label>Шрифт<select name="field_fontFamily"><option>Arial</option><option>Georgia</option><option>Times New Roman</option><option>Verdana</option><option>Tahoma</option></select></label>
                     <label>Цвет<input type="color" name="field_color" value="${esc(f.color || '#111111')}"></label>
-                    <label>Выравнивание<select name="field_align"><option value="left">Слева</option><option value="center">По центру</option><option value="right">Справа</option></select></label>
                     <label>Интервал строк<input type="number" min="0.8" max="2.5" step="0.05" name="field_lineHeight" value="${esc(f.lineHeight)}"></label>
                     <label>Макс. строк<input type="number" min="1" max="10" name="field_maxLines" value="${esc(f.maxLines)}"></label>
-                    <label>Направление роста текста<select name="field_growDirection"><option value="down">Вниз (Y — верхняя граница)</option><option value="up">Вверх (Y — нижняя граница)</option></select></label>
+                    <label>&nbsp;<button type="button" class="button" data-zau-fit-height>Высота рамки по тексту</button></label>
                 </div>
-                <div class="zau-check-row"><label><input type="checkbox" name="field_bold" ${Number(f.bold) ? 'checked' : ''}> Жирный</label><label><input type="checkbox" name="field_italic" ${Number(f.italic) ? 'checked' : ''}> Курсив</label></div>`);
+                <div class="zau-check-row"><label><input type="checkbox" name="field_bold" ${Number(f.bold) ? 'checked' : ''}> Жирный</label><label><input type="checkbox" name="field_italic" ${Number(f.italic) ? 'checked' : ''}> Курсив</label></div>
+                <label>Текст для проверки (в шаблон не сохраняется)<textarea rows="2" data-zau-preview-text>${esc(previewText(key))}</textarea></label>
+                <p data-zau-fit class="zau-fit-note"></p>`;
+            const imageControls = `<div class="zau-mini-grid"><label>Вписывание<select name="field_fit"><option value="contain">Вместить целиком</option><option value="cover">Заполнить с обрезкой</option><option value="stretch">Растянуть</option></select></label><label>Прозрачность<input type="number" min="0.1" max="1" step="0.05" name="field_opacity" value="${esc(f.opacity ?? 1)}"></label></div><p class="description">Лучше использовать PNG с прозрачным фоном.</p>`;
 
             fieldPanel.innerHTML = `
                 <h3>${esc(defs[key] || key)}</h3>
                 <label class="zau-switch"><input type="checkbox" name="field_enabled" ${Number(f.enabled) ? 'checked' : ''}><span>Показывать это поле</span></label>
-                <div class="zau-mini-grid">
-                    <label>X, %<input type="text" inputmode="decimal" data-decimal data-min="0" data-max="100" name="field_x" value="${esc(formatDecimal(f.x))}"></label>
-                    <label>Y, %<input type="text" inputmode="decimal" data-decimal data-min="0" data-max="100" name="field_y" value="${esc(formatDecimal(f.y))}"></label>
-                    ${sizeControls}
-                </div>
-                <div class="zau-nudge-box"><span>Точное перемещение</span><div class="zau-nudge-controls"><button type="button" data-nudge-x="-1" aria-label="Влево">←</button><button type="button" data-nudge-y="-1" aria-label="Вверх">↑</button><button type="button" data-nudge-y="1" aria-label="Вниз">↓</button><button type="button" data-nudge-x="1" aria-label="Вправо">→</button><select data-nudge-step aria-label="Шаг перемещения"><option value="0.01">0,01%</option><option value="0.05">0,05%</option><option value="0.1" selected>0,1%</option><option value="0.5">0,5%</option><option value="1">1%</option></select></div></div>
-                ${detailControls}
-                <p class="description">X и Y — координаты левого верхнего угла поля. Можно вводить точку или запятую. Положение после перетаскивания сохраняется с точностью до 0,001%.</p>`;
+                <div class="zau-mini-grid zau-edges">${edges}</div>
+                <div class="zau-nudge-box"><span>Сдвинуть рамку</span><div class="zau-nudge-controls"><button type="button" data-nudge-x="-1" aria-label="Влево">←</button><button type="button" data-nudge-y="-1" aria-label="Вверх">↑</button><button type="button" data-nudge-y="1" aria-label="Вниз">↓</button><button type="button" data-nudge-x="1" aria-label="Вправо">→</button><select data-nudge-step aria-label="Шаг перемещения"><option value="0.01">0,01%</option><option value="0.05">0,05%</option><option value="0.1" selected>0,1%</option><option value="0.5">0,5%</option><option value="1">1%</option></select></div></div>
+                ${isQr ? '' : (isImage ? imageControls : textControls)}
+                <p class="description">${isQr ? 'Перетащите QR или потяните за край, чтобы изменить размер.' : 'Рамка — это границы поля: текст начинается от выбранной границы и не выходит за левую/правую. Перетащите рамку целиком или тяните за края (ручки появляются у выбранного поля). Значения — в % страницы, рядом — в мм для A4.'}</p>`;
 
             const font = fieldPanel.querySelector('[name="field_fontFamily"]'); if (font) font.value = f.fontFamily || 'Arial';
             const align = fieldPanel.querySelector('[name="field_align"]'); if (align) align.value = f.align || 'center';
+            const valign = fieldPanel.querySelector('[name="field_valign"]'); if (valign) valign.value = f.valign || 'top';
             const fit = fieldPanel.querySelector('[name="field_fit"]'); if (fit) fit.value = f.fit || 'contain';
-            const grow = fieldPanel.querySelector('[name="field_growDirection"]'); if (grow) grow.value = f.growDirection || 'down';
 
-            fieldPanel.querySelectorAll('input,select').forEach(input => input.addEventListener('input', () => {
+            fieldPanel.querySelectorAll('[name^="field_"]').forEach(input => input.addEventListener('input', () => {
                 const name = input.name.replace('field_', '');
                 if (input.type === 'checkbox') f[name] = input.checked ? 1 : 0;
-                else if (['x','y','width','height','fontSize','lineHeight','maxLines','opacity'].includes(name)) {
-                    let value = parseDecimal(input.value, f[name]);
-                    const min = input.dataset.min !== undefined ? parseDecimal(input.dataset.min, -Infinity) : (input.min !== '' ? parseDecimal(input.min, -Infinity) : -Infinity);
-                    const max = input.dataset.max !== undefined ? parseDecimal(input.dataset.max, Infinity) : (input.max !== '' ? parseDecimal(input.max, Infinity) : Infinity);
-                    value = clamp(value, min, max);
-                    f[name] = value;
+                else if (['fontSize','lineHeight','maxLines','opacity'].includes(name)) {
+                    const min = input.min !== '' ? parseDecimal(input.min, -Infinity) : -Infinity;
+                    const max = input.max !== '' ? parseDecimal(input.max, Infinity) : Infinity;
+                    f[name] = clamp(parseDecimal(input.value, f[name]), min, max);
+                    if (isText(key) && !Number(f.boxSet)) f.height = autoTextHeight(f);
                 } else f[name] = input.value;
-                sync(); markDirty(); renderFieldList(); renderOverlays();
+                if (name === 'valign' && f.valign !== 'top') f.boxSet = 1;
+                sync(); markDirty(); renderFieldList(); renderOverlays(); updatePanelNumbers();
             }));
+
+            // Границы: меняется только та граница, которую правят; противоположная остаётся на месте.
+            fieldPanel.querySelectorAll('[data-edge]').forEach(input => input.addEventListener('input', () => {
+                const v = parseDecimal(input.value, NaN);
+                if (!Number.isFinite(v)) return;
+                const right = Number(f.x) + Number(f.width), bottom = Number(f.y) + Number(f.height || 0);
+                switch (input.dataset.edge) {
+                    case 'left': f.x = round3(clamp(v, 0, (isQr ? 100 - Number(f.width) : right - 2))); if (!isQr) f.width = round3(right - f.x); break;
+                    case 'right': f.width = round3(clamp(v - Number(f.x), 2, 100 - Number(f.x))); break;
+                    case 'width': f.width = round3(clamp(v, 2, 100 - Number(f.x))); break;
+                    case 'top': f.y = round3(clamp(v, 0, isQr ? 100 : bottom - 1)); if (!isQr) { f.height = round3(bottom - f.y); f.boxSet = 1; } break;
+                    case 'bottom': f.height = round3(clamp(v - Number(f.y), 1, 100 - Number(f.y))); f.boxSet = 1; break;
+                }
+                sync(); markDirty(); renderOverlays(); updatePanelNumbers();
+            }));
+
+            fieldPanel.querySelector('[data-zau-preview-text]')?.addEventListener('input', e => { previewTexts[key] = e.target.value; renderOverlays(); updatePanelNumbers(); });
+            fieldPanel.querySelector('[data-zau-fit-height]')?.addEventListener('click', () => {
+                const t = textFit(key); const d = dimensions();
+                const hgt = round3(Math.max(1, t.shown) * Number(f.lineHeight || 1.2) * Number(f.fontSize || 24) / d.height * 100);
+                if (f.valign === 'bottom') f.y = round3(Math.max(0, Number(f.y) + Number(f.height) - hgt));
+                else if (f.valign === 'middle') f.y = round3(Math.max(0, Number(f.y) + (Number(f.height) - hgt) / 2));
+                f.height = hgt; f.boxSet = 1;
+                sync(); markDirty(); renderOverlays(); updatePanelNumbers();
+            });
 
             fieldPanel.querySelectorAll('[data-nudge-x],[data-nudge-y]').forEach(button => button.addEventListener('click', () => {
                 const step = parseDecimal(fieldPanel.querySelector('[data-nudge-step]')?.value, 0.1);
                 const dx = parseDecimal(button.dataset.nudgeX, 0) * step;
                 const dy = parseDecimal(button.dataset.nudgeY, 0) * step;
-                f.x = Math.round(clamp(parseDecimal(f.x) + dx, 0, 100 - parseDecimal(f.width, 0)) * 1000) / 1000;
-                const maxY = key === 'qr' ? 100 - parseDecimal(f.width, 0) : (isImage ? 100 - parseDecimal(f.height, 10) : 97);
-                f.y = Math.round(clamp(parseDecimal(f.y) + dy, 0, maxY) * 1000) / 1000;
+                const rect = stage.getBoundingClientRect();
+                const hPct = isQr ? Number(f.width) * rect.width / Math.max(1, rect.height) : Number(f.height || 0);
+                f.x = round3(clamp(parseDecimal(f.x) + dx, 0, 100 - parseDecimal(f.width, 0)));
+                f.y = round3(clamp(parseDecimal(f.y) + dy, 0, 100 - hPct));
                 sync(); markDirty(); updatePanelNumbers(); renderOverlays();
             }));
+            updatePanelNumbers();
         }
 
         stage.addEventListener('click', () => { renderOverlays(); });
-        orientation.addEventListener('change', () => { stageZoom = 1; markDirty(); applyStageGeometry(); });
+        orientation.addEventListener('change', () => { stageZoom = 1; Object.keys(defs).forEach(normalizeTextBox); sync(); markDirty(); applyStageGeometry(); renderPanel(); });
         bgMode.addEventListener('change', () => { markDirty(); applyStageGeometry(); });
         bgUrl.addEventListener('input', () => { markDirty(); bg.src = bgUrl.value; });
         bg.addEventListener('load', () => { validateBackgroundRatio(); applyStageGeometry(); });
@@ -391,12 +495,33 @@
                 }
                 dirty = false;
                 setSaveStatus('Сохранено: ' + (result.data.updated_at || 'только что'), 'success');
+                if (regenAfter?.checked) await queueTemplateRegen(id);
             } catch (error) {
                 setSaveStatus(error.message || 'Ошибка сохранения.', 'error');
             } finally {
                 saving = false;
                 buttons.forEach(button => button.disabled = false);
             }
+        });
+
+        // Пересоздание всех документов шаблона в фоне.
+        const regenBox = root.querySelector('[data-zau-template-regen]');
+        const regenAfter = regenBox?.querySelector('[data-zau-regen-after-save]');
+        const regenResult = regenBox?.querySelector('[data-zau-regen-result]');
+        async function queueTemplateRegen(templateId) {
+            const tid = Number(templateId || form.querySelector('[name="template_id"]')?.value || root.dataset.templateId || 0);
+            if (!tid || !regenResult) return;
+            regenResult.textContent = 'Ставим документы в очередь…';
+            try {
+                const data = await ajax('zau_cert_template_regen', {template_id: tid});
+                regenResult.innerHTML = `В очереди ${esc(data.count)} документов. <a class="button button-primary" href="${esc(data.job_url)}" target="_blank" rel="noopener">Открыть очередь</a>`;
+                if (regenAfter) regenAfter.checked = false;
+            } catch (err) { regenResult.textContent = err.message || 'Не удалось поставить в очередь.'; }
+        }
+        regenBox?.querySelector('[data-zau-regen-now]')?.addEventListener('click', async () => {
+            if (dirty && !confirm('В шаблоне есть несохранённые изменения — документы пересоздадутся по последней СОХРАНЁННОЙ версии. Продолжить?')) return;
+            if (!confirm(`Пересоздать все документы этого шаблона (${regenBox.dataset.docs}) в фоне? Номера и QR сохранятся, PDF заменятся.`)) return;
+            await queueTemplateRegen();
         });
 
         window.addEventListener('beforeunload', event => {
@@ -756,6 +881,15 @@
         return lines;
     }
 
+    // Верх первой строки внутри рамки поля: сверху (по умолчанию), по центру или снизу.
+    function textStartY(cfg, y, h, blockH) {
+        if (cfg.valign === 'bottom' || cfg.valign === 'middle') {
+            const bottom = y + Number(cfg.height || 0) / 100 * h;
+            return cfg.valign === 'bottom' ? bottom - blockH : y + ((bottom - y) - blockH) / 2;
+        }
+        return cfg.growDirection === 'up' ? y - blockH : y;
+    }
+
     function drawTextField(ctx, cfg, value, w, h) {
         if (!Number(cfg.enabled) || !String(value ?? '').trim()) return;
         const x = Number(cfg.x)/100*w, y = Number(cfg.y)/100*h, maxWidth = Number(cfg.width)/100*w;
@@ -766,7 +900,7 @@
         // growDirection 'up' anchors Y to the bottom of the block, so extra
         // wrapped lines push upward and stay within the field's top border
         // instead of overflowing past Y as before.
-        const startY = cfg.growDirection==='up' ? y-lines.length*lh : y;
+        const startY = textStartY(cfg, y, h, lines.length*lh);
         lines.forEach((line,i)=>ctx.fillText(line,tx,startY+i*lh,maxWidth));
     }
 

@@ -40,3 +40,24 @@
 .zau-template-save-status.is-success{color:#157347}
 .zau-template-save-status.is-error{color:#b32d2e}
 #zau-template-save-top{margin-right:4px}
+/* Редактор шаблона: рамки полей и точный предпросмотр текста */
+.zau-stage-preview{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3}
+.zau-stage-field.is-text{background:transparent;border:1px dashed rgba(25,109,71,.55);padding:0;overflow:visible}
+.zau-stage-field.is-text.is-selected{background:rgba(34,113,177,.05);border:1px solid #2271b1}
+.zau-stage-field.is-overflow{border-color:#d63638!important;background:rgba(214,54,56,.06)!important}
+.zau-stage-field-label{position:absolute;left:0;top:-15px;font:600 10px/14px -apple-system,Segoe UI,sans-serif;font-style:normal;color:#fff;background:rgba(25,109,71,.85);padding:0 5px;border-radius:3px 3px 0 0;white-space:nowrap;opacity:0;pointer-events:none}
+.zau-stage-field.is-text:hover .zau-stage-field-label,.zau-stage-field.is-selected .zau-stage-field-label{opacity:1}
+.zau-stage-field.is-selected .zau-stage-field-label{background:#2271b1}
+.zau-stage-handle{position:absolute;background:#2271b1;border:2px solid #fff;box-shadow:0 0 0 1px #2271b1;z-index:5}
+.zau-stage-handle-n,.zau-stage-handle-s{left:50%;width:22px;height:8px;margin-left:-11px;cursor:ns-resize;border-radius:4px}
+.zau-stage-handle-n{top:-5px}.zau-stage-handle-s{bottom:-5px}
+.zau-stage-handle-e,.zau-stage-handle-w{top:50%;width:8px;height:22px;margin-top:-11px;cursor:ew-resize;border-radius:4px}
+.zau-stage-handle-e{right:-5px}.zau-stage-handle-w{left:-5px}
+.zau-stage-handle-se{right:-6px;bottom:-6px;width:11px;height:11px;cursor:nwse-resize;border-radius:50%}
+.zau-edges small.zau-mm{font-weight:400;color:#646970;font-size:11px}
+.zau-fit-note{margin:6px 0 0;padding:6px 8px;border-radius:6px;background:#edf9f1;color:#155d34;font-size:12px}
+.zau-fit-note:empty{display:none}
+.zau-fit-note.is-warn{background:#fff0f0;color:#8a2424}
+.zau-field-panel textarea{width:100%}
+.zau-template-regen{margin:10px 0 0;padding:12px 14px;background:#f6f7f7;border:1px solid #dcdcde;border-radius:10px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.zau-template-regen .description{flex-basis:100%;margin:0}

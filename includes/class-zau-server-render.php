@@ -131,7 +131,7 @@ final class ZAU_Server_Render {
         $lines = array_slice(self::split_text($pt, $font, $value, $maxWidth), 0, max(1, (int)($cfg['maxLines'] ?? 2)));
         $lh = $px * (float)($cfg['lineHeight'] ?? 1.2);
         $tx = $align === 'left' ? $x : ($align === 'right' ? $x + $maxWidth : $x + $maxWidth / 2);
-        $startY = ($cfg['growDirection'] ?? '') === 'up' ? $y - count($lines) * $lh : $y;
+        $startY = self::text_start_y($cfg, $y, $h, count($lines) * $lh);
         $color = self::color($im, $cfg['color'] ?? '#111111');
         // textBaseline 'top' в браузере — верх em-квадрата: базовая линия ниже на ascent/(ascent+descent) кегля
         // (Arial/Liberation Sans: 0.905/1.117 ≈ 0.81).
@@ -142,6 +142,16 @@ final class ZAU_Server_Render {
             $lx = $align === 'left' ? $tx : ($align === 'right' ? $tx - $lw : $tx - $lw / 2);
             imagettftext($im, $pt, 0, (int)round($lx), (int)round($startY + $i * $lh + $ascent), $color, $font, $line);
         }
+    }
+
+    /** Верх первой строки: прижатие к верху / низу / центру рамки (как в браузере). */
+    public static function text_start_y(array $cfg, $y, $h, $blockH) {
+        $valign = (string)($cfg['valign'] ?? '');
+        if ($valign === 'bottom' || $valign === 'middle') {
+            $bottom = $y + (float)($cfg['height'] ?? 0) / 100 * $h;
+            return $valign === 'bottom' ? $bottom - $blockH : $y + (($bottom - $y) - $blockH) / 2;
+        }
+        return ($cfg['growDirection'] ?? '') === 'up' ? $y - $blockH : $y;
     }
 
     private static function draw_image($im, array $cfg, $url, $w, $h) {
