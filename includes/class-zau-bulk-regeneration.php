@@ -70,9 +70,12 @@ final class ZAU_Bulk_Regeneration {
         return class_exists('ZAU_Server_Render') && ZAU_Server_Render::available($reason);
     }
 
-    private function server_jobs() {
+    private function server_jobs($preferJobId = 0) {
         global $wpdb;
-        return (array)$wpdb->get_results($wpdb->prepare("SELECT * FROM {$this->jobs_table} WHERE status IN ('running','queued') AND options_json LIKE %s ORDER BY id ASC", '%"server":1%'));
+        $jobs = (array)$wpdb->get_results($wpdb->prepare("SELECT * FROM {$this->jobs_table} WHERE status IN ('running','queued') AND options_json LIKE %s ORDER BY id ASC", '%"server":1%'));
+        // Открытая на странице очередь — первой.
+        if ($preferJobId) { usort($jobs, function ($a, $b) use ($preferJobId) { return ((int)$b->id === (int)$preferJobId) <=> ((int)$a->id === (int)$preferJobId); }); }
+        return $jobs;
     }
 
     public function cron_tick() {
@@ -104,7 +107,7 @@ final class ZAU_Bulk_Regeneration {
      * блокировка с «пульсом» после каждого документа; брошенная (процесс убит хостингом) снимается через 90 с.
      * Возвращает число обработанных документов, -1 — если сейчас работает другой процесс.
      */
-    public function process_server_jobs($budget = 40, $context = 'cron') {
+    public function process_server_jobs($budget = 40, $context = 'cron', $preferJobId = 0) {
         global $wpdb;
         $lock = (int)get_option(self::LOCK_OPT, 0);
         if ($lock && time() - $lock < 90) { return -1; }
@@ -112,6 +115,10 @@ final class ZAU_Bulk_Regeneration {
         $this->lock_token = wp_generate_password(8, false, false);
         if (function_exists('wp_raise_memory_limit')) { wp_raise_memory_limit('admin'); }
         $budget = $this->safe_budget($budget);
+        if (!$preferJobId) {
+            $pref = (array)get_option('zau_cert_bulk_preferred_job', []);
+            if (!empty($pref['id']) && time() - (int)($pref['at'] ?? 0) < 1800) { $preferJobId = (int)$pref['id']; }
+        }
         $this->save_server_status(['last_start'=>current_time('mysql'), 'context'=>$context, 'budget'=>$budget, 'memory_limit'=>(string)ini_get('memory_limit'), 'time_limit'=>(int)ini_get('max_execution_time')]);
         // Если PHP упадёт (память, время) — записать причину в документ очереди и снять блокировку.
         register_shutdown_function(function () use ($context) {
@@ -127,7 +134,8 @@ final class ZAU_Bulk_Regeneration {
         });
         $started = microtime(true); $done = 0;
         try {
-            foreach ($this->server_jobs() as $job) {
+            foreach ($this->server_jobs($preferJobId) as $job) {
+                $this->save_server_status(['job_id'=>(int)$job->id]);
                 while (microtime(true) - $started < $budget) {
                     // Фоновый процесс идёт без пользователя — читаем задание без проверки прав.
                     $fresh = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->jobs_table} WHERE id=%d", (int)$job->id));
@@ -199,6 +207,12 @@ final class ZAU_Bulk_Regeneration {
         $now = current_time('mysql');
         if ($error === '') {
             $wpdb->update($this->items_table, ['status'=>'success', 'new_document_no'=>$docNo, 'error_text'=>'', 'completed_at'=>$now, 'updated_at'=>$now], ['id'=>(int)$item->id]);
+            // Тот же документ в других очередях с теми же настройками уже не нужно рисовать повторно.
+            $wpdb->query($wpdb->prepare(
+                "UPDATE {$this->items_table} SET status='skipped', error_text=%s, completed_at=%s, updated_at=%s
+                 WHERE document_id=%d AND job_id<>%d AND status='queued'
+                 AND job_id IN (SELECT id FROM {$this->jobs_table} WHERE status IN ('running','queued','paused') AND options_json=%s)",
+                'Уже пересоздан в очереди #' . $jobId, $now, $now, (int)$item->document_id, $jobId, (string)$job->options_json));
         } else {
             $max = (int)($options['max_retries'] ?? 2);
             $next = ((int)$item->attempts + 1 <= $max) ? 'queued' : 'failed';
@@ -214,7 +228,7 @@ final class ZAU_Bulk_Regeneration {
         $st = (array)get_option(self::STATUS_OPT, []);
         if (!$st) { return 'Сервер ещё не запускал обработку.'; }
         $ctx = ['page'=>'со страницы очереди', 'cron'=>'по расписанию (WP-Cron)', 'background'=>'в фоне'][$st['context'] ?? ''] ?? '';
-        $out = 'Последний запуск: ' . ($st['last_start'] ?? '—') . ' ' . $ctx . (isset($st['last_done']) ? ' · обработано за запуск: ' . (int)$st['last_done'] . ' за ' . ($st['last_seconds'] ?? '?') . ' с' : '') . ' · лимиты PHP: ' . ($st['time_limit'] ? $st['time_limit'] . ' с' : 'без ограничения времени') . ', память ' . ($st['memory_limit'] ?? '?');
+        $out = (!empty($st['job_id']) ? 'Сервер обрабатывает очередь #' . (int)$st['job_id'] . ' · ' : '') . 'Последний запуск: ' . ($st['last_start'] ?? '—') . ' ' . $ctx . (isset($st['last_done']) ? ' · обработано за запуск: ' . (int)$st['last_done'] . ' за ' . ($st['last_seconds'] ?? '?') . ' с' : '') . ' · лимиты PHP: ' . ($st['time_limit'] ? $st['time_limit'] . ' с' : 'без ограничения времени') . ', память ' . ($st['memory_limit'] ?? '?');
         if (!empty($st['last_error'])) { $out .= ' · Последняя ошибка (' . ($st['last_error_at'] ?? '') . '): ' . $st['last_error']; }
         if (defined('DISABLE_WP_CRON') && DISABLE_WP_CRON) { $out .= ' · WP-Cron отключён на сайте: без открытой страницы очередь пойдёт только при системном cron.'; }
         return $out;
@@ -238,11 +252,13 @@ final class ZAU_Bulk_Regeneration {
         $doing = get_transient('doing_cron');
         $add('WP-Cron', !$cronOff, ($cronOff ? 'ОТКЛЮЧЁН (DISABLE_WP_CRON) — фон только с открытой страницей или системным cron' : 'включён') . '; следующий запуск очереди: ' . ($next ? wp_date('H:i:s', $next) . ($next < time() - 120 ? ' — ПРОСРОЧЕН (cron не срабатывает)' : '') : 'не запланирован') . ($doing ? '; cron сейчас выполняется с ' . wp_date('H:i:s', (int)$doing) : ''));
         $t = microtime(true);
-        $r = wp_remote_post(site_url('wp-cron.php'), ['timeout'=>8, 'blocking'=>true, 'sslverify'=>apply_filters('https_local_ssl_verify', false)]);
+        $r = wp_remote_get(admin_url('admin-ajax.php'), ['timeout'=>8, 'sslverify'=>apply_filters('https_local_ssl_verify', false)]);
         $ms = (int)round((microtime(true) - $t) * 1000);
-        $add('Сайт может обратиться сам к себе (wp-cron.php)', !is_wp_error($r) && (int)wp_remote_retrieve_response_code($r) < 400, is_wp_error($r) ? 'ошибка: ' . $r->get_error_message() : 'HTTP ' . wp_remote_retrieve_response_code($r), $ms);
+        $add('Сайт может обратиться сам к себе', !is_wp_error($r), is_wp_error($r) ? 'ошибка: ' . $r->get_error_message() . ' (фон через WP-Cron может не запускаться — держите страницу очереди открытой)' : 'да, HTTP ' . wp_remote_retrieve_response_code($r), $ms);
         $st = (array)get_option(self::STATUS_OPT, []);
         $add('Последний запуск обработки', empty($st['last_error']), $st ? $this->server_info_text() : 'ещё не было');
+        $others = (array)$wpdb->get_results("SELECT j.id, (SELECT COUNT(*) FROM {$this->items_table} i WHERE i.job_id=j.id AND i.status='queued') q FROM {$this->jobs_table} j WHERE j.status IN ('running','queued') AND j.options_json LIKE '%\"server\":1%' ORDER BY j.id");
+        if ($others) { $add('Активные серверные очереди', count($others) <= 1, implode(', ', array_map(function ($o) { return '#' . (int)$o->id . ' (ждут ' . (int)$o->q . ')'; }, $others)) . (count($others) > 1 ? ' — сервер обрабатывает их по очереди; одинаковые документы в дублях будут пропущены автоматически. Лишние очереди можно отменить.' : '')); }
         $job = $this->get_job($jobId);
         if ($job) {
             $counts = $wpdb->get_results($wpdb->prepare("SELECT status,COUNT(*) c FROM {$this->items_table} WHERE job_id=%d GROUP BY status", $jobId));
@@ -265,7 +281,9 @@ final class ZAU_Bulk_Regeneration {
     /** Вызов со страницы очереди, пока она открыта: обработать порцию и вернуть состояние. */
     public function ajax_server_tick() {
         $this->require_ajax();
-        $n = $this->process_server_jobs(15, 'page');
+        $viewJob = absint($_POST['job_id'] ?? 0);
+        if ($viewJob) { update_option('zau_cert_bulk_preferred_job', ['id'=>$viewJob, 'at'=>time()], false); }
+        $n = $this->process_server_jobs(15, 'page', $viewJob);
         $job = $this->get_job(absint($_POST['job_id'] ?? 0));
         if ($job) { $this->refresh_job_counts((int)$job->id); }
         $this->kick_background();
@@ -624,6 +642,16 @@ final class ZAU_Bulk_Regeneration {
         if (!$ids) { return 0; }
         $options = $this->sanitize_options($options + ['delay_ms'=>150, 'max_retries'=>2]);
         $now = current_time('mysql');
+        // Такая же очередь уже идёт (те же настройки, те же документы ждут) — вернуть её, а не создавать дубль.
+        $optionsJson = wp_json_encode($options, JSON_UNESCAPED_UNICODE);
+        foreach ((array)$wpdb->get_results($wpdb->prepare("SELECT id FROM {$this->jobs_table} WHERE status IN ('running','queued','paused') AND options_json=%s ORDER BY id DESC", $optionsJson)) as $active) {
+            $pending = array_map('intval', (array)$wpdb->get_col($wpdb->prepare("SELECT document_id FROM {$this->items_table} WHERE job_id=%d AND status IN ('queued','processing')", (int)$active->id)));
+            if ($pending && !array_diff($ids, $pending)) {
+                $wpdb->update($this->jobs_table, ['status'=>'running', 'updated_at'=>$now], ['id'=>(int)$active->id]);
+                if (!empty($options['server'])) { $this->start_background(); }
+                return (int)$active->id;
+            }
+        }
         $wpdb->insert($this->jobs_table, ['created_by'=>get_current_user_id(), 'status'=>'queued', 'filters_json'=>wp_json_encode(['source'=>'exact_regen', 'document_ids'=>count($ids) . ' шт.'], JSON_UNESCAPED_UNICODE), 'options_json'=>wp_json_encode($options, JSON_UNESCAPED_UNICODE), 'total_count'=>count($ids), 'created_at'=>$now, 'updated_at'=>$now]);
         $jobId = (int)$wpdb->insert_id;
         if (!$jobId) { return 0; }

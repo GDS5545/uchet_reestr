@@ -2,7 +2,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 final class ZAU_Union_Module {
-    const VERSION = '2.35.2';
+    const VERSION = '2.35.3';
     const DB_VERSION = '2.18.2';
     const PIN_DEVICE_COOKIE = 'zau_pin_device';
     const OPT_DB_VERSION = 'zau_union_db_version';
@@ -3676,7 +3676,7 @@ final class ZAU_Union_Module {
         return count($ids);
     }
 
-    /** Остатки без индекса (созданные до 2.35.2 и не попавшие в индекс). */
+    /** Остатки без индекса (созданные до 2.35.3 и не попавшие в индекс). */
     public function regen_delete_documents_legacy($limit = 200) {
         global $wpdb;
         $ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM {$this->docs_table} WHERE data_json LIKE %s ORDER BY id ASC LIMIT %d", '%"legacy_exact_regen":1%', (int)$limit));
