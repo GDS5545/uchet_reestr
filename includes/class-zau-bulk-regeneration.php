@@ -45,6 +45,7 @@ final class ZAU_Bulk_Regeneration {
         add_action(self::CRON_HOOK . '_now', [$this, 'cron_tick']);
         add_action('init', [$this, 'ensure_cron']);
         add_action('wp_ajax_zau_cert_bulk_server_tick', [$this, 'ajax_server_tick']);
+        add_action('wp_ajax_zau_cert_bulk_server_probe', [$this, 'ajax_server_probe']);
         add_action('wp_ajax_nopriv_zau_cert_bulk_bg', [$this, 'ajax_background_chain']);
         add_action('wp_ajax_zau_cert_bulk_bg', [$this, 'ajax_background_chain']);
     }
@@ -219,10 +220,52 @@ final class ZAU_Bulk_Regeneration {
         return $out;
     }
 
+    /** «Проверить сервер»: окружение + пошаговая отрисовка одного документа очереди (ничего не сохраняет). */
+    public function ajax_server_probe() {
+        $this->require_ajax();
+        global $wpdb;
+        @set_time_limit(90);
+        $jobId = absint($_POST['job_id'] ?? 0);
+        $rows = [];
+        $add = function ($step, $ok, $info, $ms = null) use (&$rows) { $rows[] = ['step'=>$step, 'ok'=>$ok, 'info'=>$info, 'ms'=>$ms]; };
+        $add('PHP', true, 'версия ' . PHP_VERSION . ', лимит времени ' . ((int)ini_get('max_execution_time') ?: 'нет') . ' с, память ' . ini_get('memory_limit') . (function_exists('set_time_limit') && strpos((string)ini_get('disable_functions'), 'set_time_limit') === false ? '' : ', set_time_limit запрещён'));
+        $up = wp_upload_dir();
+        $add('Папка загрузок', empty($up['error']) && wp_is_writable($up['basedir']), empty($up['error']) ? $up['basedir'] . (wp_is_writable($up['basedir']) ? ' — запись разрешена' : ' — НЕТ прав на запись') : $up['error']);
+        $lock = (int)get_option(self::LOCK_OPT, 0);
+        $add('Блокировка обработки', !$lock || time() - $lock >= 90, $lock ? 'занята ' . (time() - $lock) . ' с назад' . (time() - $lock >= 90 ? ' (брошена — будет снята)' : ' — сейчас работает другой процесс') : 'свободна');
+        $cronOff = defined('DISABLE_WP_CRON') && DISABLE_WP_CRON;
+        $next = wp_next_scheduled(self::CRON_HOOK);
+        $doing = get_transient('doing_cron');
+        $add('WP-Cron', !$cronOff, ($cronOff ? 'ОТКЛЮЧЁН (DISABLE_WP_CRON) — фон только с открытой страницей или системным cron' : 'включён') . '; следующий запуск очереди: ' . ($next ? wp_date('H:i:s', $next) . ($next < time() - 120 ? ' — ПРОСРОЧЕН (cron не срабатывает)' : '') : 'не запланирован') . ($doing ? '; cron сейчас выполняется с ' . wp_date('H:i:s', (int)$doing) : ''));
+        $t = microtime(true);
+        $r = wp_remote_post(site_url('wp-cron.php'), ['timeout'=>8, 'blocking'=>true, 'sslverify'=>apply_filters('https_local_ssl_verify', false)]);
+        $ms = (int)round((microtime(true) - $t) * 1000);
+        $add('Сайт может обратиться сам к себе (wp-cron.php)', !is_wp_error($r) && (int)wp_remote_retrieve_response_code($r) < 400, is_wp_error($r) ? 'ошибка: ' . $r->get_error_message() : 'HTTP ' . wp_remote_retrieve_response_code($r), $ms);
+        $st = (array)get_option(self::STATUS_OPT, []);
+        $add('Последний запуск обработки', empty($st['last_error']), $st ? $this->server_info_text() : 'ещё не было');
+        $job = $this->get_job($jobId);
+        if ($job) {
+            $counts = $wpdb->get_results($wpdb->prepare("SELECT status,COUNT(*) c FROM {$this->items_table} WHERE job_id=%d GROUP BY status", $jobId));
+            $add('Очередь #' . $jobId, true, implode(', ', array_map(function ($c) { return $c->status . ': ' . $c->c; }, (array)$counts)) . '; режим: ' . (strpos((string)$job->options_json, '"server":1') !== false ? 'сервер' : 'браузер'));
+            $item = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->items_table} WHERE job_id=%d AND status IN ('queued','processing','failed') ORDER BY FIELD(status,'processing','queued','failed'), id ASC LIMIT 1", $jobId));
+            if ($item && class_exists('ZAU_Certificate_PDF_Generator')) {
+                $t = microtime(true);
+                $options = json_decode((string)$job->options_json, true) ?: [];
+                $payload = ZAU_Certificate_PDF_Generator::instance()->regeneration_payload((int)$item->document_id, (int)($options['target_template_id'] ?? 0), !empty($options['update_number']));
+                $add('Данные документа #' . (int)$item->document_id . ' (' . $item->status . ')', !is_wp_error($payload), is_wp_error($payload) ? $payload->get_error_message() : 'шаблон «' . ($payload['template']['name'] ?? '') . '», подложка ' . ($payload['template']['background_url'] ?? ''), (int)round((microtime(true) - $t) * 1000));
+                if (!is_wp_error($payload) && class_exists('ZAU_Server_Render')) {
+                    foreach (ZAU_Server_Render::probe((array)$payload['template'], (array)$payload['values']) as $p) { $add($p['step'], $p['ok'], $p['info'], $p['ms']); }
+                }
+                if (!empty($item->error_text)) { $add('Ошибка этого документа в очереди', false, $item->error_text); }
+            }
+        }
+        wp_send_json_success(['rows'=>$rows]);
+    }
+
     /** Вызов со страницы очереди, пока она открыта: обработать порцию и вернуть состояние. */
     public function ajax_server_tick() {
         $this->require_ajax();
-        $n = $this->process_server_jobs(20, 'page');
+        $n = $this->process_server_jobs(15, 'page');
         $job = $this->get_job(absint($_POST['job_id'] ?? 0));
         if ($job) { $this->refresh_job_counts((int)$job->id); }
         $this->kick_background();
@@ -415,7 +458,7 @@ final class ZAU_Bulk_Regeneration {
             </form>
 
             <section class="zau-card zau-bulk-runner" data-zau-bulk-runner <?php echo $active_job_id ? '' : 'hidden'; ?>>
-                <div class="zau-section-head"><div><h2>Текущая очередь <span data-zau-bulk-job-label></span></h2><p data-zau-bulk-status-text>Загрузка состояния…</p></div><div class="zau-bulk-run-controls"><button type="button" class="button button-primary" data-zau-bulk-start>Продолжить</button><button type="button" class="button" data-zau-bulk-pause>Пауза</button><button type="button" class="button" data-zau-bulk-retry>Повторить ошибки</button><button type="button" class="button button-link-delete" data-zau-bulk-cancel>Отменить</button></div></div>
+                <div class="zau-section-head"><div><h2>Текущая очередь <span data-zau-bulk-job-label></span></h2><p data-zau-bulk-status-text>Загрузка состояния…</p></div><div class="zau-bulk-run-controls"><button type="button" class="button button-primary" data-zau-bulk-start>Продолжить</button><button type="button" class="button" data-zau-bulk-pause>Пауза</button><button type="button" class="button" data-zau-bulk-retry>Повторить ошибки</button><button type="button" class="button button-link-delete" data-zau-bulk-cancel>Отменить</button><button type="button" class="button" data-zau-probe>Проверить сервер</button></div></div>
                 <div class="zau-bulk-progress"><span data-zau-bulk-progress-bar></span></div>
                 <div class="zau-bulk-stats">
                     <div><strong data-zau-stat-total>0</strong><span>всего</span></div>

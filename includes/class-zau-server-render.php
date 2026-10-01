@@ -228,6 +228,44 @@ final class ZAU_Server_Render {
         imagecopyresampled($im, $img, (int)round(($w - $dw) / 2), (int)round(($h - $dh) / 2), 0, 0, (int)round($dw), (int)round($dh), $sw, $sh);
     }
 
+    /** Пошаговая проверка отрисовки одного документа: что и сколько времени занимает. Ничего не сохраняет. */
+    public static function probe(array $tpl, array $values) {
+        $steps = [];
+        $step = function ($name, callable $fn) use (&$steps) {
+            $t = microtime(true);
+            try { $info = $fn(); $ok = true; } catch (Throwable $e) { $info = $e->getMessage(); $ok = false; }
+            $steps[] = ['step'=>$name, 'ok'=>$ok, 'ms'=>(int)round((microtime(true) - $t) * 1000), 'info'=>is_string($info) ? $info : ''];
+            return $ok;
+        };
+        $reason = '';
+        if (!$step('GD и шрифты', function () use (&$reason) { if (!self::available($reason)) { throw new RuntimeException($reason); } return 'есть: ' . (defined('GD_VERSION') ? 'GD ' . GD_VERSION : 'GD') . ', шрифты ' . self::fonts_dir(); })) { return $steps; }
+        $bgUrl = (string)($tpl['background_url'] ?? '');
+        $step('Подложка', function () use ($bgUrl) {
+            $file = self::local_path($bgUrl);
+            $img = self::load_image($bgUrl);
+            if (!$img) { throw new RuntimeException('не загрузилась: ' . $bgUrl . ($file === '' ? ' (локальный файл не найден, пробовали скачать по ссылке)' : '')); }
+            return imagesx($img) . '×' . imagesy($img) . ' px, ' . ($file !== '' ? 'локальный файл' : 'скачана по ссылке');
+        });
+        foreach (self::image_keys() as $k) {
+            $cfg = (array)($tpl['fields'][$k] ?? []);
+            if (empty($cfg['enabled']) || empty($values[$k])) { continue; }
+            $url = (string)$values[$k];
+            $step('Картинка «' . $k . '»', function () use ($url) {
+                $file = self::local_path($url) ?: self::legacy_copy($url);
+                $img = self::load_image($url);
+                if (!$img) { throw new RuntimeException('не загрузилась: ' . $url); }
+                return imagesx($img) . '×' . imagesy($img) . ' px, ' . ($file !== '' ? 'локальный файл' : 'скачана по ссылке') . ' — ' . $url;
+            });
+        }
+        $step('QR-код', function () use ($values) { $m = ZAU_QR::matrix((string)($values['verify_url'] ?? 'test')); return count($m) . '×' . count($m) . ' модулей'; });
+        $step('Полная отрисовка JPEG', function () use ($tpl, $values) {
+            $j = self::render($tpl, $values);
+            if (is_wp_error($j)) { throw new RuntimeException($j->get_error_message()); }
+            return round(strlen($j) / 1024) . ' КБ, пик памяти ' . round(memory_get_peak_usage(true) / 1048576) . ' МБ';
+        });
+        return $steps;
+    }
+
     /** Рисует документ и возвращает JPEG (как canvas.toDataURL('image/jpeg', 0.94)). */
     public static function render(array $tpl, array $values) {
         $reason = '';

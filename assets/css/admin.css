@@ -65,3 +65,4 @@
 .zau-template-regen label{flex:1 1 320px}
 .zau-template-regen [data-zau-regen-result]{flex-basis:100%;overflow-wrap:anywhere}
 .zau-template-regen [data-zau-regen-result]:empty{display:none}
+.zau-probe-table{margin-top:10px}.zau-probe-table td{vertical-align:top;font-size:12px}.zau-probe-table td:first-child{width:24px}.zau-probe-table td:nth-child(2){width:260px}.zau-probe-table td:last-child{width:70px;white-space:nowrap;color:#646970}

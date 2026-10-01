@@ -735,38 +735,76 @@
         };
 
         // Серверная очередь: PDF рисует сервер, страница только подталкивает его и показывает прогресс.
+        // Запрос с ограничением времени: страница не должна «висеть» на одном ответе сервера.
+        async function ajaxTimed(action, payload, ms) {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), ms);
+            try {
+                const body = new URLSearchParams(); body.set('action', action); body.set('nonce', App.nonce || '');
+                Object.entries(payload || {}).forEach(([k, v]) => body.set(k, v == null ? '' : String(v)));
+                const response = await fetch(App.ajaxUrl, {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'}, body: body.toString(), credentials: 'same-origin', signal: ctrl.signal});
+                const text = await response.text();
+                let json = null; try { json = JSON.parse(text); } catch (_) {}
+                if (!response.ok || !json || !json.success) {
+                    const plain = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
+                    throw new Error(json?.data?.message || ('HTTP ' + response.status + (plain ? ': ' + plain : '')));
+                }
+                return json.data;
+            } catch (err) {
+                if (err.name === 'AbortError') throw new Error('сервер не ответил за ' + Math.round(ms / 1000) + ' с');
+                throw err;
+            } finally { clearTimeout(timer); }
+        }
+
         async function runServerQueue() {
             running = true;
+            let lastStatus = null;
             const show = (st, extra) => {
                 if (!currentText) return;
+                if (st) lastStatus = st;
                 currentText.innerHTML = '<strong>Документы формируются на сервере.</strong> Вкладку можно закрыть — очередь продолжится в фоне.'
                     + (extra ? '<br>' + extra : '')
-                    + (st && st.server_info ? '<br><small>' + esc(st.server_info) + '</small>' : '')
+                    + (lastStatus && lastStatus.server_info ? '<br><small>' + esc(lastStatus.server_info) + '</small>' : '')
                     + '<br><button type="button" class="button" data-zau-to-browser>Формировать в браузере</button> <small>— если на сервере не идёт: PDF будет рисовать этот браузер, держите вкладку открытой.</small>';
             };
             show(null, 'Запуск…');
-            while (running) {
-                let extra = '';
-                try {
-                    const t = await ajax('zau_cert_bulk_server_tick', {job_id: jobId});
-                    if (t && t.locked) extra = 'Сервер обрабатывает порцию в фоне — ждём.';
-                } catch (err) { extra = 'Связь с сервером прервалась (' + esc(err.message || '') + '), повторяем…'; await sleep(5000); }
-                const st = await refreshStatus();
-                if (!st || ['completed', 'paused', 'canceled'].includes(st.status)) { running = false; break; }
-                if (!(st.options && Number(st.options.server))) { running = false; break; }
-                show(st, extra);
-                await sleep(1500);
-            }
+            try {
+                while (running) {
+                    let extra = '';
+                    const started = Date.now();
+                    const ticker = setInterval(() => { const el = currentText?.querySelector('[data-zau-wait]'); if (el) el.textContent = Math.round((Date.now() - started) / 1000); }, 1000);
+                    show(null, 'Сервер обрабатывает порцию… <span data-zau-wait>0</span> с');
+                    try {
+                        const t = await ajaxTimed('zau_cert_bulk_server_tick', {job_id: jobId}, 90000);
+                        if (t && t.locked) extra = 'Сервер обрабатывает порцию в фоне — ждём.';
+                        else if (t) extra = 'За последний запрос обработано: ' + esc(t.processed_now);
+                    } catch (err) {
+                        extra = '<span style="color:#b32d2e">Ответ сервера: ' + esc(err.message || '') + '. Нажмите «Проверить сервер», чтобы увидеть причину.</span>';
+                    } finally { clearInterval(ticker); }
+                    let st = null;
+                    try { st = await refreshStatus(); } catch (err) { extra += '<br>Не удалось получить состояние очереди: ' + esc(err.message || ''); }
+                    if (st && ['completed', 'paused', 'canceled'].includes(st.status)) { running = false; break; }
+                    if (st && !(st.options && Number(st.options.server))) { running = false; break; }
+                    show(st, extra);
+                    await sleep(extra.includes('color:#b32d2e') ? 10000 : 1500);
+                }
+            } finally { running = false; }
         }
 
         root.addEventListener('click', async e => {
-            const toBrowser = e.target.closest('[data-zau-to-browser]');
-            if (!toBrowser || !jobId) return;
-            if (!confirm('Переключить очередь на формирование в браузере? Держите эту вкладку открытой до конца.')) return;
-            running = false;
-            await ajax('zau_cert_bulk_control', {job_id: jobId, command: 'to_browser'});
-            await sleep(300);
-            await runQueue();
+            const probe = e.target.closest('[data-zau-probe]');
+            if (!probe || !jobId) return;
+            let box = root.querySelector('[data-zau-probe-result]');
+            if (!box && currentText) { box = document.createElement('div'); box.dataset.zauProbeResult = ''; currentText.insertAdjacentElement('afterend', box); }
+            probe.disabled = true;
+            if (box) box.innerHTML = '<p>Проверяем сервер на одном документе (до 1,5 мин)…</p>';
+            try {
+                const data = await ajaxTimed('zau_cert_bulk_server_probe', {job_id: jobId}, 120000);
+                const rows = (data.rows || []).map(r => `<tr><td>${r.ok ? '✅' : '❌'}</td><td><strong>${esc(r.step)}</strong></td><td>${esc(r.info || '')}</td><td>${r.ms != null ? esc(r.ms) + ' мс' : ''}</td></tr>`).join('');
+                if (box) box.innerHTML = `<table class="widefat striped zau-probe-table"><tbody>${rows}</tbody></table><p class="description">Сделайте скриншот этой таблицы, если очередь не идёт.</p>`;
+            } catch (err) {
+                if (box) box.innerHTML = `<p style="color:#b32d2e"><strong>Проверка не завершилась:</strong> ${esc(err.message || '')}. Скорее всего, сервер обрывает PHP при отрисовке документа (лимит времени или памяти) — нажмите «Формировать в браузере».</p>`;
+            } finally { probe.disabled = false; }
         });
 
         async function runQueue() {
