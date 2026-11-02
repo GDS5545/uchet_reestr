@@ -172,6 +172,13 @@
         var p = ['+7', d.slice(1, 4), d.slice(4, 7), d.slice(7, 9), d.slice(9, 11)].filter(function (x, i) { return i === 0 || x; });
         e.target.value = d ? p.join(' ') : '';
       });
+      // Elementor принимает в телефоне только цифры и + ( ) - * #, поэтому на время отправки пробелы убираем
+      var f = inp.form;
+      if (f) f.addEventListener('submit', function () {
+        var pretty = inp.value;
+        inp.value = pretty.replace(/[^\d+]/g, '');
+        setTimeout(function () { inp.value = pretty; }, 1500);
+      }, true);
     });
   });
 })();
