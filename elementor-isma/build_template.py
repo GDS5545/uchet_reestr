@@ -245,6 +245,15 @@ RU = {
  'ft.l': '© ISMA Invest. Коммерческая недвижимость в Астане.', 'ft.r': 'Цены и показатели ориентировочные, не являются публичной офертой.',
  'fab': 'WhatsApp'}
 
+WAF = {
+ "ru": dict(msg="Здравствуйте! Меня зовут {n}. Телефон: {p}. Интересует: {u}. Хочу получить планировки и актуальные цены на коммерческие помещения ISMA.",
+            errName="Укажите имя.", errPhone="Введите телефон полностью, например +7 771 888 20 20.",
+            done="Заявка готова. Если WhatsApp не открылся, нажмите кнопку ниже.", btn="Отправить в WhatsApp"),
+ "kz": dict(msg="Сәлеметсіз бе! Атым {n}. Телефон: {p}. Қызықтыратыны: {u}. ISMA коммерциялық үй-жайларының жоспарлары мен өзекті бағасын алғым келеді.",
+            errName="Атыңызды жазыңыз.", errPhone="Телефонды толық енгізіңіз, мысалы +7 771 888 20 20.",
+            done="Өтінім дайын. WhatsApp ашылмаса, төмендегі түймені басыңыз.", btn="WhatsApp-қа жіберу"),
+}
+
 # ───────────────────────── CSS ─────────────────────────
 def build_css():
     tpl = open(os.path.join(HERE, "src/extra.css.tpl"), encoding="utf8").read()
@@ -589,7 +598,8 @@ def build(lang):
     fab["settings"]["typography_letter_spacing"] = sz(1.2)
 
     js = open(os.path.join(HERE, "src/extra.js"), encoding="utf8").read().replace(
-        "@@UNITS@@", json.dumps([[x["n"], x["area"], x["ppm"]] for x in UNITS]))
+        "@@UNITS@@", json.dumps([[x["n"], x["area"], x["ppm"]] for x in UNITS])).replace(
+        "@@WAFORM@@", json.dumps(dict(wa=WA, pick=t["pick"], **WAF[lang]), ensure_ascii=False))
     service = C([W("html", {"html": f"<style>\n{CSS}\n</style>\n<script>\n{js}\n</script>"})], content_width="full",
                 padding=dim(0), css_classes="isma-service")
     content = [header, hero, invest, ready, demand, plans, calc, contact, band, footer, fab, service]

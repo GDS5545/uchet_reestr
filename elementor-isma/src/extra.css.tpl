@@ -161,3 +161,10 @@ span.isma-g{
 .isma-calcform .elementor-field-subgroup{display:block}
 .isma-calcform .elementor-form-fields-wrapper,.isma-sortform .elementor-form-fields-wrapper{gap:22px 0}
 @media(max-width:640px){.isma-sortform{width:100%!important}}
+
+/* ---------- сообщение под формой заявки (WhatsApp) ---------- */
+.isma-wa-msg:empty{display:none}
+.isma-wa-msg.err{color:#c0392b;font-size:13px}
+.isma-wa-msg.ok{display:grid;gap:14px;padding:22px;border-radius:18px;background:rgba(46,170,110,.08);border:1px solid rgba(46,170,110,.35);font-weight:700;color:var(--ivory)}
+.isma-wa-msg.ok a{justify-self:start;display:inline-flex;padding:16px 26px;border-radius:99px;background:linear-gradient(100deg,#08777f,#17a6b0);color:#fff;text-decoration:none;font-size:13px;letter-spacing:.12em;text-transform:uppercase}
+.isma-leadform .elementor-field-type-submit .elementor-button{cursor:pointer}

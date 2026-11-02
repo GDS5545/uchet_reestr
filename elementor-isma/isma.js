@@ -164,6 +164,28 @@
     });
     renderCards();
 
+    /* ---------- заявка → WhatsApp (вместо письма на почту) ---------- */
+    var WAF = {"wa": "77718882020", "pick": "Подобрать помещение", "msg": "Здравствуйте! Меня зовут {n}. Телефон: {p}. Интересует: {u}. Хочу получить планировки и актуальные цены на коммерческие помещения ISMA.", "errName": "Укажите имя.", "errPhone": "Введите телефон полностью, например +7 771 888 20 20.", "done": "Заявка готова. Если WhatsApp не открылся, нажмите кнопку ниже.", "btn": "Отправить в WhatsApp"};
+    $$('.isma-leadform form').forEach(function (f) {
+      var box = document.createElement('div'); box.className = 'isma-wa-msg'; f.parentNode.appendChild(box);
+      f.addEventListener('submit', function (e) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        var nm = f.querySelector('input[name="form_fields[name]"]'), ph = f.querySelector('input[name="form_fields[phone]"]');
+        var un = f.querySelector('select[name="form_fields[unit]"]');
+        var name = nm ? nm.value.trim() : '', phone = ph ? ph.value.trim() : '', digits = phone.replace(/\D/g, '');
+        box.className = 'isma-wa-msg err';
+        if (!name) { box.textContent = WAF.errName; if (nm) nm.focus(); return; }
+        if (digits.length < 11) { box.textContent = WAF.errPhone; if (ph) ph.focus(); return; }
+        var what = un && un.value ? un.options[un.selectedIndex].text : WAF.pick;
+        var msg = WAF.msg.replace('{n}', name).replace('{p}', phone).replace('{u}', what);
+        var url = 'https://wa.me/' + WAF.wa + '?text=' + encodeURIComponent(msg);
+        box.className = 'isma-wa-msg ok'; box.innerHTML = '';
+        var t = document.createElement('div'); t.textContent = WAF.done; box.appendChild(t);
+        var a = document.createElement('a'); a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = WAF.btn; box.appendChild(a);
+        var w = window.open(url, '_blank'); if (!w) location.href = url;
+      }, true);
+    });
+
     /* ---------- телефонная маска ---------- */
     $$('.isma-leadform input[type=tel]').forEach(function (inp) {
       inp.addEventListener('input', function (e) {
