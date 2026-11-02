@@ -69,9 +69,8 @@ def shadow(x, y, blur, spread, color, key="box_shadow"):
             f"{key}_box_shadow": {"horizontal": x, "vertical": y, "blur": blur, "spread": spread, "color": color}}
 
 def anim(name="fadeInUp", delay=0, widget=True, dur="slow"):
-    if widget:
-        return {"_animation": name, "animation_duration": dur, "_animation_delay": delay}
-    return {"animation": name, "animation_duration": dur, "animation_delay": delay}
+    """Маркер анимации появления; превращается в CSS-класс на пост-обработке (поведение — в extra.js)."""
+    return {"_rv": [name, delay]}
 
 def link(url, ext=False):
     return {"url": url, "is_external": "on" if ext else "", "nofollow": "", "custom_attributes": ""}
@@ -195,7 +194,9 @@ L = {
        "Большой уличный паркинг", "Объект уже сдан"],
   alt_hero="ЖК ISMA, фасад в вечерней подсветке", alt_int="Интерьер коммерческого помещения с антресолью", alt_air="ЖК ISMA, вид сверху",
   form=dict(name="Имя", phone="Телефон", unit="Интересует", send="Отправить заявку", ok="Заявка отправлена. Менеджер свяжется с вами."),
-  menu=["Преимущества", "Доходность", "Планировки", "Калькулятор", "Контакты"]),
+  menu=["Преимущества", "Доходность", "Планировки", "Калькулятор", "Контакты"],
+  all="Все", f2="2 этаж", chip={"raim": "Райымбек батыр", "ash": "Б. Ашимова", "kald": "Ш. Калдаякова", "nur": "С. Нурмагамбетова"},
+  sort=["По номеру", "Сначала дешевле", "Сначала дороже", "По площади"], copy="Скопировать номер", copied="Скопировано"),
  "kz": dict(
   ent="кіреберіс:", fl=lambda f, b: "2-қабат" if f == 2 else f"{f}-қабат, {b}-блок", m2="м²", np="НП-",
   st={"raim": "Райымбек батыр көшесі", "ash": "Б. Ашимов көшесі", "kald": "Ш. Қалдаяқов көшесі", "nur": "С. Нұрмағамбетов көшесі"},
@@ -212,7 +213,9 @@ L = {
        "Үлкен ашық тұрақ", "Объект пайдалануға берілген"],
   alt_hero="ISMA ТК, кешкі жарықтандырудағы қасбет", alt_int="Антресолі бар коммерциялық үй-жай интерьері", alt_air="ISMA ТК, жоғарыдан көрінісі",
   form=dict(name="Аты-жөніңіз", phone="Телефон", unit="Қызықтыратыны", send="Өтінімді жіберу", ok="Өтінім жіберілді. Менеджер сізбен хабарласады."),
-  menu=["Артықшылықтар", "Табыстылық", "Жоспарлар", "Калькулятор", "Байланыс"]),
+  menu=["Артықшылықтар", "Табыстылық", "Жоспарлар", "Калькулятор", "Байланыс"],
+  all="Барлығы", f2="2-қабат", chip={"raim": "Райымбек батыр", "ash": "Б. Ашимов", "kald": "Ш. Қалдаяқов", "nur": "С. Нұрмағамбетов"},
+  sort=["Нөмірі бойынша", "Алдымен арзан", "Алдымен қымбат", "Ауданы бойынша"], copy="Нөмірді көшіру", copied="Көшірілді"),
 }
 
 # RU-тексты (ключ → значение), как в оригинале
@@ -232,7 +235,7 @@ RU = {
  'terms.h': 'Условия покупки', 'terms.1v': 'от 1,4 млн ₸', 'terms.1l': 'за квадратный метр', 'terms.2v': 'до 10%', 'terms.2l': 'скидка',
  'terms.3v': 'от 50%', 'terms.3l': 'первоначальный взнос', 'terms.4v': 'до 6 месяцев', 'terms.4l': 'рассрочка',
  'plans.eyebrow': 'Помещения', 'plans.h2': 'Планировки под разные бизнес-модели',
- 'plans.sub': '17 помещений на первом и втором этажах. Для каждого указана улица входа, площадь и цена.',
+ 'plans.sub': '17 помещений на первом и втором этажах. Выберите улицу входа или отсортируйте по цене и площади.',
  'calc.eyebrow': 'Расчёт', 'calc.h2': 'Калькулятор доходности', 'calc.unit': 'Помещение', 'calc.disc': 'Максимальная скидка 10%',
  'calc.hint': 'Первоначальный взнос от 50%, остаток в рассрочку до 6 месяцев.',
  'ct.eyebrow': 'Контакты', 'ct.h2': 'Обсудим ваше помещение', 'ct.sub': 'Менеджер подберёт помещение, пришлёт планировки и актуальные цены.',
@@ -278,6 +281,18 @@ def build_css():
 CSS = build_css()
 
 
+def mini_form(cls, fields, show_labels=False, button=None, extra=None):
+    """Form (Pro): используется и для заявки, и как «поля ввода» калькулятора/сортировки (кнопка скрыта CSS)."""
+    return W("form", merge({
+        "form_name": "ISMA", "form_fields": fields, "show_labels": "true" if show_labels else "", "mark_required": "",
+        "button_text": button or "OK", "button_width": "100", "column_gap": sz(18), "row_gap": sz(18), "_css_classes": cls,
+        "label_color": MIST, "field_text_color": IVORY, "field_background_color": "#ffffff", "field_border_color": LINE,
+        "field_border_width": dim(1), "field_border_radius": dim(14),
+        "button_text_color": "#ffffff", "button_background_color": "#08777f", "button_border_radius": dim(99),
+        "button_text_padding": dim(18, 28), "button_hover_background_color": TEAL_LT, "success_message_color": "#1f8a58",
+        "error_message_color": "#c0392b"}, typo("label_typography", 11, 700, 1.76, None, "uppercase"),
+        typo("field_typography", 15, 500), typo("button_typography", 13, 700, 1.56, 1, "uppercase"), extra or {}))
+
 # ───────────────────────── страница ─────────────────────────
 def build(lang):
     t = L[lang]
@@ -319,7 +334,7 @@ def build(lang):
 
     # ── hero ──
     facts = C([
-        C([heading(T(f"hero.f{i}v"), 24, 600, GOLD, "div", "isma-gold", lh=1.15, t=20, m=18),
+        C([heading(T(f"hero.f{i}v"), 24, 600, GOLD, "div", "isma-gold isma-count", lh=1.15, t=20, m=18),
            heading(T(f"hero.f{i}l"), 11, 400, MIST, "div", ls=1.54, tr="uppercase", extra={"_margin": dim(4, 0, 0, 0)})],
           content_width="full", flex_direction="column", flex_gap=gap(0), width=sz(33.33, "%"), width_mobile=sz(100, "%"),
           padding=dim(20, 18, 0, 0) if i == 1 else dim(20, 18, 0, 18),
@@ -328,15 +343,15 @@ def build(lang):
           **({"border_width_mobile": dim(1, 0, 0, 0)} if i > 1 else {}))
         for i in (1, 2, 3)],
         content_width="full", flex_direction="row", flex_direction_mobile="column", flex_wrap="nowrap", flex_gap=gap(0),
-        width=sz(100, "%"), _margin=dim(44, 0, 0, 0), **border(LINE, (1, 0, 0, 0), None), **anim("fadeInUp", 550, False))
+        width=sz(100, "%"), _margin=dim(44, 0, 0, 0), **border(LINE, (1, 0, 0, 0), None), **anim("rise", 550, False))
     hero_left = [
-        heading(T("hero.eyebrow"), 12, 700, GOLD, "div", "isma-eyebrow", ls=2.64, tr="uppercase", extra=anim("fadeInUp", 0)),
+        heading(T("hero.eyebrow"), 12, 700, GOLD, "div", "isma-eyebrow", ls=2.64, tr="uppercase", extra=anim("rise", 0)),
         heading(TK("hero.h1"), 60, 500, IVORY, "h1", ls=-1.8, lh=1.08, t=44, m=32,
-                extra=merge({"_margin": dim(22, 0), "_margin_mobile": dim(16, 0)}, anim("fadeInUp", 100))),
-        text(f"<p>{T('hero.sub')}</p>", 18, MIST, 400, 1.6, t=16, m=15, extra=merge({"_element_width": "initial", "_element_custom_width": sz(62, "%")}, anim("fadeInUp", 250))),
+                extra=merge({"_margin": dim(22, 0), "_margin_mobile": dim(16, 0)}, anim("rise", 100))),
+        text(f"<p>{T('hero.sub')}</p>", 18, MIST, 400, 1.6, t=16, m=15, extra=merge({"_element_width": "initial", "_element_custom_width": sz(62, "%")}, anim("rise", 250))),
         C([button(T("hero.cta1"), "#plans", "fill"), button(T("hero.cta2"), wa_link, "ghost", blank=True)],
           content_width="full", flex_direction="row", flex_wrap="wrap", flex_gap=gap(14), _margin=dim(34, 0, 0, 0),
-          **anim("fadeInUp", 400, False)),
+          **anim("rise", 400, False)),
         facts]
     badge = C([C(None, content_width="full", background_background="classic", background_color="#5be3a0", _css_classes="dot"),
                heading(T("hero.badge"), 12, 700, IVORY, "div", ls=1.2, tr="uppercase")],
@@ -352,30 +367,26 @@ def build(lang):
                      C(None, content_width="full", _css_classes="isma-frame"),
                      C(None, content_width="full", _css_classes="isma-frame f2"),
                      badge, arch],
-                    content_width="full", _css_classes="isma-arch-wrap", **anim("fadeInUp", 150, False))]
+                    content_width="full", _css_classes="isma-arch-wrap", **anim("rise", 150, False))]
     hero = section([row2(hero_left, hero_right, 55, 45, 72)], bg=ABYSS, cls="isma-hero", pad=(84, 56, 40),
                    orn=("s tr", "h bl"), extra={"padding": dim(84, 16, 96, 16), "padding_tablet": dim(56, 16, 64, 16),
                                                  "padding_mobile": dim(40, 16, 56, 16)})
     # ── инвестиции ──
     def tile(num, dec_, pre, suf, label, delay):
-        return C([W("counter", merge({
-            "starting_number": 0, "ending_number": num, "prefix": pre, "suffix": suf, "duration": 1100,
-            "thousand_separator": "yes", "thousand_separator_char": " ", "title": label,
-            "number_color": GOLD, "title_color": MIST, "_css_classes": "isma-gold",
-            "title_typography_typography": "custom"},
-            typo("typography_number", 52, 500, -1.56, 1, None, 40, 34), typo("typography_title", 12, 600, 1.44, 1.6, "uppercase"),
-            {}))],
-            content_width="full", flex_direction="column", flex_gap=gap(10), padding=dim(26, 0, 0, 0),
-            **border(LINE, (1, 0, 0, 0), None), **anim("fadeInUp", delay, False))
+        val = f'{pre}{dec(num, dec_)}<span class="u">{suf.strip()}</span>' if suf.strip() else f"{pre}{dec(num, dec_)}"
+        return C([heading(val, 52, 500, GOLD, "div", "isma-gold isma-count", ls=-1.56, lh=1, t=40, m=34),
+                  heading(label, 12, 600, MIST, "div", ls=1.44, lh=1.6, tr="uppercase")],
+                 content_width="full", flex_direction="column", flex_gap=gap(10), padding=dim(26, 0, 0, 0),
+                 **border(LINE, (1, 0, 0, 0), None), **anim("fadeInUp", delay, False))
     tiles = grid([
         tile(145, 0, "", " млн ₸", T("inv.t1"), 0),
         tile(14.4, 1, "", " млн ₸", T("inv.t2"), 70),
         tile(9.93, 2, "", " %", T("inv.t3"), 140),
         tile(10.1, 1, "≈", f" {T('inv.yr')}", T("inv.t4"), 210)], cols=4, tab=2, mob=1, g=18)
     disc = C([heading(T("inv.dh"), 12, 700, GOLD, "div", ls=1.92, tr="uppercase"),
-              heading("130,5 млн ₸", 22, 500, GOLD, "div", "isma-gold", t=20, m=18),
-              heading(T("inv.d2"), 22, 500, IVORY, "div", t=20, m=18),
-              heading(T("inv.d3"), 22, 500, IVORY, "div", t=20, m=18)],
+              heading("130,5 млн ₸", 22, 500, GOLD, "div", "isma-gold isma-count", t=20, m=18),
+              heading(T("inv.d2"), 22, 500, IVORY, "div", "isma-count", t=20, m=18),
+              heading(T("inv.d3"), 22, 500, IVORY, "div", "isma-count", t=20, m=18)],
              content_width="full", flex_direction="row", flex_wrap="wrap", flex_align_items="center", flex_gap={"column": "34", "row": "14", "isLinked": False, "unit": "px"},
              padding=dim(28, 0), _margin=dim(56, 0, 0, 0), **border(LINE, (1, 0, 1, 0), None), **anim("fadeInUp", 0, False))
     invest_head = C([C(None, content_width="full", _css_classes="isma-solo"),
@@ -416,7 +427,7 @@ def build(lang):
         "_padding": dim(0)}, typo("icon_typography", 19, 400, None, 1.5, None, 17, 16)))
     # паддинги между пунктами
     checks["settings"]["icon_align"] = "left"
-    terms_items = [C([heading(T(f"terms.{i}v"), 28, 600, GOLD, "div", "isma-gold", lh=1.15, t=24, m=22),
+    terms_items = [C([heading(T(f"terms.{i}v"), 28, 600, GOLD, "div", "isma-gold isma-count", lh=1.15, t=24, m=22),
                       heading(T(f"terms.{i}l"), 11, 400, MIST, "div", ls=1.54, tr="uppercase", extra={"_margin": dim(4, 0, 0, 0)})],
                      content_width="full", flex_direction="column", flex_gap=gap(0), **anim("fadeInUp", i * 70, False)) for i in (1, 2, 3, 4)]
     terms = C([C([C(None, content_width="full", _css_classes="isma-gly"), heading(T("terms.h"), 12, 700, GOLD, "div", ls=2.4, tr="uppercase")],
@@ -444,7 +455,7 @@ def build(lang):
         name = f"{t['np']}{u['n']}"
         label = f"{name} · {dec(u['area'])} {t['m2']}"
         ent = f"{t['ent']} " + " / ".join(t["st"][s] for s in u["st"]) + " · " + t["fl"](u["fl"], u["bl"])
-        wa_text = urllib.parse.quote(t["wa"](f"{label} · {fmt(u['total'])} ₸"))
+        ccls = f"isma-card u-{u['n']} fl-{u['fl']} " + " ".join(f"st-{x}" for x in u["st"])
         return C([
             W("image", {"image": img(f"plan-{u['n']}.png"), "image_size": "full", "width": sz(100, "%"), "height": sz(250),
                         "object_fit": "contain", "_css_classes": "isma-plan", "_margin": dim(26, 26, 6, 26), "_margin_mobile": dim(20, 20, 6, 20)}),
@@ -455,53 +466,67 @@ def build(lang):
                heading(ent, 12, 400, MIST, "div", ls=.36, lh=1.5, extra={"_margin": dim(8, 0, 0, 0)}),
                heading(f"{fmt(u['ppm'])} ₸/{t['m2']}", 13, 400, MIST, "div"),
                heading(f"{fmt(u['total'])} ₸", 25, 600, GOLD, "div", "isma-gold", lh=1.1, t=22, m=22),
-               C([button(t["ask"], f"{wa_link}?text={wa_text}", "fill", True, blank=True), button(t["calc"], "#calc", "ghost", True)],
+               C([button(t["ask"], "#contact", "fill", True, extra={"button_css_id": f"ask-{u['n']}"}),
+                       button(t["calc"], "#calc", "ghost", True, extra={"button_css_id": f"calc-{u['n']}"})],
                  content_width="full", flex_direction="row", flex_wrap="wrap", flex_gap=gap(10), _margin=dim(10, 0, 0, 0))],
               content_width="full", flex_direction="column", flex_gap=gap(6), padding=dim(8, 26, 26, 26), padding_mobile=dim(8, 20, 22, 20)),
         ], content_width="full", flex_direction="column", flex_gap=gap(0), background_background="classic", background_color="#ffffff",
             **border(LINE, (1, 1, 1, 1), 22), **shadow(0, 18, 40, -30, "rgba(15,58,61,.35)"), overflow="hidden",
-            _css_classes="isma-card", **anim("fadeInUp", (i % 3) * 80, False))
-    cards = grid([card(u, i) for i, u in enumerate(UNITS)], cols=3, tab=2, mob=1, g=20, _margin=dim(40, 0, 0, 0))
+            _css_classes=ccls, **anim("fadeInUp", (i % 3) * 80, False))
+    chips = [button(lbl, "#", "ghost", True, cls="isma-chip" + (" is-on" if k == "all" else ""), extra=merge(
+                {"button_css_id": f"chip-{k}", "text_padding": dim(11, 18), "button_text_color": MIST}, typo("typography", 12, 600, .72, 1, "none")))
+             for k, lbl in [("all", t["all"]), ("raim", t["chip"]["raim"]), ("ash", t["chip"]["ash"]), ("kald", t["chip"]["kald"]),
+                            ("nur", t["chip"]["nur"]), ("f2", t["f2"])]]
+    tools = [C(chips, content_width="full", flex_direction="row", flex_wrap="wrap", flex_gap=gap(10), width=sz(70, "%"), width_tablet=sz(100, "%"))]
+    if pro:
+        tools.append(mini_form("isma-sortform", [{"custom_id": "sort", "field_type": "select", "field_label": "", "width": "100", "required": "",
+                                                  "field_options": "\n".join(f"{lbl}|{k}" for k, lbl in zip(["n", "pa", "pd", "s"], t["sort"])),
+                                                  "_id": uid()}],
+                               extra={"_element_width": "initial", "_element_custom_width": sz(230)}))
+    toolbar = C(tools, content_width="full", flex_direction="row", flex_wrap="wrap", flex_justify_content="space-between",
+                flex_align_items="center", flex_gap={"column": "14", "row": "12", "isLinked": False, "unit": "px"}, margin=dim(40, 0, 30, 0))
+    cards = grid([card(u, i) for i, u in enumerate(UNITS)], cols=3, tab=2, mob=1, g=20)
     plans = section([divider_orn(),
                      heading(T("plans.eyebrow"), 12, 700, GOLD, "div", "isma-eyebrow", ls=2.64, tr="uppercase"),
                      heading(T("plans.h2"), 42, 500, IVORY, "h2", ls=-.84, lh=1.15, t=36, m=26, extra={"_margin": dim(18, 0, 0, 0)}),
                      text(f"<p>{T('plans.sub')}</p>", 16, MIST, extra={"_margin": dim(16, 0, 0, 0), "_element_width": "initial", "_element_custom_width": sz(62, "%")}),
-                     cards], sid="plans", cls="isma-plans", orn=("p tr",))
+                     toolbar, cards], sid="plans", cls="isma-plans", orn=("p tr",))
 
     # ── калькулятор (пример для НП-1 по тем же формулам, что в оригинале) ──
     u = UNITS[0]
     price = u["total"] * (1 - DISC); down = price * DOWN; month = (price - down) / MONTHS
     income = u["total"] * YIELD; yld = income / price * 100; pb = price / income
-    def metric(label, val, dec_, pre="", suf="", big=False):
+    KIND = {"int": fmt, "mln": lambda v: dec(v / 1e6, 1), "pct": lambda v: dec(v, 2), "yr": lambda v: dec(v, 1)}
+    def metric(label, val, kind, cls, pre="", suf="", big=False):
+        v = f'{pre}<span class="cv" data-k="{kind}" data-v="{val}">{KIND[kind](val)}</span>{suf}'
         return C([heading(label, 11, 700, MIST, "div", ls=1.54, tr="uppercase"),
-                  W("counter", merge({"starting_number": 0, "ending_number": round(val, dec_) if dec_ else round(val),
-                                      "prefix": pre, "suffix": suf, "duration": 1100, "thousand_separator": "yes", "thousand_separator_char": " ",
-                                      "title": "", "number_color": IVORY, "_css_classes": "isma-gold" if big else ""},
-                                     typo("typography_number", 46 if big else 26, 600 if big else 500, None, 1.15, None, 36 if big else 22, 34 if big else 20))
-                    )],
+                  heading(v, 46 if big else 26, 600 if big else 500, IVORY, "div", f"{cls} isma-gold" if big else cls, lh=1.15,
+                          t=36 if big else 22, m=34 if big else 20)],
                  content_width="full", flex_direction="column", flex_gap=gap(6),
                  **({"padding": dim(0, 0, 22, 0), **border(LINE, (0, 0, 1, 0), None)} if big else {}))
     cells = grid([
-        metric(t["o"][0], u["total"], 0, "", " ₸"), metric(t["o"][2], down, 0, "", " ₸"),
-        metric(t["o"][3], month, 0, "", " ₸"), metric(t["o"][4], income / 1e6, 1, "≈ ", f" {t['mln']} ₸"),
-        metric(t["o"][5], yld, 2, "≈ ", " %"), metric(t["o"][6], pb, 1, "≈ ", f" {t['yrs']}")],
+        metric(t["o"][0], u["total"], "int", "o-list", "", " ₸"), metric(t["o"][2], down, "int", "o-down", "", " ₸"),
+        metric(t["o"][3], month, "int", "o-month", "", " ₸"), metric(t["o"][4], income, "mln", "o-income", "≈ ", f" {t['mln']} ₸"),
+        metric(t["o"][5], yld, "pct", "o-yield", "≈ ", " %"), metric(t["o"][6], pb, "yr", "o-pb", "≈ ", f" {t['yrs']}")],
         cols=2, tab=2, mob=1, g=26, grid_gaps={"column": "28", "row": "26", "isLinked": False, "unit": "px"})
-    outs = C([metric(t["oN"], price, 0, "", " ₸", True), cells, text(f"<p>{t['fine']}</p>", 12, MIST)],
+    outs = C([metric(t["oN"], price, "int", "o-price", "", " ₸", True), cells, text(f"<p>{t['fine']}</p>", 12, MIST)],
              content_width="full", flex_direction="column", flex_gap=gap(26), width=sz(60, "%"), width_tablet=sz(100, "%"),
-             padding=dim(44), padding_tablet=dim(32), padding_mobile=dim(24))
-    inn = C([
-        heading(t["example"], 11, 700, MIST, "div", ls=1.76, tr="uppercase"),
-        heading(f"{t['np']}{u['n']} · {dec(u['area'])} {t['m2']} · {fmt(u['total'])} ₸", 15, 500, IVORY, "div",
-                extra={"_padding": dim(14, 16), **border(LINE, (1, 1, 1, 1), 14, "_border"), "_background_background": "classic", "_background_color": "#fff"}),
-        W("icon-list", merge({"icon_list": [{"text": T("calc.disc"), "selected_icon": {"value": "fas fa-toggle-on", "library": "fa-solid"}, "_id": uid()}],
-                              "icon_color": TEAL, "icon_size": sz(30), "text_color": IVORY, "text_indent": sz(14)}, typo("icon_typography", 14, 400))),
-        heading(T("calc.hint"), 12, 400, MIST, "div", lh=1.5)],
+             padding=dim(44), padding_tablet=dim(32), padding_mobile=dim(24), css_classes="isma-calcout")
+    if pro:
+        calc_in = [mini_form("isma-calcform", [
+            {"custom_id": "unit", "field_type": "select", "field_label": T("calc.unit"), "width": "100", "required": "",
+             "field_options": "\n".join(f"{t['np']}{x['n']} · {dec(x['area'])} {t['m2']} · {fmt(x['total'])} ₸|{x['n']}" for x in UNITS), "_id": uid()},
+            {"custom_id": "disc", "field_type": "checkbox", "field_label": "", "width": "100", "required": "",
+             "field_options": T("calc.disc"), "_id": uid()}], show_labels=True)]
+    else:
+        calc_in = [heading(f"{t['np']}{u['n']} · {dec(u['area'])} {t['m2']} · {fmt(u['total'])} ₸", 15, 500, IVORY, "div")]
+    inn = C([*calc_in, heading(T("calc.hint"), 12, 400, MIST, "div", lh=1.5)],
         content_width="full", flex_direction="column", flex_gap=gap(22), width=sz(40, "%"), width_tablet=sz(100, "%"),
         padding=dim(44), padding_tablet=dim(32), padding_mobile=dim(24), **border(LINE, (0, 1, 0, 0), None),
         border_width_tablet=dim(0, 0, 1, 0))
     panel = C([inn, outs], content_width="full", flex_direction="row", flex_direction_tablet="column", flex_wrap="nowrap", flex_gap=gap(0),
               background_background="classic", background_color="#ffffff", **border(LINE, (1, 1, 1, 1), 28), overflow="hidden",
-              _margin=dim(40, 0, 0, 0), **anim("fadeInUp", 0, False))
+              margin=dim(40, 0, 0, 0), css_classes="isma-calcpanel", **anim("fadeInUp", 0, False))
     calc = section([heading(T("calc.eyebrow"), 12, 700, GOLD, "div", "isma-eyebrow", ls=2.64, tr="uppercase"),
                     heading(T("calc.h2"), 42, 500, IVORY, "h2", ls=-.84, lh=1.15, t=36, m=26, extra={"_margin": dim(18, 0, 0, 0)}),
                     panel], bg=DEEP, sid="calc", cls="isma-calc", orn=("p br",))
@@ -516,9 +541,11 @@ def build(lang):
                  content_width="full", flex_direction="row", flex_gap=gap(18), flex_wrap="nowrap", flex_align_items="flex-start",
                  padding=dim(20, 0), **border(LINE, (0, 0, 1, 0), None))
     maps = "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote("Астана, Ш. Калдаякова 16")
+    copy_btn = button(t["copy"], "#", "ghost", True, extra={"button_css_id": "copy-phone"})
+    copy_btn["settings"]["link"]["custom_attributes"] = f"data-done|{t['copied']}"
     cl = C([
         ci("fas fa-phone-alt", T("ct.phone"), "+7 771 888 20 20",
-           [button("WhatsApp", wa_link, "fill", True, blank=True), button(T("ct.call"), f"tel:+{WA}", "ghost", True)]),
+           [button("WhatsApp", wa_link, "fill", True, blank=True), button(T("ct.call"), f"tel:+{WA}", "ghost", True), copy_btn]),
         ci("fas fa-map-marker-alt", T("ct.addr"), T("ct.addrv"), [button(T("ct.map"), maps, "ghost", True, blank=True)]),
         ci("fas fa-globe", T("ct.site"), "ismainvest.kz", vlink="https://ismainvest.kz/"),
         ci("fab fa-instagram", "Instagram", "isma_invest", lib="fa-brands", vlink="https://www.instagram.com/isma_invest/")],
@@ -528,21 +555,12 @@ def build(lang):
                text(f"<p>{T('ct.sub')}</p>", 16, MIST, extra={"_margin": dim(16, 0, 0, 0)}), cl]
     fm = t["form"]
     if pro:
-        opts = "\n".join([f"{t['pick']}|"] + [f"{t['np']}{x['n']} · {dec(x['area'])} {t['m2']} · {fmt(x['total'])} ₸|{t['np']}{x['n']}" for x in UNITS])
-        form_w = W("form", merge({
-            "form_name": "ISMA", "form_fields": [
-                {"custom_id": "name", "field_type": "text", "field_label": fm["name"], "placeholder": "", "required": "true", "width": "100", "_id": uid()},
-                {"custom_id": "phone", "field_type": "tel", "field_label": fm["phone"], "placeholder": "+7 7__ ___ __ __", "required": "true", "width": "100", "_id": uid()},
-                {"custom_id": "unit", "field_type": "select", "field_label": fm["unit"], "field_options": opts, "placeholder": "", "required": "", "width": "100", "_id": uid()}],
-            "show_labels": "true", "mark_required": "", "button_text": fm["send"], "button_width": "100",
-            "submit_actions": ["email"], "email_subject": "Заявка с сайта ISMA Коммерция", "success_message": fm["ok"],
-            "column_gap": sz(18), "row_gap": sz(18), "_css_classes": "isma-form",
-            "label_color": MIST, "field_text_color": IVORY, "field_background_color": "#ffffff", "field_border_color": LINE,
-            "field_border_width": dim(1), "field_border_radius": dim(14),
-            "button_text_color": "#ffffff", "button_background_color": "#08777f", "button_border_radius": dim(99),
-            "button_text_padding": dim(18, 28), "button_hover_background_color": TEAL_LT, "success_message_color": "#1f8a58",
-            "error_message_color": "#c0392b"}, typo("label_typography", 11, 700, 1.76, None, "uppercase"),
-            typo("field_typography", 15, 500), typo("button_typography", 13, 700, 1.56, 1, "uppercase")))
+        opts = "\n".join([f"{t['pick']}|"] + [f"{t['np']}{x['n']} · {dec(x['area'])} {t['m2']} · {fmt(x['total'])} ₸|{x['n']}" for x in UNITS])
+        form_w = mini_form("isma-form isma-leadform", [
+            {"custom_id": "name", "field_type": "text", "field_label": fm["name"], "placeholder": "", "required": "true", "width": "100", "_id": uid()},
+            {"custom_id": "phone", "field_type": "tel", "field_label": fm["phone"], "placeholder": "+7 7__ ___ __ __", "required": "true", "width": "100", "_id": uid()},
+            {"custom_id": "unit", "field_type": "select", "field_label": fm["unit"], "field_options": opts, "placeholder": "", "required": "", "width": "100", "_id": uid()}],
+            show_labels=True, button=fm["send"], extra={"submit_actions": ["email"], "email_subject": "Заявка с сайта ISMA Коммерция", "success_message": fm["ok"]})
         form_kids = [form_w]
     else:
         form_kids = [button(t["ask"], wa_link, "fill", blank=True)]
@@ -570,16 +588,42 @@ def build(lang):
         "_z_index": 55, "_element_width": "auto"})
     fab["settings"]["typography_letter_spacing"] = sz(1.2)
 
-    content = [header, hero, invest, ready, demand, plans, calc, contact, band, footer, fab]
+    js = open(os.path.join(HERE, "src/extra.js"), encoding="utf8").read().replace(
+        "@@UNITS@@", json.dumps([[x["n"], x["area"], x["ppm"]] for x in UNITS]))
+    service = C([W("html", {"html": f"<style>\n{CSS}\n</style>\n<script>\n{js}\n</script>"})], content_width="full",
+                padding=dim(0), css_classes="isma-service")
+    content = [header, hero, invest, ready, demand, plans, calc, contact, band, footer, fab, service]
     title = "ISMA Коммерция" + (" (KZ)" if lang == "kz" else "")
     return {"version": "0.4", "title": title, "type": "page", "content": content,
-            "page_settings": {"custom_css": CSS, "hide_title": "yes", "template": "elementor_header_footer"}}
+            "page_settings": {"hide_title": "yes", "template": "elementor_header_footer"}}
 
-def mark_inner(el, top=True):
+CONT_RENAME = {"_css_classes": "css_classes", "_element_id": "css_id"}
+
+def fix(el, top=True):
+    st = el["settings"]
+    rv = st.pop("_rv", None)
     if el["elType"] == "container":
         el["isInner"] = not top
+        for k in list(st):
+            if k in CONT_RENAME:
+                st[CONT_RENAME[k]] = st.pop(k)
+            elif k.startswith(("_margin", "_padding")) or k == "_z_index":
+                nk = k[1:]
+                v = st.pop(k)
+                st.setdefault(nk, v)
+        if "padding" not in st:
+            st["padding"] = dim(0)
+        if st.get("container_type") != "grid" and "flex_gap" not in st:
+            st["flex_gap"] = gap(0)
+        ck = "css_classes"
+    else:
+        ck = "_css_classes"
+    if rv:
+        name, delay = rv
+        add = f"isma-rise d{delay}" if name == "rise" else "isma-rv"
+        st[ck] = (st.get(ck, "") + " " + add).strip()
     for ch in el.get("elements", []):
-        mark_inner(ch, False)
+        fix(ch, False)
 
 def clean(o):
     if isinstance(o, dict):
@@ -591,7 +635,7 @@ def clean(o):
 for lang in ("ru", "kz"):
     data = build(lang)
     for el in data["content"]:
-        mark_inner(el)
+        fix(el)
     data = clean(data)
     json.dump(data, open(os.path.join(HERE, f"isma-{lang}.json"), "w", encoding="utf8"), ensure_ascii=False, separators=(",", ":"))
 open(os.path.join(HERE, "isma-extra.css"), "w", encoding="utf8").write(CSS)

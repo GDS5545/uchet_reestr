@@ -47,7 +47,7 @@ span.isma-g{
 /* ---------- секции и орнаменты ---------- */
 .isma-sec{position:relative}
 .isma-sec>.e-con-inner{position:static}
-.isma-sec>*:not(.isma-orn){position:relative;z-index:1}
+.isma-sec>*:not(.isma-orn),.isma-sec>.e-con-inner>*:not(.isma-orn){position:relative;z-index:1}
 .isma-orn{position:absolute!important;inset:0;width:auto!important;max-width:none!important;min-height:0!important;padding:0!important;margin:0!important;
   pointer-events:none;z-index:0!important;background-repeat:repeat!important;
   animation:isma-drift 80s linear infinite,isma-breathe 9s ease-in-out infinite}
@@ -127,3 +127,37 @@ span.isma-g{
 .isma-band{height:84px;background:url("@@ORN_P@@") 0 center/70px 84px repeat-x;animation:isma-driftB 60s linear infinite;-webkit-mask-image:linear-gradient(90deg,transparent,#000 14%,#000 86%,transparent);mask-image:linear-gradient(90deg,transparent,#000 14%,#000 86%,transparent);pointer-events:none}
 
 @media (prefers-reduced-motion:reduce){.isma-orn,.isma-band{opacity:1}*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+/* ---------- сброс отступов Elementor внутри страницы ---------- */
+.isma-sec p,.isma-sec .elementor-heading-title{margin:0}
+.isma-sec .elementor-widget:not(:last-child){margin-block-end:0}
+.isma-sec .elementor-widget-text-editor p{margin:0}
+.elementor-widget-image img{display:block}
+
+/* ---------- появление ---------- */
+@keyframes isma-rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+.isma-rise{animation:isma-rise .9s cubic-bezier(.2,.7,.2,1) both}
+.isma-rise.d100{animation-delay:.1s}.isma-rise.d150{animation-delay:.15s}.isma-rise.d250{animation-delay:.25s}
+.isma-rise.d400{animation-delay:.4s}.isma-rise.d550{animation-delay:.55s}
+.isma-rv{transition:opacity .9s ease,transform .9s cubic-bezier(.2,.7,.2,1)}
+.isma-rv.pre{opacity:0;transform:translateY(28px)}
+
+/* ---------- числа ---------- */
+.isma-count .u{font-size:13px;font-weight:600;letter-spacing:.08em;margin-left:6px;-webkit-text-fill-color:var(--gold);color:var(--gold);background:none}
+.isma-count .elementor-heading-title{font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* ---------- чипы фильтра ---------- */
+.isma-chip .elementor-button{transition:.2s}
+.isma-chip .elementor-button:hover{border-color:var(--teal)!important;color:var(--teal)!important}
+.isma-chip.is-on .elementor-button{background:var(--teal)!important;color:#fff!important;border-color:transparent!important}
+
+/* ---------- формы-подложки калькулятора и сортировки: без кнопки отправки ---------- */
+.isma-calcform .elementor-field-type-submit,.isma-sortform .elementor-field-type-submit{display:none}
+.isma-calcform .elementor-field-type-checkbox label{display:flex;align-items:center;gap:14px;cursor:pointer;font-size:14px;color:var(--ivory);text-transform:none;letter-spacing:0;font-weight:400}
+.isma-calcform input[type=checkbox]{appearance:none;-webkit-appearance:none;width:48px;height:28px;border-radius:99px;background:rgba(15,58,61,.2);position:relative;cursor:pointer;flex:none;transition:.25s;margin:0;border:0}
+.isma-calcform input[type=checkbox]::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:.25s}
+.isma-calcform input[type=checkbox]:checked{background:var(--teal)}
+.isma-calcform input[type=checkbox]:checked::after{transform:translateX(20px)}
+.isma-calcform .elementor-field-subgroup{display:block}
+.isma-calcform .elementor-form-fields-wrapper,.isma-sortform .elementor-form-fields-wrapper{gap:22px 0}
+@media(max-width:640px){.isma-sortform{width:100%!important}}
